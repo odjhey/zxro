@@ -1,12 +1,12 @@
 ---
 name: v0x_cli
-description: "Command contract for the zxro v0.x dependency-free CLI, including artifact CRUD, settlement, inbox, ack, inspection, and progressive context disclosure."
+description: "Command contract for the zxro v0.x dependency-free CLI, including artifact CRUD, settlement, mailbox delivery, attention handling, inspection, and progressive context disclosure."
 type: spec
 tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-24T15:54:00+08:00
+updated_at: 2026-08-24T16:31:00+08:00
 ---
 
 # v0.x CLI
@@ -19,6 +19,8 @@ The CLI must run on Python 3.11+ with no third-party Python packages.
 
 Routine reads must also stay cheap for agents. zxro exposes small current-state records and references first. Large reports, logs, diffs, and other evidence are read only when a human or watchtower explicitly asks for them.
 
+The CLI behavior is independent from the active durable-store provider. The built-in provider uses local files; optional adapters may map the same commands to another work or mailbox system.
+
 ## Global behavior
 
 ```text
@@ -30,26 +32,29 @@ zxro [--home PATH] [--json] <command> ...
 - Human-readable output is the default.
 - `--json` reserves stdout for one valid JSON value. Diagnostics go to stderr.
 - Mutating commands return non-zero on malformed, conflicting, or unsafe state.
-- IDs supplied by users are validated before they become path components.
+- IDs supplied by users are validated before they become path components or provider identifiers.
 - A command must not silently create a missing parent artifact unless its contract says so.
 - Routine read commands must not inline historical artifact contents.
 
 ## Progressive disclosure contract
 
-zxro uses a four-level read path for context management:
+zxro uses shallow mailbox views before deeper work evidence:
 
 ```text
-Level 0  zxro inbox pending --watchtower <id>
-         new bounded event envelopes only
+Level 0a  zxro inbox unread --watchtower <id>
+          new bounded event envelopes since read ack
 
-Level 1  zxro work show <work-id>
-         current work state and latest bounded context
+Level 0b  zxro inbox pending --watchtower <id>
+          bounded unhandled attention, including already-read events
 
-Level 2  zxro turn show <turn-id>
-         one turn's metadata, outcome, summary, and artifact references
+Level 1   zxro work show <work-id>
+          current work state and latest bounded context
 
-Level 3  zxro artifact path <artifact-ref>
-         local path to full evidence for deliberate inspection
+Level 2   zxro turn show <turn-id>
+          one turn's metadata, outcome, summary, and artifact references
+
+Level 3   zxro artifact path <artifact-ref>
+          explicit resolution of full evidence for deliberate inspection
 ```
 
 A watchtower should make routing decisions at the shallowest level that contains enough evidence. It may use ordinary Unix tools such as `grep`, `sed`, or `tail` after resolving an artifact path. zxro does not automatically `cat` large artifacts into agent context.
@@ -128,7 +133,7 @@ The response may include:
 - status and current or latest turn IDs;
 - latest bounded summary;
 - unresolved current references or blocker counts when zxro has them;
-- highest related generation metadata.
+- related mailbox metadata.
 
 It must not inline prior turn reports, raw hook payloads, transcripts, logs, diffs, or other artifact contents. Historical metadata belongs in `zxro inspect`; evidence stays behind artifact references.
 
@@ -149,7 +154,7 @@ Mark a logical work item closed after the watchtower or operator accepts the out
 zxro work close auth-fix
 ```
 
-Closing work does not delete turns, inbox events, or native agent sessions.
+Closing work does not delete turns, inbox events, or native agent sessions. It is independent from mailbox read ack and event handling.
 
 ## Turn commands
 
@@ -203,7 +208,7 @@ List output contains metadata only.
 
 ### `zxro turn settle`
 
-Record the terminal outcome of one delegated turn and append exactly one durable event to the owning watchtower inbox.
+Record the terminal outcome of one delegated turn and publish exactly one actionable durable event to the owning watchtower mailbox.
 
 ```sh
 zxro turn settle <turn-id> \
@@ -234,10 +239,15 @@ Supported status values for v0.x:
 Settlement rules:
 
 - A successful first settlement writes the result and any payload artifact before publishing the inbox event.
-- Repeating an identical settlement is idempotent and must not create another generation.
+- The event receives a stable `event_id` and a mailbox generation.
+- The new event begins unhandled.
+- Repeating an identical settlement is idempotent and must return the existing logical settlement without creating another event or generation.
 - A conflicting second settlement fails deterministically.
 - Settling an unknown turn fails without creating an inbox event.
 - The inbox event contains bounded routing context and artifact references, never the full payload.
+- The command reports success only after both terminal turn state and event publication are durable.
+
+If the process dies after terminal turn commit but before event publication, retry must repair that gap idempotently. A published event may never reference a missing terminal turn result.
 
 Pi `agent_settled` and Claude `Stop`/failure integrations will call this command later. They do not get a separate persistence API.
 
@@ -272,19 +282,22 @@ This command must remain agent-agnostic. It does not parse acpx output or settle
 
 ## Inbox commands
 
-### `zxro inbox pending`
+Inbox delivery and attention are separate. A monotonic read cursor tracks what the watchtower has observed. Per-event handled state tracks what no longer needs action.
 
-Return durable events newer than the watchtower's current ack cursor.
+### `zxro inbox unread`
+
+Return durable events newer than the watchtower's current read-ack cursor.
 
 ```sh
-zxro inbox pending --watchtower main
-zxro --json inbox pending --watchtower main
+zxro inbox unread --watchtower main
+zxro --json inbox unread --watchtower main
 ```
 
 Each event is a bounded routing envelope. Example:
 
 ```json
 {
+  "event_id": "evt-7a63...",
   "generation": 7,
   "type": "turn_settled",
   "watchtower_id": "main",
@@ -293,22 +306,58 @@ Each event is a bounded routing envelope. Example:
   "agent": "claude",
   "outcome": "completed",
   "summary": "Reviewer found one blocker in refresh-token expiry handling.",
-  "artifacts": [
-    {
-      "ref": "turns/550e8400-e29b-41d4-a716-446655440000/review.md",
-      "kind": "review",
-      "bytes": 8921
-    }
+  "artifact_refs": [
+    "artifact:550e8400-e29b-41d4-a716-446655440000:review"
   ],
-  "created_at": "2026-08-24T15:54:00+08:00"
+  "created_at": "2026-08-24T16:31:00+08:00"
 }
 ```
 
-`pending` returns only generations greater than the durable ack. It must not replay acknowledged generations, join previous turn reports, or inline artifact contents. The size of routine reconciliation therefore follows new pending work rather than accumulated work history.
+`unread` returns only generations greater than the durable read ack. It must not replay acknowledged delivery, join previous turn reports, or inline artifact contents.
+
+This is the context-efficient delta feed for "what changed since I last observed the mailbox?"
+
+### `zxro inbox pending`
+
+Return actionable events that have not been handled, regardless of read-ack position.
+
+```sh
+zxro inbox pending --watchtower main
+zxro --json inbox pending --watchtower main
+```
+
+An event remains pending after it has been read and acknowledged. It leaves pending only when it is explicitly handled or future contract rules make it non-actionable.
+
+This is the attention view for prioritization. A watchtower may acknowledge a burst through generation 20, then handle event 20 before event 18 without losing event 18.
+
+`pending` returns bounded event envelopes only. It does not inline artifacts.
+
+### `zxro inbox handle`
+
+Mark one actionable event handled.
+
+```sh
+zxro inbox handle <event-id>
+```
+
+Optional explicit watchtower form may be supported when needed for disambiguation:
+
+```sh
+zxro inbox handle <event-id> --watchtower main
+```
+
+Rules:
+
+- handling affects only the named event;
+- events may be handled out of generation order;
+- repeated handle is idempotent;
+- handling does not mutate the immutable event body;
+- handling does not advance read ack;
+- handling does not close the work item.
 
 ### `zxro ack`
 
-Advance a watchtower's durable acknowledgement cursor.
+Advance a watchtower's durable read acknowledgement cursor.
 
 ```sh
 zxro ack --watchtower main --through 7
@@ -316,33 +365,39 @@ zxro ack --watchtower main --through 7
 
 Rules:
 
+- ack means "durably observed through generation N";
 - ack may advance only to an existing generation;
 - ack may not move backwards;
 - repeating the current ack is allowed;
-- ack never deletes inbox history.
+- ack never deletes inbox history;
+- ack does not mark events handled.
+
+A watchtower can therefore read a burst once, ack its delivery position, then work through `inbox pending` in priority order.
 
 ## Artifact commands
 
 ### `zxro artifact path`
 
-Resolve one artifact reference to its local path without printing the artifact contents.
+Resolve one artifact reference to its local path when the active artifact provider exposes a local path, without printing the artifact contents.
 
 ```sh
-zxro artifact path turns/550e8400-e29b-41d4-a716-446655440000/review.md
+zxro artifact path artifact:550e8400-e29b-41d4-a716-446655440000:review
 ```
 
-The returned path must remain under the active `$ZXRO_HOME` and pass zxro's path and symlink safety checks.
+For the built-in provider, the returned path must remain under the active `$ZXRO_HOME` and pass zxro's path and symlink safety checks.
 
 This is the explicit bridge to deeper inspection:
 
 ```sh
-REPORT="$(zxro artifact path turns/550e8400-e29b-41d4-a716-446655440000/review.md)"
+REPORT="$(zxro artifact path artifact:550e8400-e29b-41d4-a716-446655440000:review)"
 grep -n "blocker" "$REPORT"
 tail -n 80 "$REPORT"
 sed -n '120,180p' "$REPORT"
 ```
 
 zxro deliberately does not make `artifact cat` part of the v0.x routine interface. A caller that wants a large artifact must choose how much to read.
+
+If a future external artifact provider cannot resolve a local path, the durable-store adapter contract may expose another deliberate retrieval mechanism without changing routine progressive-disclosure semantics.
 
 ## Inspection
 
@@ -369,11 +424,12 @@ turns:
 
 inbox:
   highest generation: 7
-  ack: 6
-  pending: 1
+  read ack: 7
+  unread: 0
+  pending attention: 2
 ```
 
-`inspect` is read-only. It must not reconcile, ack, repair, resume, or print artifact contents. Artifact counts, references, and byte sizes are acceptable; accumulated handoff text is not.
+`inspect` is read-only. It must not reconcile, ack, handle, repair, resume, or print artifact contents. Artifact counts, references, and byte sizes are acceptable; accumulated handoff text is not.
 
 ## Manual full-loop example
 
@@ -385,18 +441,20 @@ zxro work create smoke --watchtower main
 
 TURN="$(zxro turn create --work smoke --agent claude --session coder-1 --cwd /tmp/acpx-test)"
 
-# Run the worker manually with zxro identity in the environment.
-# turn env or turn run may reduce this boilerplate once implemented.
 ZXRO_TURN_ID="$TURN" \
 ZXRO_WORK_ID=smoke \
 ZXRO_WATCHTOWER_ID=main \
 acpx --cwd /tmp/acpx-test claude -s coder-1 "Inspect the repository."
 
 zxro turn settle "$TURN" --source manual --status completed --message "Worker returned."
-zxro inbox pending --watchtower main
+zxro inbox unread --watchtower main
 zxro ack --watchtower main --through 1
+zxro inbox pending --watchtower main
+zxro inbox handle <event-id>
 zxro inspect smoke
 ```
+
+The example deliberately separates observing delivery, acknowledging the read position, and handling the actionable event.
 
 ## Exit codes
 
@@ -404,7 +462,7 @@ Exact numeric codes may be finalized during implementation, but these classes mu
 
 - success;
 - usage/validation error;
-- missing artifact;
+- missing artifact or event;
 - conflict or invariant violation;
 - unsafe/malformed durable state;
 - child-process failure for optional `turn run`.
@@ -413,5 +471,7 @@ Exact numeric codes may be finalized during implementation, but these classes mu
 
 - [Surfaces index](./README.md)
 - [Product architecture](../../architecture/product-architecture.md)
+- [Durable store contract](../../architecture/contracts/durable-store.md)
+- [Decision 0002](../../decisions/0002-separate-delivery-from-attention.md)
 - [Implementation plan](../execution/implementation-plan.md)
 - [Native session recovery](../../playbooks/native-session-recovery.md)
