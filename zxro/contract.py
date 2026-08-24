@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Protocol
 
 
@@ -101,12 +102,24 @@ class MailboxEvent:
         if set(value) != required or not isinstance(value.get("artifact_refs"), list):
             from .errors import UnsafeStateError
             raise UnsafeStateError("invalid mailbox event schema")
-        from .ids import validate_event_id, validate_id, validate_turn_id
+        from .errors import ValidationError
+        from .ids import safe_string, validate_event_id, validate_id, validate_turn_id
         try:
-            validate_event_id(value["event_id"]); validate_id(value["watchtower_id"]); validate_id(value["work_id"]); validate_turn_id(value["turn_id"])
-            if not isinstance(value["generation"], int) or value["generation"] < 1 or value["type"] != "turn_settled" or value["outcome"] not in {"completed", "failed", "cancelled"}:
+            validate_event_id(value["event_id"])
+            validate_id(value["watchtower_id"])
+            validate_id(value["work_id"])
+            turn_id = validate_turn_id(value["turn_id"])
+            safe_string(value["agent"], "agent")
+            safe_string(value["summary"], "summary")
+            created_at = datetime.fromisoformat(value["created_at"])
+            if created_at.utcoffset() is None:
                 raise ValueError
-        except Exception as exc:
+            if type(value["generation"]) is not int or value["generation"] < 1 or value["type"] != "turn_settled" or value["outcome"] not in {"completed", "failed", "cancelled"}:
+                raise ValueError
+            references = [Artifact.parse_ref(ref) for ref in value["artifact_refs"]]
+            if any(reference[0] != turn_id for reference in references) or len(set(references)) != len(references):
+                raise ValueError
+        except (TypeError, ValueError, ValidationError) as exc:
             from .errors import UnsafeStateError
             raise UnsafeStateError("invalid mailbox event") from exc
         return cls(**{**value, "artifact_refs": tuple(value["artifact_refs"])})

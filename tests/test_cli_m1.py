@@ -118,6 +118,35 @@ class DurableLoopCliTests(CliCase):
         event = self.ok_json("inbox", "unread", "--watchtower", "main")
         self.assertEqual([(e["event_id"], e["generation"]) for e in event], [(event_id, 1)])
 
+    def test_crash_repair_rejects_mismatched_existing_event(self):
+        turn = self.turn()
+        self.assertEqual(self.settle(turn, env={"ZXRO_FAULT_EXIT_AFTER": "turn-commit"}).returncode, 86)
+        event_id = self.ok_json("turn", "show", turn)["settlement"]["event_id"]
+        self.assertEqual(self.settle(self.turn()).returncode, 0)
+        path = next((self.home / "inbox-events").iterdir())
+        event = json.loads(path.read_text())
+        event["event_id"] = event_id
+        replacement = path.with_name(path.name.rsplit("--", 1)[0] + f"--{event_id}.json")
+        path.rename(replacement)
+        replacement.write_text(json.dumps(event))
+        self.assertEqual(self.settle(turn).returncode, 5)
+
+    def test_mailbox_events_validate_all_envelope_fields(self):
+        turn = self.turn()
+        other = self.turn()
+        self.assertEqual(self.settle(turn).returncode, 0)
+        path = next((self.home / "inbox-events").iterdir())
+        original = json.loads(path.read_text())
+        changes = (
+            {"agent": 3},
+            {"summary": []},
+            {"created_at": "2025-01-01T00:00:00"},
+            {"artifact_refs": [f"artifact:{other}:stdin"]},
+        )
+        for change in changes:
+            path.write_text(json.dumps({**original, **change}))
+            self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
+
     def test_concurrent_settlements_have_unique_ordered_generations(self):
         turns = [self.turn() for _ in range(12)]
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:

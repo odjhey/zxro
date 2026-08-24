@@ -89,14 +89,18 @@ class LocalDurableLoop:
                     raise ConflictError("turn already has a different settlement")
             events = self._mailbox_events(access, turn.watchtower_id)
             matches = [event for event in events if event.event_id == turn.settlement.event_id]
-            if not matches:
-                event = MailboxEvent(turn.settlement.event_id, len(events) + 1, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.settlement.outcome, turn.settlement.summary, turn.artifact_refs, turn.settlement.settled_at)
+            if len(matches) > 1:
+                raise UnsafeStateError("duplicate settlement event")
+            generation = matches[0].generation if matches else len(events) + 1
+            expected = MailboxEvent(turn.settlement.event_id, generation, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.settlement.outcome, turn.settlement.summary, turn.artifact_refs, turn.settlement.settled_at)
+            if matches:
+                event = matches[0]
+                if event != expected:
+                    raise UnsafeStateError("settlement event does not match committed turn")
+            else:
+                event = expected
                 filename = f"{turn.watchtower_id}--{event.generation:020d}--{event.event_id}.json"
                 atomic_replace(access, "inbox-events", filename, event.to_dict())
-            elif len(matches) == 1:
-                event = matches[0]
-            else:
-                raise UnsafeStateError("duplicate settlement event")
             return turn, event
 
     def unread(self, watchtower_id):
