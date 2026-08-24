@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -226,6 +227,35 @@ class InspectCliTests(CliCase):
             inspector.inspect("job")
         self.assertEqual(calls, [])
 
+    def test_malformed_artifact_envelopes_fail_closed_without_tracebacks(self):
+        turn_id = self.create_turn()
+        self.assertEqual(self.settle(turn_id, "payload").returncode, 0)
+        artifact = self.home / "artifacts" / f"{turn_id}--stdin.json"
+        original = artifact.read_bytes()
+        artifact.write_bytes(original + b"TRAILING-NON-JSON")
+        for command in (("inspect", "job"), ("inbox", "unread", "--watchtower", "main")):
+            with self.subTest(command=command):
+                result = self.cli(*command)
+                self.assertEqual(result.returncode, 5, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("Traceback", result.stderr)
+        artifact.write_bytes(original)
+        invalid_utf8 = original.replace(b'"kind":"stdin"', b'"kind":"\\xffdin"')
+        self.assertNotEqual(invalid_utf8, original)
+        artifact.write_bytes(invalid_utf8)
+        result = self.cli("inspect", "job")
+        self.assertEqual(result.returncode, 5, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn("Traceback", result.stderr)
+
+        sidecar = self.home / "artifact-metadata" / f"{turn_id}--stdin.json"
+        sidecar_original = sidecar.read_bytes()
+        sidecar.write_bytes(sidecar_original.replace(b'"sha256"', b'"sha\xff256"'))
+        result = self.cli("inspect", "job")
+        self.assertEqual(result.returncode, 5, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_sidecar_and_body_metadata_mismatches_fail_closed(self):
         turn_id = self.create_turn()
         self.assertEqual(self.settle(turn_id, "payload").returncode, 0)
@@ -321,31 +351,18 @@ class InspectCliTests(CliCase):
 
 class FullLoopWalkthroughTests(CliCase):
     def test_disposable_full_loop_walkthrough(self):
-        self.assertEqual(self.cli("watchtower", "create", "main", "--cwd", "/tmp/watchtower", "--agent", "pi", "--session", "watchtower").returncode, 0)
-        self.assertEqual(self.cli("work", "create", "smoke", "--watchtower", "main").returncode, 0)
-        created = self.cli("turn", "create", "--work", "smoke", "--agent", "claude", "--session", "coder-1", "--cwd", "/tmp/acpx-test")
-        self.assertEqual(created.returncode, 0, created.stderr)
-        turn_id = created.stdout.strip()
-
-        metadata = self.cli("turn", "env", turn_id)
-        probe = subprocess.run(
-            ["/bin/sh", "-c", metadata.stdout + f"\ntest \"$ZXRO_TURN_ID\" = '{turn_id}' && test \"$ZXRO_WORK_ID\" = smoke"],
+        cli_spec = (ROOT / "docs/v0.x/surfaces/cli.md").read_text()
+        section = cli_spec.split("## Manual full-loop example\n", 1)[1]
+        script = re.search(r"```sh\n(.*?)\n```", section, re.DOTALL).group(1)
+        result = subprocess.run(
+            ["/bin/sh", "-eu", "-c", script],
+            cwd=ROOT,
+            env=os.environ.copy(),
             text=True,
             capture_output=True,
         )
-        self.assertEqual(probe.returncode, 0, probe.stderr)
-
-        settled = self.cli("turn", "settle", turn_id, "--source", "manual", "--status", "completed", "--message", "Worker returned.")
-        self.assertEqual(settled.returncode, 0, settled.stderr)
-        unread = self.ok_json("inbox", "unread", "--watchtower", "main")
-        self.assertEqual([event["turn_id"] for event in unread], [turn_id])
-        self.assertEqual(self.cli("ack", "--watchtower", "main", "--through", "1").returncode, 0)
-        self.assertEqual(self.ok_json("inbox", "pending", "--watchtower", "main"), unread)
-        self.assertEqual(self.cli("inbox", "handle", unread[0]["event_id"]).returncode, 0)
-        self.assertEqual(self.ok_json("inbox", "pending", "--watchtower", "main"), [])
-        inspect = self.ok_json("inspect", "smoke")
-        self.assertEqual(inspect["inbox"]["unread_count"], 0)
-        self.assertEqual(inspect["inbox"]["pending_attention_count"], 0)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pending attention: 0", result.stdout)
 
 
 class MissingM2ObjectsHaveNoSideEffects(CliCase):

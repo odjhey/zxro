@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-24T20:05:00+08:00
+updated_at: 2026-08-25T00:25:00+08:00
 ---
 
 # v0.x CLI
@@ -457,6 +457,7 @@ Run this block from the repository root. M2 stops at the CLI boundary, so it doe
 ```sh
 export PATH="$PWD/bin:$PATH"
 export ZXRO_HOME="$(mktemp -d)"
+trap 'rm -rf "$ZXRO_HOME"' EXIT
 
 zxro watchtower create main --cwd ~/watchtowers/main --agent pi --session watchtower
 zxro work create smoke --watchtower main

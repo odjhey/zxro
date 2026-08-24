@@ -77,6 +77,20 @@ class BuiltinM1ProviderConformance(M2ProviderConformance, M1ProviderConformance,
         registry.create("main", "/watchtower"); work.create("job", "main")
         return m1_capabilities(home, registry, turns), turns
 
+    def missing_m2_namespace(self):
+        temporary = tempfile.TemporaryDirectory(); self.extra_temps.append(temporary)
+        self.missing_home = Path(temporary.name) / "missing-m2"
+        registry, work, turns = providers(self.missing_home)
+        return m2_capabilities(self.missing_home, registry, work, turns), self.missing_home
+
+    def corrupt_m2_artifact_metadata(self, turn):
+        path = self.home / "artifact-metadata" / f"{turn.id}--stdin.json"
+        saved = path.read_bytes()
+        value = json.loads(saved)
+        value["bytes"] += 1
+        path.write_text(json.dumps(value))
+        return lambda: path.write_bytes(saved)
+
     def missing_namespace(self):
         temporary = tempfile.TemporaryDirectory(); self.extra_temps.append(temporary)
         self.missing_home = Path(temporary.name) / "missing"

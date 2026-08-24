@@ -104,6 +104,8 @@ class LocalDurableLoop:
                             break
                     if content_start is None:
                         raise UnsafeStateError("invalid artifact record metadata")
+                    if re.fullmatch(rb'\{\s*"bytes"\s*:\s*[0-9]+\s*,\s*"content_hex"\s*:\s*"', header) is None:
+                        raise UnsafeStateError("invalid artifact record envelope")
                     bytes_match = re.search(rb'"bytes"\s*:\s*([0-9]+)', header)
                     if bytes_match is None:
                         raise UnsafeStateError("invalid artifact record metadata")
@@ -112,6 +114,8 @@ class LocalDurableLoop:
                     if metadata_start > info.st_size:
                         raise UnsafeStateError("invalid artifact record metadata")
                     tail = os.pread(fd, min(info.st_size - metadata_start, 1024), metadata_start)
+                    end_offset = max(0, info.st_size - 1024)
+                    end_tail = os.pread(fd, min(info.st_size, 1024), end_offset)
                 finally:
                     os.close(fd)
         except FileNotFoundError:
@@ -119,9 +123,19 @@ class LocalDurableLoop:
         except OSError as exc:
             raise UnsafeStateError(f"cannot inspect artifact record: {ref}") from exc
 
+        try:
+            header.decode("utf-8")
+            tail.decode("utf-8")
+            end_tail.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise UnsafeStateError("invalid UTF-8 artifact metadata") from exc
+
         def scalar(segment, key):
             match = re.search(rb'"' + key.encode("ascii") + rb'"\s*:\s*"([^"\r\n]*)"', segment)
-            return match.group(1).decode("utf-8") if match else None
+            try:
+                return match.group(1).decode("utf-8") if match else None
+            except UnicodeDecodeError as exc:
+                raise UnsafeStateError("invalid UTF-8 artifact metadata") from exc
 
         value = {
             "ref": scalar(tail, "ref"),
@@ -132,6 +146,18 @@ class LocalDurableLoop:
         }
         if any(item is None for item in value.values()):
             raise UnsafeStateError("invalid artifact record metadata")
+        expected_tail = (
+            ",\"kind\":" + json.dumps(value["kind"], separators=(",", ":"))
+            + ",\"ref\":" + json.dumps(value["ref"], separators=(",", ":"))
+            + ",\"sha256\":" + json.dumps(value["sha256"], separators=(",", ":"))
+            + ",\"turn_id\":" + json.dumps(value["turn_id"], separators=(",", ":"))
+            + "}"
+        ).encode("utf-8")
+        if tail.rstrip(b" \t\r\n") != expected_tail:
+            raise UnsafeStateError("invalid artifact record envelope")
+        end_trimmed = end_tail.rstrip(b" \t\r\n")
+        if end_trimmed and end_trimmed[-1:] != b"}":
+            raise UnsafeStateError("invalid trailing artifact record bytes")
         try:
             parsed = Artifact.parse_ref(value["ref"])
             digest = bytes.fromhex(value["sha256"])

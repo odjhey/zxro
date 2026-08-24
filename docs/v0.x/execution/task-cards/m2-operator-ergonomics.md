@@ -6,7 +6,7 @@ tags: [v0.x, execution, cli]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: "2026-08-24T20:20:00+08:00"
-updated_at: "2026-08-25T00:20:00+08:00"
+updated_at: "2026-08-25T00:25:00+08:00"
 ---
 
 # M2 operator ergonomics task card
@@ -52,7 +52,7 @@ Out of scope:
 | resume metadata helpers stay correct and parseable | `TurnBindingCliTests.test_turn_env_outputs_exact_resume_metadata_and_shell_quotes_home` |
 | progressive disclosure is preserved when old artifacts expand | `InspectCliTests.test_large_artifact_history_stays_behind_metadata` |
 | manual full-loop walkthrough remains runnable | `FullLoopWalkthroughTests.test_disposable_full_loop_walkthrough` |
-| provider-neutral M2 binding and inspection semantics | `BuiltinM1ProviderConformance.test_native_binding_is_immutable_and_staged` and `test_inspect_returns_bounded_work_metadata` through `M2ProviderConformance` |
+| provider-neutral M2 binding and inspection semantics | `BuiltinM1ProviderConformance.test_native_binding_is_immutable_and_staged`, `test_m2_missing_objects_have_no_side_effects`, `test_m2_inspect_is_read_only`, `test_native_provenance_rejects_unbounded_or_unsafe_values`, `test_m2_artifact_metadata_corruption_fails_closed`, and `test_inspect_returns_bounded_work_metadata` through `M2ProviderConformance` |
 | provenance grammar and M1 rollback consequence are explicit | `TurnBindingCliTests.test_native_session_source_uses_bounded_provenance_grammar` and `test_m1_rollback_rejects_m2_native_source_records` |
 
 ## Gates
@@ -62,7 +62,7 @@ Out of scope:
 - [x] `python3 -m unittest discover -s tests -v` passes for updated suite.
 - [x] Immutable implementation-head evidence is recorded for the last code-bearing commit `b09b0f5`: Python 3.11 and 3.12 across Ubuntu and macOS passed in [run 32749301568](https://github.com/odjhey/zxro/actions/runs/32749301568).
 - [x] The CLI-spec full-loop block runs from a checkout with only the standard library and the `bin/zxro` shim.
-- [x] Provider-neutral M2 conformance covers binding and bounded inspection.
+- [x] Provider-neutral M2 conformance covers binding, missing objects, read-only behavior, provenance rejection, bounded inspection, and corruption.
 - [x] The M1 rollback consequence of the new turn field is documented and tested.
 - [ ] Independent architecture, security, and compatibility review approves the PR.
 

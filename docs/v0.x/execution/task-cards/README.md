@@ -5,7 +5,7 @@ type: index
 tags: [v0.x, execution, task-cards]
 status: current
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T20:05:00+08:00
+updated_at: 2026-08-25T00:25:00+08:00
 ---
 
 # v0.x Task Cards
