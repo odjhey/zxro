@@ -18,7 +18,7 @@ The extension executes an argv array equivalent to:
 zxro turn settle $ZXRO_TURN_ID --source pi --status STATUS --message SUMMARY --stdin
 ```
 
-It does not invoke a shell. The stdin artifact contains the semantic event name, Pi stop reason, and optional error message. The bounded mailbox message contains no payload text. Pi reports adapter errors through its UI and extension error channel. Missing metadata, ambiguous outcomes, zxro errors, closed stdin, signals, and timeouts do not become successful settlements. On timeout, the adapter sends `SIGTERM`, waits 100 ms, sends `SIGKILL` if needed, and reports failure only after the child closes.
+It does not invoke a shell. The stdin artifact contains the semantic event name, Pi stop reason, and optional error message. The bounded mailbox message contains no payload text. Pi reports adapter errors through its UI and extension error channel. Missing metadata, ambiguous outcomes, zxro errors, closed stdin, signals, and timeouts do not become successful settlements. On timeout, the adapter sends `SIGTERM` to the child process group, waits 100 ms, sends `SIGKILL` to the group, and reports failure only after the direct child closes and escalation finishes. Windows lacks POSIX process groups, so the adapter applies the same sequence to the direct child.
 
 ## Hermetic gate
 

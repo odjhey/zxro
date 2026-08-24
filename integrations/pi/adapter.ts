@@ -8,7 +8,7 @@ export type PiTerminalMessage = {
   errorMessage?: string;
 };
 
-const TURN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TURN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function classifyTerminalMessage(message: unknown): TerminalStatus {
   if (!message || typeof message !== "object" || (message as PiTerminalMessage).role !== "assistant") {
@@ -36,31 +36,62 @@ export function settlementMetadata(env: NodeJS.ProcessEnv): { turnId: string; ho
 }
 
 const KILL_GRACE_MS = 100;
+const STDERR_LIMIT = 8192;
 
 async function run(executable: string, args: string[], input: string, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, args, { env, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    const grouped = process.platform !== "win32";
+    const child = spawn(executable, args, {
+      env,
+      detached: grouped,
+      shell: false,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     let stderr = "";
     let stdinError: Error | undefined;
     let timedOut = false;
+    let escalationDone = false;
     let finished = false;
+    let closeResult: { code: number | null; signal: NodeJS.Signals | null } | undefined;
     let killTimer: NodeJS.Timeout | undefined;
+
+    const signalTree = (signal: NodeJS.Signals) => {
+      try {
+        if (grouped && child.pid) process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    };
     const clearTimers = () => {
       clearTimeout(timeoutTimer);
       if (killTimer) clearTimeout(killTimer);
     };
+    const finish = () => {
+      if (finished || !closeResult || (timedOut && !escalationDone)) return;
+      finished = true;
+      clearTimers();
+      const { code, signal } = closeResult;
+      if (timedOut) reject(new Error(`timed out after ${timeoutMs}ms; child closed with ${signal ?? `exit ${code}`}`));
+      else if (stdinError) reject(new Error(`stdin failed: ${stdinError.message}`));
+      else if (code === 0 && signal === null) resolve();
+      else reject(new Error(signal ? `terminated by ${signal}` : `exited ${code}: ${stderr.trim()}`));
+    };
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      signalTree("SIGTERM");
       killTimer = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        signalTree("SIGKILL");
+        escalationDone = true;
+        finish();
       }, KILL_GRACE_MS);
     }, timeoutMs);
 
     child.stdout.resume();
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {
-      if (stderr.length < 8192) stderr += String(chunk).slice(0, 8192 - stderr.length);
+      if (stderr.length < STDERR_LIMIT) stderr += String(chunk).slice(0, STDERR_LIMIT - stderr.length);
     });
     child.stdin.on("error", (error) => { stdinError = error; });
     child.on("error", (error) => {
@@ -70,13 +101,8 @@ async function run(executable: string, args: string[], input: string, env: NodeJ
       reject(error);
     });
     child.on("close", (code, signal) => {
-      if (finished) return;
-      finished = true;
-      clearTimers();
-      if (timedOut) reject(new Error(`timed out after ${timeoutMs}ms; child closed with ${signal ?? `exit ${code}`}`));
-      else if (stdinError) reject(new Error(`stdin failed: ${stdinError.message}`));
-      else if (code === 0 && signal === null) resolve();
-      else reject(new Error(signal ? `terminated by ${signal}` : `exited ${code}: ${stderr.trim()}`));
+      closeResult = { code, signal };
+      finish();
     });
     child.stdin.end(input);
   });
