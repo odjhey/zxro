@@ -36,6 +36,18 @@ class DurableLoopCliTests(CliCase):
         self.assertEqual(path.returncode, 0, path.stderr)
         self.assertEqual(__import__("pathlib").Path(path.stdout.strip()).read_text(), "raw hook payload")
 
+    def test_artifact_corruption_fails_closed(self):
+        turn = self.turn()
+        self.assertEqual(self.settle(turn, "--stdin", input="evidence").returncode, 0)
+        ref = self.ok_json("turn", "show", turn)["artifact_refs"][0]
+        path = __import__("pathlib").Path(self.cli("artifact", "path", ref).stdout.strip())
+        path.write_text("tampered")
+        self.assertEqual(self.cli("artifact", "path", ref).returncode, 5)
+        path.unlink()
+        record = self.home / "artifacts" / f"{turn}--stdin.json"
+        data = json.loads(record.read_text()); data["content_hex"] = "zz"; record.write_text(json.dumps(data))
+        self.assertEqual(self.cli("artifact", "path", ref).returncode, 5)
+
     def test_oversized_artifact_is_rejected_before_settlement(self):
         turn = self.turn()
         result = self.settle(turn, "--stdin", input="x" * (9 * 1024 * 1024))

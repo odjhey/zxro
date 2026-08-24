@@ -8,6 +8,7 @@ from datetime import datetime
 from .contract import Artifact, MailboxEvent, Settlement, Turn
 from .errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from .ids import safe_string, validate_event_id, validate_id, validate_turn_id
+from .localfs.home import check_stat
 from .localfs.ioutil import MAX_RECORD_BYTES, atomic_replace, list_names, mutation, read_json
 
 
@@ -31,18 +32,28 @@ class LocalDurableLoop:
         try:
             value = read_json(access, "inbox", f"{watchtower_id}.json")
         except NotFoundError:
-            return {"watchtower_id": watchtower_id, "ack": 0, "events": [], "handled": {}}
-        if set(value) != {"watchtower_id", "ack", "events", "handled"} or value["watchtower_id"] != watchtower_id or not isinstance(value["ack"], int) or value["ack"] < 0 or not isinstance(value["events"], list) or not isinstance(value["handled"], dict):
+            return {"watchtower_id": watchtower_id, "ack": 0}
+        if set(value) != {"watchtower_id", "ack"} or value["watchtower_id"] != watchtower_id or not isinstance(value["ack"], int) or value["ack"] < 0:
             raise UnsafeStateError("invalid mailbox record schema")
-        previous = 0
-        ids = set()
-        for raw in value["events"]:
-            event = MailboxEvent.from_dict(raw)
-            if event.watchtower_id != watchtower_id or event.generation != previous + 1 or event.event_id in ids:
-                raise UnsafeStateError("invalid mailbox event ordering")
-            previous, _ = event.generation, ids.add(event.event_id)
-        if value["ack"] > previous or set(value["handled"]) - ids or any(not isinstance(v, str) for v in value["handled"].values()):
-            raise UnsafeStateError("invalid mailbox state")
+        return value
+
+    @staticmethod
+    def _mailbox_events(access, watchtower_id):
+        prefix = f"{watchtower_id}--"
+        events = [MailboxEvent.from_dict(read_json(access, "inbox-events", name)) for name in list_names(access, "inbox-events") if name.startswith(prefix)]
+        events.sort(key=lambda event: event.generation)
+        if any(event.watchtower_id != watchtower_id or event.generation != index for index, event in enumerate(events, 1)) or len({event.event_id for event in events}) != len(events):
+            raise UnsafeStateError("invalid mailbox event ordering")
+        return events
+
+    @staticmethod
+    def _handled(access, event_id):
+        try:
+            value = read_json(access, "inbox-handled", f"{event_id}.json")
+        except NotFoundError:
+            return None
+        if set(value) != {"event_id", "watchtower_id", "handled_at"} or value["event_id"] != event_id or not all(isinstance(item, str) for item in value.values()):
+            raise UnsafeStateError("invalid handled state")
         return value
 
     def settle(self, turn_id, source, outcome, message, payload):
@@ -76,15 +87,17 @@ class LocalDurableLoop:
                 payload_conflicts = payload is not None and existing.payload_sha256 != digest
                 if existing.outcome != outcome or existing.summary != message or payload_conflicts:
                     raise ConflictError("turn already has a different settlement")
-            mailbox = self._mailbox(access, turn.watchtower_id)
-            matches = [event for event in mailbox["events"] if event["event_id"] == turn.settlement.event_id]
+            events = self._mailbox_events(access, turn.watchtower_id)
+            matches = [event for event in events if event.event_id == turn.settlement.event_id]
             if not matches:
-                event = MailboxEvent(turn.settlement.event_id, len(mailbox["events"]) + 1, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.settlement.outcome, turn.settlement.summary, turn.artifact_refs, turn.settlement.settled_at)
-                mailbox["events"].append(event.to_dict())
-                atomic_replace(access, "inbox", f"{turn.watchtower_id}.json", mailbox)
-            elif len(matches) != 1:
+                event = MailboxEvent(turn.settlement.event_id, len(events) + 1, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.settlement.outcome, turn.settlement.summary, turn.artifact_refs, turn.settlement.settled_at)
+                filename = f"{turn.watchtower_id}--{event.generation:020d}--{event.event_id}.json"
+                atomic_replace(access, "inbox-events", filename, event.to_dict())
+            elif len(matches) == 1:
+                event = matches[0]
+            else:
                 raise UnsafeStateError("duplicate settlement event")
-            return turn, MailboxEvent.from_dict(matches[0] if matches else mailbox["events"][-1])
+            return turn, event
 
     def unread(self, watchtower_id):
         return self._events(watchtower_id, pending=False)
@@ -98,8 +111,10 @@ class LocalDurableLoop:
             if self.registry is not None:
                 self.registry.get_from(access, watchtower_id)
             box = self._mailbox(access, watchtower_id)
-        raws = [e for e in box["events"] if e["event_id"] not in box["handled"]] if pending else [e for e in box["events"] if e["generation"] > box["ack"]]
-        return [MailboxEvent.from_dict(e) for e in raws]
+            events = self._mailbox_events(access, watchtower_id)
+            if box["ack"] > len(events):
+                raise UnsafeStateError("ack exceeds mailbox history")
+            return [event for event in events if self._handled(access, event.event_id) is None] if pending else [event for event in events if event.generation > box["ack"]]
 
     def ack(self, watchtower_id, through):
         watchtower_id = validate_id(watchtower_id, "watchtower id")
@@ -107,7 +122,7 @@ class LocalDurableLoop:
             if self.registry is not None:
                 self.registry.get_from(access, watchtower_id)
             box = self._mailbox(access, watchtower_id)
-            highest = len(box["events"])
+            highest = len(self._mailbox_events(access, watchtower_id))
             if through < box["ack"] or through > highest:
                 raise ConflictError(f"cannot acknowledge generation {through}")
             box["ack"] = through
@@ -117,35 +132,48 @@ class LocalDurableLoop:
     def handle(self, event_id, watchtower_id=None):
         event_id = validate_event_id(event_id)
         with mutation(self.home) as access:
-            candidates = [watchtower_id] if watchtower_id else [name[:-5] for name in list_names(access, "inbox")]
-            found = []
-            for owner in candidates:
-                validate_id(owner, "watchtower id")
-                box = self._mailbox(access, owner)
-                if any(e["event_id"] == event_id for e in box["events"]):
-                    found.append((owner, box))
-            if not found:
+            matches = [MailboxEvent.from_dict(read_json(access, "inbox-events", name)) for name in list_names(access, "inbox-events") if name.endswith(f"--{event_id}.json")]
+            if watchtower_id is not None:
+                validate_id(watchtower_id, "watchtower id")
+                matches = [event for event in matches if event.watchtower_id == watchtower_id]
+            if not matches:
                 raise NotFoundError(f"event not found: {event_id}")
-            if len(found) != 1:
+            if len(matches) != 1:
                 raise UnsafeStateError("event identity is not unique")
-            owner, box = found[0]
-            box["handled"].setdefault(event_id, timestamp())
-            atomic_replace(access, "inbox", f"{owner}.json", box)
-            return {"event_id": event_id, "watchtower_id": owner, "handled_at": box["handled"][event_id]}
+            event = matches[0]
+            handled = self._handled(access, event_id)
+            if handled is None:
+                handled = {"event_id": event_id, "watchtower_id": event.watchtower_id, "handled_at": timestamp()}
+                atomic_replace(access, "inbox-handled", f"{event_id}.json", handled)
+            elif handled["watchtower_id"] != event.watchtower_id:
+                raise UnsafeStateError("handled state owner mismatch")
+            return handled
 
     def artifact_path(self, ref):
         artifact = Artifact.parse_ref(ref)
         with mutation(self.home) as access:
             record = Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
         path = self.home / "artifacts" / f"{record.turn_id}--{record.kind}.bin"
+        content = bytes.fromhex(record.content_hex)
         if not path.exists():
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
             try:
                 fd = os.open(path, flags, 0o600)
                 try:
-                    os.write(fd, bytes.fromhex(record.content_hex)); os.fsync(fd)
-                finally: os.close(fd)
-            except FileExistsError: pass
-        if path.is_symlink() or path.resolve().parent != (self.home / "artifacts").resolve():
-            raise UnsafeStateError("unsafe artifact path")
+                    view = memoryview(content)
+                    while view:
+                        view = view[os.write(fd, view):]
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            except FileExistsError:
+                pass
+        try:
+            info = path.lstat()
+            check_stat(info, path, directory=False)
+            actual = path.read_bytes()
+        except OSError as exc:
+            raise UnsafeStateError(f"cannot verify artifact path: {exc}") from exc
+        if path.resolve().parent != (self.home / "artifacts").resolve() or len(actual) != record.bytes or hashlib.sha256(actual).hexdigest() != record.sha256:
+            raise UnsafeStateError("artifact path does not match durable content")
         return {"ref": ref, "path": str(path), "bytes": record.bytes}

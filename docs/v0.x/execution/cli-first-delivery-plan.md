@@ -6,7 +6,7 @@ tags: [v0.x, execution, delivery, cli]
 status: draft
 generated: "Claude Fable 5, 2026-08-24"
 created_at: "2026-08-24T17:06:13+08:00"
-updated_at: "2026-08-24T17:06:13+08:00"
+updated_at: "2026-08-24T20:20:00+08:00"
 ---
 
 # CLI-first delivery plan
@@ -95,13 +95,13 @@ $ZXRO_HOME/
   work/<id>.json
   turns/<turn-id>.json            # includes session binding and settlement fields
   artifacts/<turn-id>/<kind>      # artifact bytes, e.g. settle --stdin payload
-  inbox/<watchtower-id>/events.jsonl
-  inbox/<watchtower-id>/ack.json
-  inbox/<watchtower-id>/handled/<event-id>.json
+  inbox/<watchtower-id>.json                  # bounded read cursor
+  inbox-events/<watchtower>--<generation>--<event-id>.json
+  inbox-handled/<event-id>.json
   .lock                           # store lock
 ```
 
-This layout is a provider implementation detail. Tests and callers other than `test_localfs_invariants.py` must not depend on it.
+This layout is a provider implementation detail. Tests and callers other than `test_localfs_invariants.py` must not depend on it. M1 uses one bounded record per immutable event and handled marker rather than one ever-growing JSONL record. The split prevents mailbox history from reaching the state-record size limit and blocking later publication or crash-gap repair.
 
 ### Concurrency
 

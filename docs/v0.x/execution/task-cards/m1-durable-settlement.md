@@ -27,6 +27,7 @@ M1 depends on merged PR #6 at commit `7dbb533` and accepts [decision 0002](../..
 - A retry may omit stdin. If it supplies stdin, the bytes must match the first payload. A first settlement without stdin cannot gain a payload on retry.
 - Settlement allocates the UUIDv4-based event ID before it commits the terminal turn. Mailbox publication assigns generation under the home lock.
 - Event identity is durable settlement metadata. Crash-gap repair reuses it.
+- The built-in provider stores each immutable event and handled marker as a separate bounded record. This replaces the plan's provisional single `events.jsonl` layout so mailbox growth cannot make later settlement or crash-gap repair permanently fail at the state-record size limit.
 - Running M0 turn records remain valid. M1 adds fields only at settlement.
 - An M0 binary cannot decode an M1 settled turn. Rollback tests must use a copied pre-settlement home or a fresh home.
 
@@ -40,6 +41,7 @@ M1 depends on merged PR #6 at commit `7dbb533` and accepts [decision 0002](../..
 | Generations 1 through 10 remain pending after ack; handling 8 and 3 is independent and idempotent | `DurableLoopCliTests.test_read_ack_handled_and_work_close_are_independent` |
 | Twelve concurrent settlements lose no successful write and assign unique ordered generations | `DurableLoopCliTests.test_concurrent_settlements_have_unique_ordered_generations` |
 | Raw stdin stays behind an artifact reference and out of the event envelope | `DurableLoopCliTests.test_settlement_idempotency_payload_and_artifact` |
+| Oversized input is rejected before settlement; malformed or changed artifact evidence fails closed | `DurableLoopCliTests.test_oversized_artifact_is_rejected_before_settlement` and `test_artifact_corruption_fails_closed` |
 | M0 CRUD, isolation, malformed-state, path, lock, and atomic-write behavior remains intact | Existing conformance and `LocalFsInvariantTests` suite |
 
 ## Gates

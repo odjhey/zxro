@@ -62,8 +62,16 @@ class Artifact:
         if set(value) != {"ref", "turn_id", "kind", "bytes", "sha256", "content_hex"}:
             from .errors import UnsafeStateError
             raise UnsafeStateError("invalid artifact record schema")
-        record = cls(**value)
-        if cls.parse_ref(record.ref) != (record.turn_id, record.kind) or record.bytes != len(bytes.fromhex(record.content_hex)):
+        try:
+            record = cls(**value)
+            content = bytes.fromhex(record.content_hex)
+            valid = cls.parse_ref(record.ref) == (record.turn_id, record.kind)
+            valid = valid and record.bytes == len(content)
+            valid = valid and __import__("hashlib").sha256(content).hexdigest() == record.sha256
+        except (TypeError, ValueError) as exc:
+            from .errors import UnsafeStateError
+            raise UnsafeStateError("invalid artifact record") from exc
+        if not valid:
             from .errors import UnsafeStateError
             raise UnsafeStateError("invalid artifact record")
         return record
