@@ -2,7 +2,7 @@
 
 This extension settles one inherited zxro turn when Pi 0.84.3 emits `agent_settled`. It reads the final assistant message through Pi's public session API. A `stop` result maps to `completed`, `error` maps to `failed`, and `aborted` maps to `cancelled`. Other stop reasons fail without calling zxro.
 
-The extension requires an absolute `ZXRO_HOME` and a UUID in `ZXRO_TURN_ID`. The dispatcher must export both before it starts Pi. `ZXRO_EXECUTABLE` may select a zxro executable and defaults to `zxro`. `ZXRO_PI_TIMEOUT_MS` defaults to 10000 and may range from 1 to 300000.
+The extension requires an absolute `ZXRO_HOME` and an exact UUID v4 in `ZXRO_TURN_ID`. Leading or trailing whitespace is invalid. The dispatcher must export both before it starts Pi. `ZXRO_EXECUTABLE` may select a zxro executable and defaults to `zxro`. `ZXRO_PI_TIMEOUT_MS` defaults to 10000 and may range from 1 to 300000.
 
 ## Install
 
@@ -18,7 +18,7 @@ The extension executes an argv array equivalent to:
 zxro turn settle $ZXRO_TURN_ID --source pi --status STATUS --message SUMMARY --stdin
 ```
 
-It does not invoke a shell. The stdin artifact contains the semantic event name, Pi stop reason, and optional error message. The bounded mailbox message contains no payload text. Pi reports adapter errors through its UI and extension error channel. Missing metadata, ambiguous outcomes, zxro errors, closed stdin, signals, and timeouts do not become successful settlements. On timeout, the adapter sends `SIGTERM` to the child process group, waits 100 ms, sends `SIGKILL` to the group, and reports failure only after the direct child closes and escalation finishes. Windows lacks POSIX process groups, so the adapter applies the same sequence to the direct child.
+It does not invoke a shell. The stdin artifact contains the semantic event name, Pi stop reason, and optional error message. The bounded mailbox message contains no payload text. Pi reports adapter errors through its UI and extension error channel. Missing metadata, ambiguous outcomes, zxro errors, closed stdin, signals, and timeouts do not become successful settlements. On timeout, the adapter sends `SIGTERM` to the child process group, waits 100 ms, sends `SIGKILL` to the group, and reports failure only after the direct child closes and escalation finishes. The adapter fails before spawning zxro on Windows because Windows lacks the POSIX process-group guarantee required to clean up descendants reliably.
 
 ## Hermetic gate
 

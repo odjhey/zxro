@@ -23,8 +23,14 @@ export function classifyTerminalMessage(message: unknown): TerminalStatus {
   }
 }
 
+export function assertSupportedPlatform(platform: NodeJS.Platform = process.platform): void {
+  if (platform === "win32") {
+    throw new Error("Pi settlement is unsupported on Windows: reliable descendant cleanup on timeout requires POSIX process groups");
+  }
+}
+
 export function settlementMetadata(env: NodeJS.ProcessEnv): { turnId: string; home: string; executable: string; timeoutMs: number } {
-  const turnId = env.ZXRO_TURN_ID?.trim() ?? "";
+  const turnId = env.ZXRO_TURN_ID ?? "";
   const home = env.ZXRO_HOME?.trim() ?? "";
   if (!TURN_ID.test(turnId)) throw new Error("ZXRO_TURN_ID must be a UUID");
   if (!home || !isAbsolute(home)) throw new Error("ZXRO_HOME must be an absolute path");
@@ -39,11 +45,11 @@ const KILL_GRACE_MS = 100;
 const STDERR_LIMIT = 8192;
 
 async function run(executable: string, args: string[], input: string, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<void> {
+  assertSupportedPlatform();
   await new Promise<void>((resolve, reject) => {
-    const grouped = process.platform !== "win32";
     const child = spawn(executable, args, {
       env,
-      detached: grouped,
+      detached: true,
       shell: false,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
@@ -58,8 +64,7 @@ async function run(executable: string, args: string[], input: string, env: NodeJ
 
     const signalTree = (signal: NodeJS.Signals) => {
       try {
-        if (grouped && child.pid) process.kill(-child.pid, signal);
-        else child.kill(signal);
+        if (child.pid) process.kill(-child.pid, signal);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
       }

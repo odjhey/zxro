@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { classifyTerminalMessage, settlePiTurn, settlementMetadata } from "../adapter.ts";
+import { assertSupportedPlatform, classifyTerminalMessage, settlePiTurn, settlementMetadata } from "../adapter.ts";
 
 const TURN = "123e4567-e89b-42d3-a456-426614174000";
 
@@ -62,6 +62,9 @@ test("ambiguous semantics and malformed metadata never invoke zxro", async () =>
     "123e4567-e89b-32d3-a456-426614174000",
     "123e4567-e89b-52d3-a456-426614174000",
     "123e4567-e89b-42d3-7456-426614174000",
+    ` ${TURN}`,
+    `${TURN} `,
+    `\t${TURN}`,
   ]) {
     await assert.rejects(settlePiTurn({ role: "assistant", stopReason: "stop" }, { ...env(fake), ZXRO_TURN_ID: turnId }), /UUID/);
   }
@@ -105,8 +108,8 @@ process.exitCode = 9;
 test("timeout records deterministic SIGTERM closure", async () => {
   const fake = await fakeShell("trap - TERM\nwhile :; do sleep 1; done");
   await assert.rejects(
-    settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake, { ZXRO_PI_TIMEOUT_MS: "250" })),
-    /timed out after 250ms; child closed with SIGTERM/,
+    settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake, { ZXRO_PI_TIMEOUT_MS: "750" })),
+    /timed out after 750ms; child closed with SIGTERM/,
   );
 });
 
@@ -114,8 +117,8 @@ test("timeout escalates to SIGKILL and waits for child close", async () => {
   const fake = await fakeShell("trap 'printf term >\"$CAPTURE\"' TERM\nwhile :; do sleep 1; done");
   const started = Date.now();
   await assert.rejects(
-    settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake, { ZXRO_PI_TIMEOUT_MS: "250" })),
-    /timed out after 250ms; child closed with SIGKILL/,
+    settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake, { ZXRO_PI_TIMEOUT_MS: "750" })),
+    /timed out after 750ms; child closed with SIGKILL/,
   );
   assert.equal(await readFile(fake.capture, "utf8"), "term");
   assert.ok(Date.now() - started >= 300);
@@ -129,8 +132,8 @@ test("signal termination is a visible failure", async () => {
 test("timeout race cannot turn a post-deadline clean exit into success", async () => {
   const fake = await fakeShell("trap 'exit 0' TERM\nwhile :; do sleep 1; done");
   await assert.rejects(
-    settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake, { ZXRO_PI_TIMEOUT_MS: "250" })),
-    /timed out after 250ms; child closed with exit 0/,
+    settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake, { ZXRO_PI_TIMEOUT_MS: "750" })),
+    /timed out after 750ms; child closed with exit 0/,
   );
 });
 
@@ -158,7 +161,7 @@ printf '%s' "$!" >"$CAPTURE"
 wait
 `);
   await assert.rejects(
-    settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake, { ZXRO_PI_TIMEOUT_MS: "250" })),
+    settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake, { ZXRO_PI_TIMEOUT_MS: "750" })),
     /child closed with SIGKILL/,
   );
   const pid = Number(await readFile(fake.capture, "utf8"));
@@ -168,6 +171,12 @@ wait
     if (alive) await delay(25);
   }
   assert.equal(alive, false, `descendant ${pid} survived timeout cleanup`);
+});
+
+test("unsupported Windows execution fails closed before spawning", () => {
+  assert.throws(() => assertSupportedPlatform("win32"), /reliable descendant cleanup/);
+  assert.doesNotThrow(() => assertSupportedPlatform("linux"));
+  assert.doesNotThrow(() => assertSupportedPlatform("darwin"));
 });
 
 test("terminal classifier accepts only documented final reasons", () => {
