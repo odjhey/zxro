@@ -36,6 +36,14 @@ class DurableLoopCliTests(CliCase):
         self.assertEqual(path.returncode, 0, path.stderr)
         self.assertEqual(__import__("pathlib").Path(path.stdout.strip()).read_text(), "raw hook payload")
 
+    def test_oversized_artifact_is_rejected_before_settlement(self):
+        turn = self.turn()
+        result = self.settle(turn, "--stdin", input="x" * (9 * 1024 * 1024))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.ok_json("turn", "show", turn)["state"], "running")
+        self.assertEqual(self.ok_json("inbox", "unread", "--watchtower", "main"), [])
+        self.assertEqual(list((self.home / "artifacts").iterdir()), [])
+
     def test_conflicts_bounds_unknown_and_filters(self):
         turn = self.turn()
         self.assertEqual(self.settle(turn).returncode, 0)
@@ -67,6 +75,15 @@ class DurableLoopCliTests(CliCase):
         self.assertEqual(len(self.ok_json("inbox", "pending", "--watchtower", "main")), 8)
         self.assertEqual(self.cli("ack", "--watchtower", "main", "--through", "9").returncode, 4)
         self.assertEqual(self.cli("ack", "--watchtower", "main", "--through", "11").returncode, 4)
+
+    def test_handle_rejects_symlinked_inbox(self):
+        self.assertEqual(self.settle(self.turn()).returncode, 0)
+        event_id = self.ok_json("inbox", "unread", "--watchtower", "main")[0]["event_id"]
+        inbox = self.home / "inbox"
+        inbox.rename(self.home / "real-inbox")
+        inbox.symlink_to(self.home / "real-inbox", target_is_directory=True)
+        result = self.cli("inbox", "handle", event_id)
+        self.assertEqual(result.returncode, 5, result.stderr)
 
     def test_crash_gap_retry_preserves_event_identity(self):
         turn = self.turn()

@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import unicodedata
 import uuid
@@ -7,7 +8,7 @@ from datetime import datetime
 from .contract import Artifact, MailboxEvent, Settlement, Turn
 from .errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from .ids import safe_string, validate_event_id, validate_id, validate_turn_id
-from .localfs.ioutil import atomic_replace, mutation, read_json
+from .localfs.ioutil import MAX_RECORD_BYTES, atomic_replace, list_names, mutation, read_json
 
 
 def timestamp():
@@ -58,7 +59,11 @@ class LocalDurableLoop:
                 artifact_refs = ()
                 if payload is not None:
                     ref = f"artifact:{turn_id}:stdin"
-                    atomic_replace(access, "artifacts", f"{turn_id}--stdin.json", Artifact(ref, turn_id, "stdin", len(payload), digest, payload.hex()).to_dict())
+                    artifact = Artifact(ref, turn_id, "stdin", len(payload), digest, payload.hex()).to_dict()
+                    encoded_size = len((json.dumps(artifact, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
+                    if encoded_size > MAX_RECORD_BYTES:
+                        raise ValidationError(f"stdin payload too large to store as a durable artifact: {len(payload)} bytes")
+                    atomic_replace(access, "artifacts", f"{turn_id}--stdin.json", artifact)
                     artifact_refs = (ref,)
                 settled_at = timestamp()
                 settlement = Settlement(source, outcome, message, digest, event_id, settled_at)
@@ -112,7 +117,7 @@ class LocalDurableLoop:
     def handle(self, event_id, watchtower_id=None):
         event_id = validate_event_id(event_id)
         with mutation(self.home) as access:
-            candidates = [watchtower_id] if watchtower_id else [name[:-5] for name in os.listdir(self.home / "inbox") if name.endswith(".json")]
+            candidates = [watchtower_id] if watchtower_id else [name[:-5] for name in list_names(access, "inbox")]
             found = []
             for owner in candidates:
                 validate_id(owner, "watchtower id")
