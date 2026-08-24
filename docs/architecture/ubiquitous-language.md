@@ -1,12 +1,12 @@
 ---
 name: ubiquitous_language
-description: "Canonical zxro terms for watchtowers, work, turns, sessions, inbox events, and acknowledgement."
+description: "Canonical zxro terms for watchtowers, work, turns, runtime/session bindings, inbox events, and acknowledgement."
 type: glossary
 tags: [architecture, domain, terminology]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T15:33:00+08:00
+updated_at: 2026-08-24T16:41:00+08:00
 ---
 
 # Ubiquitous language
@@ -25,12 +25,18 @@ Update terminology here before propagating it to contracts, plans, and code.
 | turn | One delegated execution against a work item | A whole work item or a whole native agent session |
 | turn ID | zxro-generated UUID for one delegated execution | ACP request ID or native provider session ID |
 | crew cwd | The repository or worktree directory in which a crew turn operates | The watchtower project cwd |
-| session address | The agent name, acpx session name, cwd, and optional native session ID needed to locate a conversation | zxro work ID |
-| native session ID | Provider-owned conversation identifier used for last-resort direct resume | acpx record ID or acpx session ID |
+| runtime | The external session namespace/adapter used to execute a turn, initially `acpx` | zxro durable-store provider |
+| session binding | Durable address that relates one turn to its runtime, agent, session name, cwd, and optional native session identity | Work identity or proof that resume is supported |
+| session address | Runtime + agent + runtime session name + crew cwd, with optional provider-native session identity | zxro work ID |
+| native session ID | Provider-owned conversation identifier captured for recovery when available | acpx record ID or acpx session ID |
+| runtime port | Semantic start/send/control/status/resume boundary implemented by acpx or another adapter | TCP/UDP port number or zxro listener |
+| DATA | Free text intentionally delivered to the model conversation | Runtime control action |
+| CONTROL | Closed runtime action executed by the adapter, such as interrupt or cancel | Chat text sent to the model |
 | settle | Record that a delegated turn has reached its completion boundary and publish one durable inbox event | Closing or deleting the persistent agent session |
 | inbox | Ordered durable event stream owned by one watchtower | The acpx prompt queue |
 | generation | Monotonic sequence number assigned to an inbox event | Turn ID or process generation |
-| ack | Highest inbox generation a watchtower has durably consumed | Delivery attempt or agent acknowledgement |
+| ack | Highest inbox generation a watchtower has durably observed | Event handled state or agent acknowledgement |
+| handled | Per-event durable state meaning this actionable event no longer needs watchtower attention | Read acknowledgement or work closure |
 | wake | Best-effort notification that prompts a watchtower to inspect its durable inbox | The durable event itself |
 
 ## Identity hierarchy
@@ -39,10 +45,11 @@ Update terminology here before propagating it to contracts, plans, and code.
 watchtower_id
   work_id
     turn_id
-      session address
+      session binding
+        optional native session id
 ```
 
-The first three identifiers belong to zxro. Session identifiers belong to acpx or the native coding harness.
+The first three identifiers belong to zxro. Runtime and native session identifiers belong to acpx or the coding harness.
 
 ## Metadata variables
 
@@ -59,12 +66,17 @@ The turn record remains authoritative. Environment variables are routing conveni
 
 - Use `watchtower_id`, `work_id`, and `turn_id` in data and code.
 - Use `cwd` only with an explicit owner or record context. Do not treat watchtower cwd and crew cwd as interchangeable.
-- Use `native_session_id` only for provider-owned IDs. Never label an acpx record ID as a native session ID.
+- Use `runtime` for the namespace/adapter in which a session name is meaningful.
+- Use `native_session_id` only for provider-owned IDs. Never label an acpx record ID or acpx session ID as a native session ID.
+- Recording a session ID never implies `resume_supported=true`; resume is a runtime capability.
 - Use `settled` for the zxro turn lifecycle state. Do not use `done` to imply that the whole work item is accepted.
+- Use `ack` for delivery observation and `handled` for resolved watchtower attention.
 - Use `wake` for a disposable notification and `event` for the durable inbox record.
 
 ## Related
 
 - [Product architecture](./product-architecture.md)
+- [Session binding](./contracts/session-binding.md)
+- [Agent runtime port](./contracts/agent-runtime-port.md)
 - [v0.x CLI](../v0.x/surfaces/cli.md)
 - [Native session recovery](../playbooks/native-session-recovery.md)
