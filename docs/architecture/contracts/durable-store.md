@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-24T16:31:00+08:00
+updated_at: 2026-08-24T20:05:00+08:00
 ---
 
 # Durable store contract
@@ -298,7 +298,7 @@ turn.list(state=...)
 ### Settle
 
 ```text
-turn.settle(id, outcome, summary, artifact_refs, source, settlement_key) -> turn
+turn.settle(id, outcome, summary, payload, source) -> turn
 ```
 
 Supported v0.x outcomes are:
@@ -309,9 +309,9 @@ failed
 cancelled
 ```
 
-Settlement is idempotent. Repeating the same logical settlement returns the existing result and must not create another mailbox event. A conflicting terminal settlement fails deterministically.
+Settlement is idempotent. Repeating the same outcome and normalized summary returns the existing result and must not create another mailbox event. Retry payload may be omitted; when supplied, its digest must match the first settlement, and a settlement without payload cannot gain one later. A conflicting terminal settlement fails deterministically.
 
-`settlement_key` is a stable idempotency key for the logical completion, normally derived from the turn identity and terminal transition. Adapters may map this to a provider-native idempotency mechanism or emulate it.
+The event ID is allocated before terminal commit and stored with the settlement as its stable delivery identity. Adapters may map this identity to a provider-native idempotency mechanism or emulate it. Crash-gap publication must reuse the committed event ID.
 
 ## Artifact-store operations
 
@@ -422,8 +422,8 @@ zxro settles a turn in this order:
 
 ```text
 1. persist referenced artifacts
-2. commit terminal turn state with settlement_key
-3. publish one unhandled mailbox event with the same logical settlement identity
+2. commit terminal turn state with its allocated event ID
+3. publish one unhandled mailbox event with the same event ID
 4. return success
 ```
 

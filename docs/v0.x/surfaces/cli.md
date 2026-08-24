@@ -384,7 +384,7 @@ Resolve one artifact reference to its local path when the active artifact provid
 zxro artifact path artifact:550e8400-e29b-41d4-a716-446655440000:review
 ```
 
-For the built-in provider, the returned path must remain under the active `$ZXRO_HOME` and pass zxro's path and symlink safety checks.
+For the built-in provider, the returned path remains under the active `$ZXRO_HOME`. Before returning it, zxro rejects symlinks and unsafe ownership or file types, and verifies the materialized bytes against the durable artifact's byte count and SHA-256 digest.
 
 This is the explicit bridge to deeper inspection:
 
