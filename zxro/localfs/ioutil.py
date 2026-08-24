@@ -69,6 +69,7 @@ class StoreAccess:
     @contextmanager
     def directory(self, name):
         self.verify_home()
+        fd = None
         try:
             before = os.stat(name, dir_fd=self.home_fd, follow_symlinks=False)
             check_stat(before, self.home / name, directory=True)
@@ -78,9 +79,17 @@ class StoreAccess:
             if not _same_inode(before, current):
                 raise UnsafeStateError(f"managed directory changed while opening: {self.home / name}")
         except FileNotFoundError:
+            if fd is not None:
+                os.close(fd)
             raise NotFoundError(f"managed directory does not exist: {name}") from None
-        except OSError as exc:
-            raise UnsafeStateError(f"cannot open managed directory {self.home / name}: {exc}") from exc
+        except BaseException as exc:
+            if fd is not None:
+                os.close(fd)
+            if isinstance(exc, UnsafeStateError):
+                raise
+            if isinstance(exc, OSError):
+                raise UnsafeStateError(f"cannot open managed directory {self.home / name}: {exc}") from exc
+            raise
         try:
             yield fd
             self.verify_directory(name, fd)
@@ -304,8 +313,6 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                 temp_fd = None
                 published = True
             except FileExistsError:
-                if not _accept_existing:
-                    raise ConflictError(f"record already exists: {Path(filename).stem}") from None
                 os.close(temp_fd)
                 temp_fd = None
                 os.unlink(temporary, dir_fd=directory_fd)
@@ -323,8 +330,11 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
             _record_stat(record_fd, directory_fd, filename, label, readonly=readonly)
             raw = _read_bounded(record_fd, MAX_RECORD_BYTES, label)
             value = _parse_object(raw, label)
-            if validate(value) != normalized:
+            existing_normalized = validate(value)
+            if not published and (not _accept_existing or existing_normalized != normalized):
                 raise ConflictError(f"record already exists: {Path(filename).stem}")
+            if published and existing_normalized != normalized:
+                raise UnsafeStateError(f"published state record changed during operation: {label}")
             pin = PinnedRecord(access, directory, filename, directory_fd, record_fd, value, raw, readonly, MAX_RECORD_BYTES)
             pin.verify_current()
             yield pin
