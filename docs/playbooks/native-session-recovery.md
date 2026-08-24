@@ -14,7 +14,7 @@ sources:
     credibility: primary
 stale_after: 2026-10-01
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-24T15:33:00+08:00
+updated_at: 2026-08-25T06:42:49+08:00
 ---
 
 # Native session recovery
@@ -38,11 +38,15 @@ Record:
 - acpx session name;
 - optional `native_session_id` if zxro already captured one.
 
-If the turn ID is unknown, start from the work item:
+If the turn ID is unknown, use the M0 lookup commands. `inspect` is not available on current master:
 
 ```sh
-zxro inspect <work-id>
+zxro work show <work-id>
+zxro turn list --work <work-id>
+zxro turn show <turn-id>
 ```
+
+After M2 adds `inspect`, `zxro inspect <work-id>` may provide the same lookup as a convenience. Recovery must not depend on it.
 
 ## Ask acpx first
 
@@ -50,6 +54,12 @@ acpx keeps several identities. Only `agentSessionId` is provider-native.
 
 ```sh
 acpx --cwd <crew-cwd> --format json <agent> sessions show <session-name>
+```
+
+If acpx is not installed globally, run a reviewed, pinned release without changing the project:
+
+```sh
+npx --yes acpx@0.13.1 --cwd <crew-cwd> --format json <agent> sessions show <session-name>
 ```
 
 Look for:
@@ -92,15 +102,6 @@ pi --session <session-id-or-file>
 
 A partial UUID is accepted when it resolves unambiguously.
 
-### Inspect the pi-acp mapping
-
-If needed, inspect the adapter's mapping without `jq`:
-
-```sh
-python3 -m json.tool ~/.pi/pi-acp/session-map.json
-```
-
-Treat this file as diagnostic data owned by pi-acp. Do not make its internal shape a zxro contract.
 
 ## Claude Code recovery
 
@@ -159,12 +160,30 @@ For break-glass takeover:
 
 Recovery succeeds when the native client shows the expected conversation history and target cwd without modifying zxro durable identity.
 
-After recovery, re-check:
+After recovery, re-check with the current M0/M1 commands:
 
 ```sh
+zxro work show <work-id>
+zxro turn list --work <work-id>
 zxro turn show <turn-id>
-zxro inspect <work-id>
 ```
+
+Compare the before and after output. The work ID, turn ID, runtime, agent, session name, cwd, and optional native session ID must not change.
+
+## Validation record
+
+The command review on 2026-08-25 used:
+
+- zxro master `7a3db5acd7785bcd3946604ef2282ea887b4f7ce`;
+- acpx 0.13.1 through `npx --yes acpx@0.13.1`;
+- Pi 0.84.3;
+- Claude Code 2.1.241.
+
+The review confirmed the documented `zxro work show`, `zxro turn list --work`, `zxro turn show`, and `acpx <agent> sessions show` command forms from their help output. It also confirmed that acpx 0.13.1 exposes separate local session metadata and provider session commands.
+
+The live native takeover checks remain blocked. This environment has no globally installed acpx executable and no disposable Pi or Claude credentials. The pinned npx package makes acpx available, but starting provider conversations would use an existing account and may incur charges. No provider conversation was started, no picker or known-ID resume was claimed, and no provider transcript or record was read or edited.
+
+To complete validation, provision disposable Pi and Claude credentials, then run both picker and known-ID recovery from disposable target repositories. Capture the acpx `acpxRecordId`, `acpxSessionId`, and `agentSessionId` fields from the public `sessions show` output. Pass only `agentSessionId` to the native client.
 
 ## Related
 
