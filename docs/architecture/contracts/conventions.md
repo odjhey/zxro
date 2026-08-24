@@ -44,7 +44,7 @@ A command must diagnose the error on stderr and leave JSON stdout empty. Malform
 
 ## Settlement compatibility
 
-NFC-normalized outcome and summary plus the payload digest define settlement retry equality. `source` is immutable first-write provenance, not settlement identity. A retry may omit stdin. Supplied retry bytes must match the first payload exactly. A retry cannot add payload bytes to a settlement that originally omitted them.
+The outcome, NFC-normalized summary, and payload digest define settlement retry equality. `source` is immutable first-write provenance, not settlement identity. A retry may omit stdin. Supplied retry bytes must match the first payload exactly. A retry cannot add payload bytes to a settlement that originally omitted them.
 
 zxro allocates the event ID before terminal turn commit and stores it in settlement metadata. Publication assigns generation while holding the home lock. Crash-gap retries therefore retain event identity.
 

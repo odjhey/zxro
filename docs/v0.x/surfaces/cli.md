@@ -223,6 +223,7 @@ Hook-oriented form:
 zxro turn settle <turn-id> \
   --source claude \
   --status completed \
+  --message "Claude hook reported completion." \
   --stdin
 ```
 
@@ -241,8 +242,8 @@ Settlement rules:
 - A successful first settlement writes the result and any payload artifact before publishing the inbox event.
 - The event receives a stable `event_id` and a mailbox generation.
 - The new event begins unhandled.
-- Repeating an identical settlement is idempotent and must return the existing logical settlement without creating another event or generation.
-- A conflicting second settlement fails deterministically.
+- Repeating an identical outcome and normalized message is idempotent and must return the existing logical settlement without creating another event or generation. A retry may omit stdin; if supplied, its bytes must match the first payload, and a payload cannot be added later.
+- A conflicting outcome, message, or supplied payload fails deterministically.
 - Settling an unknown turn fails without creating an inbox event.
 - The inbox event contains bounded routing context and artifact references, never the full payload.
 - The command reports success only after both terminal turn state and event publication are durable.
@@ -458,14 +459,7 @@ The example deliberately separates observing delivery, acknowledging the read po
 
 ## Exit codes
 
-Exact numeric codes may be finalized during implementation, but these classes must remain distinct:
-
-- success;
-- usage/validation error;
-- missing artifact or event;
-- conflict or invariant violation;
-- unsafe/malformed durable state;
-- child-process failure for optional `turn run`.
+The numeric exit codes and their meanings are defined by [contract conventions](../../architecture/contracts/conventions.md#errors).
 
 ## Related
 

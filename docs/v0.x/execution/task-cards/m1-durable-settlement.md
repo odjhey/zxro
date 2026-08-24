@@ -23,7 +23,7 @@ M1 depends on merged PR #6 at commit `7dbb533` and accepts [decision 0002](../..
 
 ## Contract decisions
 
-- NFC-normalized outcome, summary, and payload digest define retry equality. `source` records the first writer and does not participate in equality.
+- Outcome, NFC-normalized summary, and payload digest define retry equality. `source` records the first writer and does not participate in equality.
 - A retry may omit stdin. If it supplies stdin, the bytes must match the first payload. A first settlement without stdin cannot gain a payload on retry.
 - Settlement allocates the UUIDv4-based event ID before it commits the terminal turn. Mailbox publication assigns generation under the home lock.
 - Event identity is durable settlement metadata. Crash-gap repair reuses it.
