@@ -69,6 +69,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [Human decision gates](./v0.x/execution/human-decision-gates.md) | guide | Decisions requiring human approval |
 | [Task cards](./v0.x/execution/task-cards/README.md) | index | Task-card index and usage |
 | [M1 durable settlement](./v0.x/execution/task-cards/m1-durable-settlement.md) | checklist | M1 scope, compatibility decisions, and executable acceptance evidence |
+| [M2 operator ergonomics](./v0.x/execution/task-cards/m2-operator-ergonomics.md) | checklist | M2 acceptance evidence for inspect, turn env, and turn bind |
 | [Task-card template](./v0.x/execution/task-cards/task-card-template.md) | plan | Copyable implementation task card |
 | [Surfaces](./v0.x/surfaces/README.md) | index | Product-interface index |
 | [v0.x CLI](./v0.x/surfaces/cli.md) | spec | Durable CRUD, settlement, unread delivery, pending attention, handling, bounded summaries, inspection, artifact resolution, and metadata helpers |

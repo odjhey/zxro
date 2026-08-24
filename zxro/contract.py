@@ -143,6 +143,7 @@ class Turn:
     summary: str | None = None
     artifact_refs: tuple[str, ...] = ()
     settlement: Settlement | None = None
+    native_session_source: str | None = None
 
     def to_dict(self):
         value = asdict(self)
@@ -164,9 +165,10 @@ class WorkStore(Protocol):
 
 
 class TurnStore(Protocol):
-    def create(self, work_id: str, agent: str, session: str, cwd: str, native_session_id: str | None = None) -> Turn: ...
+    def create(self, work_id: str, agent: str, session: str, cwd: str, native_session_id: str | None = None, native_session_source: str | None = None) -> Turn: ...
     def get(self, id: str) -> Turn: ...
     def list(self, work_id: str | None = None, state: str | None = None) -> list[Turn]: ...
+    def bind(self, id: str, native_session_id: str | None = None, native_session_source: str | None = None) -> Turn: ...
 
 
 class SettlementCapability(Protocol):
@@ -186,3 +188,11 @@ class ArtifactCapability(Protocol):
 
 class M1Capabilities(SettlementCapability, MailboxCapability, ArtifactCapability, Protocol):
     """Injected provider-neutral capabilities used by M1 CLI handlers."""
+
+
+class InspectionCapability(Protocol):
+    def inspect(self, work_id: str) -> dict: ...
+
+
+class M2Capabilities(M1Capabilities, InspectionCapability, Protocol):
+    """Injected provider-neutral capabilities used by M2 CLI handlers."""

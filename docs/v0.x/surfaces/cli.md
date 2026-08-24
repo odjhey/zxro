@@ -180,10 +180,28 @@ Required:
 Optional:
 
 - `--native-session-id ID` when a provider-native conversation ID is already known
+- `--native-session-source STRING` to record where the provider-native ID came from
 
 The command resolves `watchtower_id` from the work record and persists it on the turn. `turn.cwd` is the crew target and remains independent from the watchtower project cwd.
 
 Initial state is `running`.
+
+### `zxro turn bind`
+
+Attach provider-native conversation identity after a turn starts.
+
+```sh
+zxro turn bind <turn-id> \
+  --native-session-id <id> \
+  --source acpx.agentSessionId
+```
+
+`turn bind` is enrichment only:
+
+- It can fill missing fields.
+- It is idempotent for repeated writes with the same values.
+- It fails with conflict code on mismatched existing values.
+- It does not alter delivery or handled state.
 
 ### `zxro turn show`
 
@@ -442,9 +460,7 @@ zxro work create smoke --watchtower main
 
 TURN="$(zxro turn create --work smoke --agent claude --session coder-1 --cwd /tmp/acpx-test)"
 
-ZXRO_TURN_ID="$TURN" \
-ZXRO_WORK_ID=smoke \
-ZXRO_WATCHTOWER_ID=main \
+eval "$(zxro turn env "$TURN")"
 acpx --cwd /tmp/acpx-test claude -s coder-1 "Inspect the repository."
 
 zxro turn settle "$TURN" --source manual --status completed --message "Worker returned."

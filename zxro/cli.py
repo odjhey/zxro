@@ -3,7 +3,7 @@ import json
 import sys
 
 from .errors import ValidationError, ZxroError
-from .localfs import m1_capabilities, providers, resolve_home
+from .localfs import m1_capabilities, m2_capabilities, providers, resolve_home
 from .settle import MAX_STDIN_BYTES
 
 
@@ -25,10 +25,12 @@ def parser():
     close = work.add_parser("close"); close.add_argument("id")
 
     turn = commands.add_parser("turn").add_subparsers(dest="action", required=True)
-    create = turn.add_parser("create"); create.add_argument("--work", required=True); create.add_argument("--agent", required=True); create.add_argument("--session", required=True); create.add_argument("--cwd", required=True); create.add_argument("--native-session-id")
+    create = turn.add_parser("create"); create.add_argument("--work", required=True); create.add_argument("--agent", required=True); create.add_argument("--session", required=True); create.add_argument("--cwd", required=True); create.add_argument("--native-session-id"); create.add_argument("--native-session-source")
     show = turn.add_parser("show"); show.add_argument("id")
     listing = turn.add_parser("list"); listing.add_argument("--work"); listing.add_argument("--state")
     settle = turn.add_parser("settle"); settle.add_argument("id"); settle.add_argument("--source", required=True); settle.add_argument("--status", required=True, choices=("completed", "failed", "cancelled")); settle.add_argument("--message", required=True); settle.add_argument("--stdin", action="store_true")
+    env = turn.add_parser("env"); env.add_argument("id")
+    bind = turn.add_parser("bind"); bind.add_argument("id"); bind.add_argument("--native-session-id"); bind.add_argument("--source")
 
     inbox = commands.add_parser("inbox").add_subparsers(dest="action", required=True)
     unread = inbox.add_parser("unread"); unread.add_argument("--watchtower", required=True)
@@ -37,12 +39,34 @@ def parser():
     ack = commands.add_parser("ack"); ack.add_argument("--watchtower", required=True); ack.add_argument("--through", required=True, type=int)
     artifact = commands.add_parser("artifact").add_subparsers(dest="action", required=True)
     path = artifact.add_parser("path"); path.add_argument("ref")
+    inspect = commands.add_parser("inspect"); inspect.add_argument("id")
     return root
 
 
-def render(value, machine, *, turn_id_only=False, path_only=False):
+def render(value, machine, *, turn_id_only=False, path_only=False, inspect_view=False, env_output=False):
     if machine:
         print(json.dumps(value, sort_keys=True, separators=(",", ":")))
+    elif env_output:
+        for key in value:
+            safe = value[key].replace("'", "'\"'\"'")
+            print(f"export {key}='{safe}'")
+    elif inspect_view:
+        lines = [
+            f"work: {value['work']['id']}",
+            f"state: {value['work']['state']}",
+            f"watchtower: {value['watchtower']['id']}",
+            f"watchtower cwd: {value['watchtower']['cwd']}",
+            "",
+            "turns:",
+        ]
+        for item in value["turns"]:
+            lines.append(f"  {item['id']}  {item['agent']}  {item['session']}  {item['cwd']}  {item['state']}  {item['artifact_count']} artifacts / {item['artifact_bytes']}B")
+        lines.extend(["", "inbox:",
+                      f"  highest generation: {value['inbox']['highest_generation']}",
+                      f"  read ack: {value['inbox']['read_ack_generation']}",
+                      f"  unread: {value['inbox']['unread_count']}",
+                      f"  pending attention: {value['inbox']['pending_attention_count']}"])
+        print("\n".join(lines))
     elif turn_id_only:
         print(value["id"])
     elif path_only:
@@ -54,10 +78,12 @@ def render(value, machine, *, turn_id_only=False, path_only=False):
         print("\n".join(f"{key}: {value[key]}" for key in value))
 
 
-def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
+def run(args, *, core_factory=providers, m1_factory=m1_capabilities, m2_factory=m2_capabilities):
     home = resolve_home(args.home)
     registry, work, turn = core_factory(home)
     loop = m1_factory(home, registry, turn)
+    inspect_view = False
+    env_output = False
     path_only = False
     if args.command == "watchtower":
         if args.action == "create": value = registry.create(args.id, args.cwd, args.agent, args.session)
@@ -69,9 +95,20 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         elif args.action == "close": value = work.close(args.id)
         else: value = work.list(args.watchtower, args.state)
     elif args.command == "turn":
-        if args.action == "create": value = turn.create(args.work, args.agent, args.session, args.cwd, args.native_session_id)
+        if args.action == "create": value = turn.create(args.work, args.agent, args.session, args.cwd, args.native_session_id, args.native_session_source)
         elif args.action == "show": value = turn.get(args.id)
         elif args.action == "list": value = turn.list(args.work, args.state)
+        elif args.action == "env":
+            item = turn.get(args.id)
+            value = {
+                "ZXRO_TURN_ID": item.id,
+                "ZXRO_WORK_ID": item.work_id,
+                "ZXRO_WATCHTOWER_ID": item.watchtower_id,
+                "ZXRO_HOME": str(home),
+            }
+            env_output = True
+        elif args.action == "bind":
+            value = turn.bind(args.id, args.native_session_id, args.source)
         else:
             payload = sys.stdin.buffer.read(MAX_STDIN_BYTES + 1) if args.stdin else None
             if payload is not None and len(payload) > MAX_STDIN_BYTES:
@@ -82,11 +119,24 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         elif args.action == "pending": value = loop.pending(args.watchtower)
         else: value = loop.handle(args.event_id, args.watchtower)
     elif args.command == "ack": value = loop.ack(args.watchtower, args.through)
+    elif args.command == "inspect": value = m2_factory(home, registry, work, turn).inspect(args.id)
     else: value, path_only = loop.artifact_path(args.ref), True
-    if hasattr(value, "to_dict"): records = value.to_dict()
-    elif isinstance(value, list): records = [item.to_dict() if hasattr(item, "to_dict") else item for item in value]
-    else: records = value
-    render(records, args.json_output, turn_id_only=args.command == "turn" and args.action == "create", path_only=path_only)
+    if hasattr(value, "to_dict"):
+        records = value.to_dict()
+    elif isinstance(value, list):
+        records = [item.to_dict() if hasattr(item, "to_dict") else item for item in value]
+    else:
+        records = value
+    if args.command == "inspect":
+        inspect_view = True
+    render(
+        records,
+        args.json_output,
+        turn_id_only=args.command == "turn" and args.action == "create",
+        path_only=path_only,
+        inspect_view=inspect_view,
+        env_output=env_output,
+    )
 
 
 def main(argv=None):

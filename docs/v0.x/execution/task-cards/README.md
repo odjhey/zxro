@@ -13,6 +13,7 @@ updated_at: 2026-08-24T20:05:00+08:00
 Task cards turn the implementation plan into bounded units with explicit inputs, outputs, dependencies, checks, and documentation impact.
 
 - [M1 durable settlement](./m1-durable-settlement.md) records scope, compatibility decisions, and executable acceptance evidence.
+- [M2 operator ergonomics](./m2-operator-ergonomics.md) records M2 acceptance evidence.
 - [Task-card template](./task-card-template.md)
 
 Name cards with an ordering or lane prefix when useful, for example `a1-foundation.md` or `b2-cli-surface.md`.

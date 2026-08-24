@@ -6,7 +6,7 @@ tags: [v0.x, execution, delivery, cli]
 status: draft
 generated: "Claude Fable 5, 2026-08-24"
 created_at: "2026-08-24T17:06:13+08:00"
-updated_at: "2026-08-24T21:40:00+08:00"
+updated_at: "2026-08-24T23:44:00+08:00"
 ---
 
 # CLI-first delivery plan
@@ -95,6 +95,7 @@ $ZXRO_HOME/
   work/<id>.json
   turns/<turn-id>.json            # includes session binding and settlement fields
   artifacts/<turn-id>--<kind>.json            # durable artifact record
+  artifact-metadata/<turn-id>--<kind>.json    # bounded routine-read metadata
   artifacts/<turn-id>--<kind>.bin             # verified local materialization
   inbox/<watchtower-id>.json                  # ack, high-water, unresolved IDs
   inbox-events/<watchtower>--<generation>.json

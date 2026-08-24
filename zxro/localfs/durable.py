@@ -18,8 +18,8 @@ def timestamp():
 
 
 class LocalDurableLoop:
-    def __init__(self, home, turns, registry=None):
-        self.home, self.turns, self.registry = home, turns, registry
+    def __init__(self, home, turns, registry=None, work=None):
+        self.home, self.turns, self.registry, self.work = home, turns, registry, work
 
     @staticmethod
     def _mailbox(access, watchtower_id):
@@ -81,7 +81,36 @@ class LocalDurableLoop:
         if value != expected:
             raise UnsafeStateError("published event direct index mismatch")
 
-    def _validate_event(self, access, event):
+    @staticmethod
+    def _artifact_metadata(access, ref):
+        turn_id, kind = Artifact.parse_ref(ref)
+        try:
+            value = read_json(access, "artifact-metadata", f"{turn_id}--{kind}.json")
+        except NotFoundError:
+            artifact = Artifact.from_dict(read_json(access, "artifacts", f"{turn_id}--{kind}.json"))
+            return {
+                "ref": artifact.ref,
+                "turn_id": artifact.turn_id,
+                "kind": artifact.kind,
+                "bytes": artifact.bytes,
+                "sha256": artifact.sha256,
+            }
+        required = {"ref", "turn_id", "kind", "bytes", "sha256"}
+        try:
+            parsed = Artifact.parse_ref(value.get("ref"))
+            digest = bytes.fromhex(value.get("sha256", ""))
+            valid = set(value) == required
+            valid = valid and parsed == (turn_id, kind)
+            valid = valid and value.get("turn_id") == turn_id and value.get("kind") == kind
+            valid = valid and type(value.get("bytes")) is int and value["bytes"] >= 0
+            valid = valid and len(digest) == 32 and len(value["sha256"]) == 64
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise UnsafeStateError("invalid artifact metadata") from exc
+        if not valid:
+            raise UnsafeStateError("invalid artifact metadata")
+        return value
+
+    def _validate_event(self, access, event, *, metadata_only=False):
         try:
             turn = self.turns.get_from(access, event.turn_id)
         except NotFoundError as exc:
@@ -90,14 +119,101 @@ class LocalDurableLoop:
         if expected != event:
             raise UnsafeStateError("mailbox event does not match terminal turn")
         for ref in event.artifact_refs:
-            turn_id, kind = Artifact.parse_ref(ref)
             try:
-                artifact = Artifact.from_dict(read_json(access, "artifacts", f"{turn_id}--{kind}.json"))
+                if metadata_only:
+                    artifact = self._artifact_metadata(access, ref)
+                else:
+                    turn_id, kind = Artifact.parse_ref(ref)
+                    artifact = Artifact.from_dict(read_json(access, "artifacts", f"{turn_id}--{kind}.json")).to_dict()
             except NotFoundError as exc:
                 raise UnsafeStateError("mailbox event references missing artifact") from exc
-            if artifact.ref != ref or artifact.turn_id != event.turn_id or artifact.sha256 != turn.settlement.payload_sha256:
+            if artifact["ref"] != ref or artifact["turn_id"] != event.turn_id or artifact["sha256"] != turn.settlement.payload_sha256:
                 raise UnsafeStateError("mailbox event artifact does not match durable settlement metadata")
         return event
+
+    def _artifact_summary_for_turn(self, access, turn):
+        total_bytes = 0
+        for ref in turn.artifact_refs:
+            try:
+                artifact = self._artifact_metadata(access, ref)
+            except NotFoundError as exc:
+                raise UnsafeStateError("turn references missing artifact") from exc
+            if turn.settlement is None or artifact["sha256"] != turn.settlement.payload_sha256:
+                raise UnsafeStateError("turn artifact metadata does not match settlement")
+            total_bytes += artifact["bytes"]
+        return len(turn.artifact_refs), total_bytes
+
+    def _read_only_unread_count(self, access, watchtower_id):
+        box = self._mailbox(access, watchtower_id)
+        try:
+            events = [self._event(access, watchtower_id, generation) for generation in range(box["ack"] + 1, box["highest"] + 1)]
+            for event in events:
+                self._validate_index(access, event)
+                self._validate_event(access, event, metadata_only=True)
+        except NotFoundError as exc:
+            raise UnsafeStateError("mailbox index references missing event or artifact metadata") from exc
+        return len(events)
+
+    def _read_only_pending_count(self, access, watchtower_id):
+        box = self._mailbox(access, watchtower_id)
+        resolved = []
+        seen = set()
+        for event_id in box["unresolved"]:
+            if event_id in seen:
+                continue
+            seen.add(event_id)
+            resolved.append(event_id)
+        try:
+            unseen = [self._event_by_id(access, event_id) for event_id in resolved]
+            for event in unseen:
+                self._validate_index(access, event)
+                self._validate_event(access, event, metadata_only=True)
+        except NotFoundError as exc:
+            raise UnsafeStateError("mailbox index references missing event or artifact metadata") from exc
+        return sum(1 for event in unseen if self._handled(access, event) is None)
+
+    def inspect(self, work_id):
+        work_id = validate_id(work_id, "work id")
+        with reading(self.home) as access:
+            work = self.work.get_from(access, work_id)
+            if self.registry is not None:
+                watchtower = self.registry.get_from(access, work.watchtower_id)
+            else:
+                watchtower = type("Watchtower", (), {"id": work.watchtower_id, "cwd": ""})
+            turns = self.turns.list(work_id)
+            unread_count = self._read_only_unread_count(access, work.watchtower_id)
+            pending_count = self._read_only_pending_count(access, work.watchtower_id)
+            box = self._mailbox(access, work.watchtower_id)
+            summary = {
+                "work": {
+                    "id": work.id,
+                    "watchtower_id": work.watchtower_id,
+                    "state": work.state,
+                },
+                "watchtower": {
+                    "id": watchtower.id,
+                    "cwd": watchtower.cwd,
+                },
+                "inbox": {
+                    "highest_generation": box["highest"],
+                    "read_ack_generation": box["ack"],
+                    "unread_count": unread_count,
+                    "pending_attention_count": pending_count,
+                },
+                "turns": [],
+            }
+            for item in turns:
+                artifact_count, artifact_bytes = self._artifact_summary_for_turn(access, item)
+                summary["turns"].append({
+                    "id": item.id,
+                    "agent": item.agent,
+                    "session": item.session,
+                    "cwd": item.cwd,
+                    "state": item.state,
+                    "artifact_count": artifact_count,
+                    "artifact_bytes": artifact_bytes,
+                })
+            return summary
 
     @staticmethod
     def _fault(point):
@@ -177,6 +293,12 @@ class LocalDurableLoop:
                     if encoded_size > MAX_RECORD_BYTES:
                         raise ValidationError(f"stdin payload too large to store as a durable artifact: {len(payload)} bytes")
                     atomic_replace(access, "artifacts", f"{turn_id}--stdin.json", artifact)
+                    atomic_replace(
+                        access,
+                        "artifact-metadata",
+                        f"{turn_id}--stdin.json",
+                        {key: artifact[key] for key in ("ref", "turn_id", "kind", "bytes", "sha256")},
+                    )
                     artifact_refs = (ref,)
                 settled_at = timestamp()
                 settlement = Settlement(source, outcome, message, digest, event_id, settled_at)

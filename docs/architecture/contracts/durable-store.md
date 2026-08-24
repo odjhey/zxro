@@ -271,7 +271,7 @@ Close changes current state but preserves durable history. It is independent fro
 ### Create
 
 ```text
-turn.create(work_id, agent, session, cwd, native_session_id?) -> turn
+turn.create(work_id, agent, session, cwd, native_session_id?, native_session_source?) -> turn
 ```
 
 The operation must:
@@ -288,6 +288,16 @@ turn.get(id) -> turn
 ```
 
 The result contains metadata, current lifecycle state, bounded summary, and artifact references. It must not inline raw artifacts or transcripts.
+
+### Bind
+
+```text
+turn.bind(id, native_session_id?, native_session_source?) -> turn
+```
+
+Bind enriches a running or settled turn with provider-native conversation metadata.
+The call is idempotent when all supplied fields already match.
+A call that changes existing values fails deterministically.
 
 ### List
 
