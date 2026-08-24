@@ -6,8 +6,8 @@ from .work import LocalWorkStore
 from .durable import LocalDurableLoop
 
 
-def m1_capabilities(home, registry, turn) -> M1Capabilities:
-    return LocalDurableLoop(home, turn, registry)
+def m1_capabilities(home, registry, turn, artifacts=None) -> M1Capabilities:
+    return LocalDurableLoop(home, turn, registry, artifacts)
 
 
 def providers(home):

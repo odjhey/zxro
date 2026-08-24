@@ -18,8 +18,9 @@ def timestamp():
 
 
 class LocalDurableLoop:
-    def __init__(self, home, turns, registry=None):
+    def __init__(self, home, turns, registry=None, artifacts=None):
         self.home, self.turns, self.registry = home, turns, registry
+        self.artifacts = artifacts or self
 
     @staticmethod
     def _mailbox(access, watchtower_id):
@@ -91,7 +92,7 @@ class LocalDurableLoop:
             raise UnsafeStateError("mailbox event does not match terminal turn")
         for ref in event.artifact_refs:
             try:
-                artifact = self._stat_from(access, ref)
+                artifact = self.artifacts.stat(ref)
             except NotFoundError as exc:
                 raise UnsafeStateError("mailbox event references missing artifact metadata") from exc
             if artifact.ref != ref or artifact.turn_id != event.turn_id or artifact.sha256 != turn.settlement.payload_sha256:
@@ -224,6 +225,14 @@ class LocalDurableLoop:
         with reading(self.home) as access:
             if self.registry is not None:
                 self.registry.get_from(access, watchtower_id)
+            box = self._mailbox(access, watchtower_id)
+            try:
+                events = [self._event_by_id(access, event_id) for event_id in box["unresolved"]]
+            except NotFoundError as exc:
+                raise UnsafeStateError("mailbox index references missing event") from exc
+            for event in events:
+                self._validate_index(access, event)
+                self._validate_event(access, event)
         with mutation(self.home) as access:
             if self.registry is not None:
                 self.registry.get_from(access, watchtower_id)
@@ -312,7 +321,21 @@ class LocalDurableLoop:
             return handled
 
     @staticmethod
-    def _verify_artifact_entry(access, turn_id, kind):
+    def _artifact_entry_identity(access, turn_id, kind):
+        filename = f"{turn_id}--{kind}.json"
+        label = access.home / "artifacts" / filename
+        with access.directory("artifacts") as directory_fd:
+            try:
+                info = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                check_stat(info, label, directory=False)
+                return info.st_dev, info.st_ino
+            except FileNotFoundError:
+                raise UnsafeStateError("missing artifact body referenced by metadata") from None
+            except OSError as exc:
+                raise UnsafeStateError(f"cannot verify artifact body: {exc}") from exc
+
+    @staticmethod
+    def _verify_artifact_entry(access, turn_id, kind, expected_identity=None):
         filename = f"{turn_id}--{kind}.json"
         label = access.home / "artifacts" / filename
         with access.directory("artifacts") as directory_fd:
@@ -326,7 +349,13 @@ class LocalDurableLoop:
                     current = os.fstat(fd)
                     check_stat(current, label, directory=False)
                     after = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
-                    if (before.st_dev, before.st_ino) != (current.st_dev, current.st_ino) or (current.st_dev, current.st_ino) != (after.st_dev, after.st_ino):
+                    final = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                    for info in (after, final):
+                        check_stat(info, label, directory=False)
+                    identities = {(info.st_dev, info.st_ino) for info in (before, current, after, final)}
+                    if expected_identity is not None:
+                        identities.add(expected_identity)
+                    if len(identities) != 1:
                         raise UnsafeStateError("artifact body changed during verification")
                 finally:
                     os.close(fd)
@@ -377,6 +406,7 @@ class LocalDurableLoop:
     @classmethod
     def _stat_from(cls, access, ref):
         turn_id, kind = Artifact.parse_ref(ref)
+        body_identity = cls._artifact_entry_identity(access, turn_id, kind)
         try:
             cls._verify_metadata_entry(access, turn_id, kind)
             metadata = ArtifactMetadata.from_dict(read_json(access, "artifact-metadata", f"{turn_id}--{kind}.json"))
@@ -385,7 +415,7 @@ class LocalDurableLoop:
             raise UnsafeStateError("artifact metadata migration required; run 'zxro migrate artifact-metadata'") from exc
         if metadata.ref != ref:
             raise UnsafeStateError("artifact metadata does not match requested reference")
-        cls._verify_artifact_entry(access, turn_id, kind)
+        cls._verify_artifact_entry(access, turn_id, kind, body_identity)
         return metadata
 
     def stat(self, ref):
@@ -431,12 +461,12 @@ class LocalDurableLoop:
     def artifact_path(self, ref):
         artifact = Artifact.parse_ref(ref)
         with reading(self.home) as access:
-            metadata = self._stat_from(access, ref)
+            metadata = self.artifacts.stat(ref)
             record = Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
             if Artifact.parse_ref(record.ref) != artifact or ArtifactMetadata(record.ref, record.turn_id, record.kind, record.bytes, record.sha256) != metadata:
                 raise UnsafeStateError("artifact body does not match authoritative metadata")
         with mutation(self.home) as access:
-            metadata = self._stat_from(access, ref)
+            metadata = self.artifacts.stat(ref)
             record = Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
             if Artifact.parse_ref(record.ref) != artifact or ArtifactMetadata(record.ref, record.turn_id, record.kind, record.bytes, record.sha256) != metadata:
                 raise UnsafeStateError("artifact body does not match authoritative metadata")

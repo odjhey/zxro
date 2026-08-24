@@ -16,6 +16,7 @@ class ArtifactMetadataTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.home = Path(self.temp.name) / "home"
         registry, work, turns = providers(self.home)
+        self.registry = registry
         registry.create("main", "/tmp")
         work.create("job", "main")
         self.turns = turns
@@ -43,6 +44,28 @@ class ArtifactMetadataTests(unittest.TestCase):
         self.assertEqual(metadata.turn_id, turn.id)
         self.assertEqual(metadata.bytes, 1_000_000)
         self.assertEqual(calls, ["artifact-metadata"])
+
+    def test_all_artifact_consumers_dispatch_through_injected_stat_port(self):
+        turn, ref = self.settle()
+        backing = self.loop
+        calls = []
+
+        class InterceptedArtifacts:
+            def stat(_, requested):
+                calls.append(requested)
+                return backing.stat(requested)
+
+        loop = m1_capabilities(self.home, self.registry, self.turns, InterceptedArtifacts())
+        loop.unread("main")
+        loop.pending("main")
+        loop.ack("main", 1)
+        event = loop.pending("main")[0]
+        loop.handle(event.event_id)
+        loop.artifact_path(ref)
+        next_turn = self.turns.create("job", "pi", "test", "/tmp")
+        loop.settle(next_turn.id, "test", "completed", "done", b"next")
+        self.assertGreaterEqual(calls.count(ref), 6)
+        self.assertIn(f"artifact:{next_turn.id}:stdin", calls)
 
     def test_same_length_body_corruption_passes_stat_but_path_rejects_it(self):
         turn, ref = self.settle(b"evidence")
@@ -78,6 +101,43 @@ class ArtifactMetadataTests(unittest.TestCase):
         body.unlink(); body.symlink_to(self.home / "turns" / f"{turn.id}.json")
         with self.assertRaises(UnsafeStateError):
             self.loop.stat(ref)
+
+    def test_legacy_pending_failure_does_not_create_metadata_layout(self):
+        turn, _ = self.settle()
+        metadata = self.home / "artifact-metadata"
+        for entry in metadata.iterdir():
+            entry.unlink()
+        metadata.rmdir()
+        before = sorted(str(path.relative_to(self.home)) for path in self.home.rglob("*"))
+        result = run_cli(self.home, "inbox", "pending", "--watchtower", "main")
+        self.assertEqual(result.returncode, 5)
+        self.assertIn("migration required", result.stderr)
+        self.assertFalse(metadata.exists())
+        self.assertEqual(sorted(str(path.relative_to(self.home)) for path in self.home.rglob("*")), before)
+
+    def test_final_path_replacement_fails_closed(self):
+        turn, ref = self.settle()
+        body = self.home / "artifacts" / f"{turn.id}--stdin.json"
+        replacement = self.home / "artifacts" / "replacement.json"
+        replacement.write_bytes(body.read_bytes()); replacement.chmod(0o400)
+        real_stat = durable.os.stat
+        artifact_directory = (self.home / "artifacts").stat()
+        target_calls = 0
+
+        def replacing_stat(path, *args, **kwargs):
+            nonlocal target_calls
+            result = real_stat(path, *args, **kwargs)
+            directory_fd = kwargs.get("dir_fd")
+            in_artifacts = directory_fd is not None and os.fstat(directory_fd).st_ino == artifact_directory.st_ino
+            if path == body.name and in_artifacts:
+                target_calls += 1
+                if target_calls == 2:
+                    os.replace(replacement, body)
+            return result
+
+        with mock.patch.object(durable.os, "stat", side_effect=replacing_stat):
+            with self.assertRaisesRegex(UnsafeStateError, "changed during verification"):
+                self.loop.stat(ref)
 
     def test_legacy_migration_preserves_body_and_is_idempotent(self):
         turn, ref = self.settle()
