@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-24T16:31:00+08:00
+updated_at: 2026-08-24T20:05:00+08:00
 ---
 
 # v0.x CLI
@@ -234,7 +234,7 @@ Supported status values for v0.x:
 
 `--message` is the bounded routing summary. It must not exceed 1,000 Unicode characters after normalization.
 
-`--stdin` stores the producer payload needed for later diagnosis as a turn artifact. Provider-specific payloads must not change the common inbox envelope, and raw stdin must not be copied into that envelope.
+`--stdin` stores the producer payload needed for later diagnosis as a turn artifact. Provider-specific payloads must not change the common inbox envelope, and raw stdin must not be copied into that envelope. The built-in provider rejects stdin when its hex-encoded artifact record would exceed the 16 MiB durable-record limit (roughly 8 MiB of payload), before committing settlement.
 
 Settlement rules:
 
