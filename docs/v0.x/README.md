@@ -6,19 +6,21 @@ tags: [v0.x]
 status: current
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T15:33:00+08:00
+updated_at: 2026-08-24T15:54:00+08:00
 ---
 
 # v0.x
 
 v0.x starts with a dependency-free durable-artifact CLI. The CLI is proven manually before Pi or Claude integrations automate it. Agent execution remains outside zxro and is exercised through acpx during later smoke tests.
 
+Long-running work must stay cheap to reconcile. Routine reads expose bounded summaries, current state, and artifact references. Full reports and logs stay out of watchtower context until a caller deliberately asks for deeper evidence.
+
 ## Directory map
 
-- [Scope](./scope/README.md) — outcomes, boundaries, and stack.
+- [Scope](./scope/README.md) — outcomes, isolation boundaries, progressive context disclosure, and stack.
 - [Execution](./execution/README.md) — milestones, gates, and task cards.
 - [Surfaces](./surfaces/README.md) — CLI and other user/system interfaces.
-- [Engineering](./engineering/README.md) — testing, runtime, durability, and provisioning.
+- [Engineering](./engineering/README.md) — testing, runtime, durability, bounded reconciliation, and provisioning.
 - [Validation](./validation/README.md) — acceptance and readiness evidence.
 
 ## Suggested reading order
