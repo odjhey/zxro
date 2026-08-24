@@ -452,7 +452,10 @@ inbox:
 
 ## Manual full-loop example
 
+Run this block from the repository root. M2 stops at the CLI boundary, so it does not invoke acpx, Pi, or Claude. The manual settlement stands in for the external worker result. The JSON read captures the real event ID before the read cursor advances, so the block has no unavailable binary or placeholder argument.
+
 ```sh
+export PATH="$PWD/bin:$PATH"
 export ZXRO_HOME="$(mktemp -d)"
 
 zxro watchtower create main --cwd ~/watchtowers/main --agent pi --session watchtower
@@ -461,13 +464,14 @@ zxro work create smoke --watchtower main
 TURN="$(zxro turn create --work smoke --agent claude --session coder-1 --cwd /tmp/acpx-test)"
 
 eval "$(zxro turn env "$TURN")"
-acpx --cwd /tmp/acpx-test claude -s coder-1 "Inspect the repository."
+printf 'worker metadata loaded for %s\n' "$ZXRO_TURN_ID"
 
 zxro turn settle "$TURN" --source manual --status completed --message "Worker returned."
+EVENT_ID="$(zxro --json inbox unread --watchtower main | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["event_id"])')"
 zxro inbox unread --watchtower main
 zxro ack --watchtower main --through 1
 zxro inbox pending --watchtower main
-zxro inbox handle <event-id>
+zxro inbox handle "$EVENT_ID"
 zxro inspect smoke
 ```
 
