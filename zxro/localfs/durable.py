@@ -158,9 +158,11 @@ class LocalDurableLoop:
             box = self._mailbox(access, turn.watchtower_id)
             if box["highest"]:
                 try:
-                    self._event(access, turn.watchtower_id, box["highest"])
+                    boundary = self._event(access, turn.watchtower_id, box["highest"])
+                    self._validate_index(access, boundary)
                     if box["highest"] > 1:
-                        self._event(access, turn.watchtower_id, box["highest"] - 1)
+                        previous = self._event(access, turn.watchtower_id, box["highest"] - 1)
+                        self._validate_index(access, previous)
                 except NotFoundError as exc:
                     raise UnsafeStateError("mailbox high-water references missing event") from exc
             while self._reconcile_next(access, box) is not None:

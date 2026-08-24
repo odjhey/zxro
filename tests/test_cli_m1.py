@@ -271,6 +271,34 @@ class DurableLoopCliTests(CliCase):
                 second_record = json.loads(run_cli(home, "--json", "turn", "show", second).stdout)
                 self.assertEqual(second_record["state"], "running")
 
+    def test_published_boundary_index_corruption_precedes_requested_turn_mutation(self):
+        corruptions = {
+            "missing": None,
+            "boolean": lambda value: {**value, "generation": True},
+            "integral-float": lambda value: {**value, "generation": 1.0},
+            "wrong-owner": lambda value: {**value, "watchtower_id": "other"},
+            "wrong-generation": lambda value: {**value, "generation": 2},
+        }
+        for label, corrupt in corruptions.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                home = Path(temporary) / "home"
+                self.assertEqual(run_cli(home, "watchtower", "create", "main", "--cwd", "/wt").returncode, 0)
+                self.assertEqual(run_cli(home, "work", "create", "job", "--watchtower", "main").returncode, 0)
+                first = run_cli(home, "turn", "create", "--work", "job", "--agent", "pi", "--session", "one", "--cwd", "/tmp").stdout.strip()
+                self.assertEqual(run_cli(home, "turn", "settle", first, "--source", "test", "--status", "completed", "--message", "first").returncode, 0)
+                event = json.loads(run_cli(home, "--json", "inbox", "unread", "--watchtower", "main").stdout)[0]
+                index = home / "inbox-index" / f"{event['event_id']}.json"
+                if corrupt is None:
+                    index.unlink()
+                else:
+                    index.write_text(json.dumps(corrupt(json.loads(index.read_text()))))
+                second = run_cli(home, "turn", "create", "--work", "job", "--agent", "pi", "--session", "two", "--cwd", "/tmp").stdout.strip()
+                mailbox = home / "inbox" / "main.json"; before = mailbox.read_bytes()
+                result = run_cli(home, "turn", "settle", second, "--source", "test", "--status", "completed", "--message", "second")
+                self.assertEqual(result.returncode, 5, result.stderr)
+                self.assertEqual(mailbox.read_bytes(), before)
+                self.assertEqual(json.loads(run_cli(home, "--json", "turn", "show", second).stdout)["state"], "running")
+
     def test_missing_partial_index_remains_a_repairable_event_commit_window(self):
         turn = self.turn()
         self.assertEqual(self.settle(turn, env={"ZXRO_FAULT_EXIT_AFTER": "event-commit"}).returncode, 86)
