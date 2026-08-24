@@ -226,6 +226,18 @@ class ArtifactMetadataTests(unittest.TestCase):
         self.assertFalse(metadata.exists())
         self.assertEqual(sorted(str(path.relative_to(self.home)) for path in self.home.rglob("*")), before)
 
+    def test_artifact_bearing_legacy_ack_fails_without_layout_side_effects(self):
+        self.settle()
+        metadata = self.home / "artifact-metadata"
+        for entry in metadata.iterdir():
+            entry.unlink()
+        metadata.rmdir()
+        before = self._snapshot()
+        with self.assertRaisesRegex(UnsafeStateError, "migration required"):
+            self.loop.ack("main", 1)
+        self.assertEqual(self._snapshot(), before)
+        self.assertFalse(metadata.exists())
+
     def test_final_path_replacement_fails_closed(self):
         turn, ref = self.settle()
         body = self.home / "artifacts" / f"{turn.id}--stdin.json"
