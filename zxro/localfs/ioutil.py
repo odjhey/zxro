@@ -316,6 +316,24 @@ def _encoded(value: dict, label: Path) -> bytes:
     return payload
 
 
+def _unlink_if_same(directory_fd: int, name: str, expected) -> bool:
+    try:
+        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise UnsafeStateError(f"cannot inspect publication path {name}: {exc}") from exc
+    if not _same_inode(current, expected):
+        return False
+    try:
+        os.unlink(name, dir_fd=directory_fd)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise UnsafeStateError(f"cannot remove publication path {name}: {exc}") from exc
+    return True
+
+
 @contextmanager
 def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str, expected: dict, *, validate: Callable[[dict], dict], mode: int = 0o400, _accept_existing: bool = True) -> Iterator[PinnedRecord]:
     label = access.home / directory / filename
@@ -327,8 +345,11 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
         temp_fd = None
         record_fd = None
         published = False
+        remove_destination = None
+        temp_stat = None
         try:
             temp_fd = os.open(temporary, os.O_RDWR | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600, dir_fd=directory_fd)
+            temp_stat = os.fstat(temp_fd)
             os.fchmod(temp_fd, mode)
             view = memoryview(payload)
             while view:
@@ -337,23 +358,28 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                     raise UnsafeStateError(f"cannot write state record {label}")
                 view = view[written:]
             os.fsync(temp_fd)
+            temp_stat = os.fstat(temp_fd)
             access.verify_directory(directory, directory_fd)
+            _record_stat(temp_fd, directory_fd, temporary, label, readonly=readonly)
             try:
                 os.link(temporary, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd, follow_symlinks=False)
+                remove_destination = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                _record_stat(temp_fd, directory_fd, filename, label, readonly=readonly)
+                remove_destination = None
                 record_fd = temp_fd
                 temp_fd = None
                 published = True
             except FileExistsError:
                 os.close(temp_fd)
                 temp_fd = None
-                os.unlink(temporary, dir_fd=directory_fd)
+                _unlink_if_same(directory_fd, temporary, temp_stat)
                 temporary = None
                 try:
                     record_fd = _open_record(directory_fd, filename, label, readonly=readonly)
                 except NotFoundError:
                     raise UnsafeStateError(f"state record changed during publication: {label}") from None
             if temporary is not None:
-                os.unlink(temporary, dir_fd=directory_fd)
+                _unlink_if_same(directory_fd, temporary, temp_stat)
                 temporary = None
             os.fsync(directory_fd)
             _record_stat(record_fd, directory_fd, filename, label, readonly=readonly)
@@ -373,22 +399,27 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
         except OSError as exc:
             raise UnsafeStateError(f"cannot publish state record {label}: {exc}") from exc
         finally:
+            if remove_destination is not None:
+                try:
+                    _unlink_if_same(directory_fd, filename, remove_destination)
+                except UnsafeStateError:
+                    pass
             if temp_fd is not None:
                 os.close(temp_fd)
             if record_fd is not None:
                 os.close(record_fd)
-            if temporary is not None:
+            if temporary is not None and temp_stat is not None:
                 try:
-                    os.unlink(temporary, dir_fd=directory_fd)
-                except FileNotFoundError:
-                    pass
-                except OSError:
+                    _unlink_if_same(directory_fd, temporary, temp_stat)
+                except UnsafeStateError:
                     pass
 
 
 def atomic_create(access: StoreAccess, directory: str, filename: str, value: dict) -> None:
+    label = access.home / directory / filename
     with publish_json_exact_pinned(
-        access, directory, filename, value, validate=lambda candidate: candidate,
+        access, directory, filename, value,
+        validate=lambda candidate: _check_record_identity(candidate, filename, label),
         mode=0o600, _accept_existing=False,
     ):
         pass

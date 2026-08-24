@@ -162,6 +162,33 @@ class PinnedRecordTests(unittest.TestCase):
         self.assertFalse(target.exists())
         self.assertEqual(list(target.parent.glob(".zxro-tmp-*")), [])
 
+    def test_temp_path_replacement_cannot_publish_attacker_state(self):
+        outside = Path(self.temp.name) / "outside"
+        outside.write_text("unchanged")
+        target = self.home / "work" / "job.json"
+        real_link = os.link
+
+        def replace_temp_before_link(source, destination, **kwargs):
+            os.unlink(source, dir_fd=kwargs["src_dir_fd"])
+            os.symlink(outside, source, dir_fd=kwargs["src_dir_fd"])
+            return real_link(source, destination, **kwargs)
+
+        with mutation(self.home) as access, mock.patch(
+            "zxro.localfs.ioutil.os.link", side_effect=replace_temp_before_link
+        ):
+            with self.assertRaises(UnsafeStateError):
+                with publish_json_exact_pinned(
+                    access, "work", "job.json", {"id": "job"}, validate=lambda value: value
+                ):
+                    pass
+        self.assertFalse(target.exists())
+        self.assertEqual(outside.read_text(), "unchanged")
+        attacker_entries = list(target.parent.glob(".zxro-tmp-*"))
+        self.assertEqual(len(attacker_entries), 1)
+        self.assertTrue(attacker_entries[0].is_symlink())
+        self.assertTrue(attacker_entries[0].resolve().samefile(outside))
+        attacker_entries[0].unlink()
+
     def test_atomic_create_classifies_unsafe_existing_before_conflict(self):
         target = self.home / "work" / "job.json"
         outside = Path(self.temp.name) / "outside"
@@ -186,6 +213,10 @@ class PinnedRecordTests(unittest.TestCase):
         self.write_record("job.json", {"id": "job"}, mode=0o600)
         with mutation(self.home) as access:
             with self.assertRaises(ConflictError):
+                atomic_create(access, "work", "job.json", {"id": "job"})
+        target.write_text('{"id":"other"}\n')
+        with mutation(self.home) as access:
+            with self.assertRaises(UnsafeStateError):
                 atomic_create(access, "work", "job.json", {"id": "job"})
 
     def test_injected_eexist_winners_are_pinned_and_classified(self):
@@ -346,6 +377,53 @@ class PinnedRecordTests(unittest.TestCase):
         self.assertEqual(len(opened), 2)
         self.assertEqual(set(opened), set(closed))
 
+    def test_home_open_failure_closes_new_descriptor(self):
+        opened = []
+        closed = []
+        real_open = os.open
+        real_close = os.close
+
+        def track_open(*args, **kwargs):
+            fd = real_open(*args, **kwargs)
+            opened.append(fd)
+            return fd
+
+        def track_close(fd):
+            closed.append(fd)
+            return real_close(fd)
+
+        with mock.patch("zxro.localfs.ioutil.os.open", side_effect=track_open), mock.patch(
+            "zxro.localfs.ioutil.os.fstat", side_effect=OSError("injected home fstat failure")
+        ), mock.patch("zxro.localfs.ioutil.os.close", side_effect=track_close):
+            with self.assertRaises(UnsafeStateError):
+                with StoreAccess(self.home):
+                    pass
+        self.assertEqual(len(opened), 1)
+        self.assertEqual(opened, closed)
+
+    def test_live_pin_rejects_active_home_swap(self):
+        self.write_record("job.json", {"id": "job"}, mode=0o400)
+        detached = self.home.with_name("home-old")
+        with self.assertRaises(UnsafeStateError):
+            with mutation(self.home) as access:
+                with open_json_pinned(access, "work", "job.json", readonly=True) as pin:
+                    self.home.rename(detached)
+                    self.home.mkdir(mode=0o700)
+                    pin.verify_current()
+
+    def test_live_pin_rejects_home_and_directory_permission_changes(self):
+        self.write_record("job.json", {"id": "job"}, mode=0o400)
+        for changed in (self.home, self.home / "work"):
+            with self.subTest(changed=changed):
+                with mutation(self.home) as access:
+                    with open_json_pinned(access, "work", "job.json", readonly=True) as pin:
+                        changed.chmod(0o777)
+                        try:
+                            with self.assertRaises(UnsafeStateError):
+                                pin.verify_current()
+                        finally:
+                            changed.chmod(0o700)
+
     def test_directory_open_failure_closes_new_descriptor(self):
         opened = []
         closed = []
@@ -392,6 +470,10 @@ class PinnedRecordTests(unittest.TestCase):
                                 changed = first if changed_name == "one.json" else second
                                 replacement = b'{"id":"ona"}\n' if changed is first else b'{"id":"twa"}\n'
                                 self.rewrite_in_place(changed, replacement)
+                                with self.assertRaises(UnsafeStateError):
+                                    pins.verify_current()
+                                unaffected = two if changed is first else one
+                                unaffected.verify_current()
                                 pins.verify_current()
                 for path in (first, second):
                     path.chmod(0o600)
