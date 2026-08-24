@@ -161,6 +161,14 @@ class DurableLoopCliTests(CliCase):
                 self.assertEqual({event["turn_id"] for event in events}, {first, second})
                 self.assertEqual(next(event["event_id"] for event in events if event["turn_id"] == first), first_id)
 
+    def test_handle_between_index_and_mailbox_survives_repair(self):
+        turn = self.turn()
+        self.assertEqual(self.settle(turn, env={"ZXRO_FAULT_EXIT_AFTER": "index-commit"}).returncode, 86)
+        event_id = self.ok_json("turn", "show", turn)["settlement"]["event_id"]
+        self.assertEqual(self.cli("inbox", "handle", event_id).returncode, 0)
+        self.assertEqual(self.settle(turn).returncode, 0)
+        self.assertNotIn(event_id, [event["event_id"] for event in self.ok_json("inbox", "pending", "--watchtower", "main")])
+
     def test_crash_repair_rejects_mismatched_existing_event(self):
         turn = self.turn()
         self.assertEqual(self.settle(turn, env={"ZXRO_FAULT_EXIT_AFTER": "turn-commit"}).returncode, 86)
@@ -216,6 +224,29 @@ class DurableLoopCliTests(CliCase):
         data["summary"] = data["settlement"]["summary"] = "e\u0301"
         path.write_text(json.dumps(data))
         self.assertEqual(self.cli("turn", "show", turn).returncode, 5)
+
+    def test_malformed_next_event_leaves_requested_turn_running(self):
+        turn = self.turn()
+        events = self.home / "inbox-events"
+        events.mkdir(parents=True, exist_ok=True)
+        (events / f"main--{1:020d}.json").write_text("{}")
+        result = self.settle(turn)
+        self.assertEqual(result.returncode, 5, result.stderr)
+        self.assertEqual(self.ok_json("turn", "show", turn)["state"], "running")
+        self.assertEqual(list((self.home / "artifacts").iterdir()), [])
+
+    def test_ack_rejects_missing_terminal_and_intermediate_generations_without_advancing(self):
+        first = self.turn(); self.assertEqual(self.settle(first).returncode, 0)
+        generation_one = self.home / "inbox-events" / f"main--{1:020d}.json"
+        saved = generation_one.read_bytes(); generation_one.unlink()
+        self.assertEqual(self.cli("ack", "--watchtower", "main", "--through", "1").returncode, 5)
+        self.assertEqual(json.loads((self.home / "inbox" / "main.json").read_text())["ack"], 0)
+        generation_one.write_bytes(saved)
+        self.assertEqual(self.settle(self.turn()).returncode, 0)
+        self.assertEqual(self.settle(self.turn()).returncode, 0)
+        (self.home / "inbox-events" / f"main--{2:020d}.json").unlink()
+        self.assertEqual(self.cli("ack", "--watchtower", "main", "--through", "3").returncode, 5)
+        self.assertEqual(json.loads((self.home / "inbox" / "main.json").read_text())["ack"], 0)
 
     def test_settlement_rejects_invalid_mailbox_order_before_commit(self):
         self.assertEqual(self.settle(self.turn()).returncode, 0)

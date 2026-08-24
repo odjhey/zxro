@@ -1,16 +1,87 @@
+import concurrent.futures
+
+
 class M1ProviderConformance:
-    """Reusable M1 semantics. Provider fixtures supply setup and fault hooks."""
+    """Reusable M1 semantics. Fixtures provide setup, fault, cost, and corruption hooks."""
+
+    def create_turn(self, turns=None, work_id="job"):
+        return (turns or self.turns).create(work_id, "pi", "crew", "/tmp")
 
     def publish_and_handle(self, count):
         for _ in range(count):
-            turn = self.turns.create("job", "pi", "crew", "/tmp")
-            _, event = self.m1.settle(turn.id, "test", "completed", "done", None)
+            _, event = self.m1.settle(self.create_turn().id, "test", "completed", "done", None)
             self.m1.handle(event.event_id)
             self.published += 1
         self.m1.ack("main", self.published)
 
+    def test_settlement_idempotency_conflict_and_progressive_artifact(self):
+        turn = self.create_turn()
+        payload = b"private evidence"
+        settled, event = self.m1.settle(turn.id, "test", "completed", "done", payload)
+        repeated, same_event = self.m1.settle(turn.id, "retry", "completed", "done", None)
+        self.assertEqual(repeated, settled)
+        self.assertEqual(same_event, event)
+        self.assertNotIn(payload.decode(), repr(event))
+        self.assertEqual(len(event.artifact_refs), 1)
+        self.assertEqual(self.m1.artifact_path(event.artifact_refs[0])["bytes"], len(payload))
+        with self.assertRaises(self.conflict_error):
+            self.m1.settle(turn.id, "test", "failed", "done", None)
+
+    def test_unread_ack_pending_and_out_of_order_idempotent_handle(self):
+        events = [self.m1.settle(self.create_turn().id, "test", "completed", f"done {index}", None)[1] for index in range(1, 4)]
+        self.assertEqual([event.generation for event in self.m1.unread("main")], [1, 2, 3])
+        self.m1.ack("main", 3)
+        self.m1.ack("main", 3)
+        with self.assertRaises(self.conflict_error):
+            self.m1.ack("main", 2)
+        with self.assertRaises(self.conflict_error):
+            self.m1.ack("main", 4)
+        self.assertEqual(self.m1.unread("main"), [])
+        self.assertEqual([event.event_id for event in self.m1.pending("main")], [event.event_id for event in events])
+        handled = self.m1.handle(events[2].event_id)
+        self.assertEqual(self.m1.handle(events[2].event_id), handled)
+        self.m1.handle(events[0].event_id)
+        self.assertEqual([event.event_id for event in self.m1.pending("main")], [events[1].event_id])
+        self.work.close("job")
+        self.assertEqual([event.event_id for event in self.m1.pending("main")], [events[1].event_id])
+
+    def test_concurrent_settlement_has_stable_unique_generations(self):
+        turns = [self.create_turn() for _ in range(12)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+            results = list(pool.map(lambda turn: self.m1.settle(turn.id, "test", "completed", "done", None), turns))
+        events = self.m1.unread("main")
+        self.assertEqual([event.generation for event in events], list(range(1, 13)))
+        self.assertEqual(len({event.event_id for _, event in results}), 12)
+        self.assertEqual({event.turn_id for event in events}, {turn.id for turn in turns})
+
+    def test_crash_repair_preserves_identity_and_visibility(self):
+        turn = self.create_turn()
+        event_id = self.interrupt_settlement(turn, "index-commit")
+        self.m1.settle(turn.id, "test", "completed", "done", None)
+        events = self.m1.unread("main")
+        self.assertEqual([(event.event_id, event.generation) for event in events], [(event_id, 1)])
+        self.assertEqual([event.event_id for event in self.m1.pending("main")], [event_id])
+
+    def test_namespace_isolation(self):
+        other_m1, other_turns = self.new_namespace()
+        first = self.m1.settle(self.create_turn().id, "test", "completed", "first", None)[1]
+        second_turn = self.create_turn(other_turns)
+        second = other_m1.settle(second_turn.id, "test", "completed", "second", None)[1]
+        self.assertEqual(first.generation, 1)
+        self.assertEqual(second.generation, 1)
+        self.assertEqual([event.summary for event in self.m1.unread("main")], ["first"])
+        self.assertEqual([event.summary for event in other_m1.unread("main")], ["second"])
+
+    def test_missing_objects_fail_without_creation(self):
+        missing = self.missing_namespace()
+        with self.assertRaises(self.not_found_error):
+            missing.unread("main")
+        with self.assertRaises(self.not_found_error):
+            missing.handle("evt-" + "0" * 32)
+        self.assert_missing_namespace_uncreated()
+
     def test_missing_terminal_result_or_artifact_fails_closed(self):
-        turn = self.turns.create("job", "pi", "crew", "/tmp")
+        turn = self.create_turn()
         self.m1.settle(turn.id, "test", "completed", "done", b"evidence")
         restore_turn = self.remove_turn(turn.id)
         with self.assertRaisesRegex(self.unsafe_error, "missing turn"):
@@ -27,6 +98,6 @@ class M1ProviderConformance:
         self.publish_and_handle(35)
         self.assertEqual(self.operation_cost(lambda: self.m1.unread("main")), small_unread)
         self.assertEqual(self.operation_cost(lambda: self.m1.pending("main")), small_pending)
-        turn = self.turns.create("job", "pi", "crew", "/tmp")
+        turn = self.create_turn()
         self.assertLessEqual(self.operation_cost(lambda: self.m1.settle(turn.id, "test", "completed", "new", None)), self.settlement_cost_limit)
         self.assertEqual([event.turn_id for event in self.m1.unread("main")], [turn.id])

@@ -85,6 +85,23 @@ class LocalDurableLoop:
         if os.environ.get("ZXRO_FAULT_EXIT_AFTER") == point:
             os._exit(86)
 
+    @staticmethod
+    def _handled(access, event):
+        try:
+            handled = read_json(access, "inbox-handled", f"{event.event_id}.json")
+        except NotFoundError:
+            return None
+        try:
+            handled_at = datetime.fromisoformat(handled.get("handled_at", ""))
+            valid = set(handled) == {"event_id", "watchtower_id", "handled_at"}
+            valid = valid and handled["event_id"] == event.event_id and handled["watchtower_id"] == event.watchtower_id
+            valid = valid and handled_at.utcoffset() is not None
+        except (TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise UnsafeStateError("invalid handled state")
+        return handled
+
     def _reconcile_next(self, access, box):
         generation = box["highest"] + 1
         try:
@@ -100,7 +117,7 @@ class LocalDurableLoop:
         else:
             if existing != index:
                 raise UnsafeStateError("event index conflicts with immutable event")
-        if event.event_id not in box["unresolved"]:
+        if self._handled(access, event) is None and event.event_id not in box["unresolved"]:
             box["unresolved"].append(event.event_id)
         box["highest"] = generation
         atomic_replace(access, "inbox", f"{event.watchtower_id}.json", box)
@@ -127,6 +144,8 @@ class LocalDurableLoop:
                         self._event(access, turn.watchtower_id, box["highest"] - 1)
                 except NotFoundError as exc:
                     raise UnsafeStateError("mailbox high-water references missing event") from exc
+            while self._reconcile_next(access, box) is not None:
+                box = self._mailbox(access, turn.watchtower_id)
             if turn.state == "running":
                 event_id = "evt-" + uuid.uuid4().hex
                 artifact_refs = ()
@@ -148,8 +167,6 @@ class LocalDurableLoop:
                 existing = turn.settlement
                 if existing.outcome != outcome or existing.summary != message or (payload is not None and existing.payload_sha256 != digest):
                     raise ConflictError("turn already has a different settlement")
-            while self._reconcile_next(access, box) is not None:
-                box = self._mailbox(access, turn.watchtower_id)
             try:
                 event = self._event_by_id(access, turn.settlement.event_id)
             except NotFoundError:
@@ -211,6 +228,12 @@ class LocalDurableLoop:
             box = self._mailbox(access, watchtower_id)
             if through < box["ack"] or through > box["highest"]:
                 raise ConflictError(f"cannot acknowledge generation {through}")
+            try:
+                events = [self._event(access, watchtower_id, generation) for generation in range(box["ack"] + 1, through + 1)]
+            except NotFoundError as exc:
+                raise UnsafeStateError("ack range references missing event") from exc
+            for event in events:
+                self._validate_event(access, event)
             box["ack"] = through
             atomic_replace(access, "inbox", f"{watchtower_id}.json", box)
         return {"watchtower_id": watchtower_id, "through_generation": through}
@@ -229,21 +252,11 @@ class LocalDurableLoop:
                 box["unresolved"].remove(event_id)
                 atomic_replace(access, "inbox", f"{event.watchtower_id}.json", box)
             handled = {"event_id": event_id, "watchtower_id": event.watchtower_id, "handled_at": timestamp()}
-            try:
-                existing = read_json(access, "inbox-handled", f"{event_id}.json")
-            except NotFoundError:
+            existing = self._handled(access, event)
+            if existing is None:
                 atomic_replace(access, "inbox-handled", f"{event_id}.json", handled)
             else:
                 handled = existing
-                try:
-                    handled_at = datetime.fromisoformat(handled.get("handled_at", ""))
-                    valid = set(handled) == {"event_id", "watchtower_id", "handled_at"}
-                    valid = valid and handled["event_id"] == event_id and handled["watchtower_id"] == event.watchtower_id
-                    valid = valid and handled_at.utcoffset() is not None
-                except (TypeError, ValueError):
-                    valid = False
-                if not valid:
-                    raise UnsafeStateError("invalid handled state")
             return handled
 
     def artifact_path(self, ref):

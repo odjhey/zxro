@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-24T21:40:00+08:00
+updated_at: 2026-08-24T22:20:00+08:00
 ---
 
 # Durable store contract
@@ -388,7 +388,8 @@ Rules:
 - ack may not move backwards;
 - repeating the current ack is allowed;
 - ack never deletes inbox history;
-- ack does not mark any event handled.
+- ack does not mark any event handled;
+- before advancing, ack must resolve and validate every newly acknowledged generation; a missing or mismatched generation fails closed without changing the cursor.
 
 ### Handle
 
@@ -432,7 +433,7 @@ zxro settles a turn in this order:
 6. return success
 ```
 
-Steps 3 through 5 form a resumable publication state machine. Retry or another settlement reconciles an immutable event at `highest + 1` before assigning a generation. A committed direct index above high-water must advance mailbox state before success. Interruption before or after any publication write must not overwrite an event or lose visibility.
+Steps 3 through 5 form a resumable publication state machine. Retry or another settlement reconciles and validates an immutable event at `highest + 1` before mutating the requested turn or assigning a generation. A committed direct index above high-water must advance mailbox state before success. Interruption before or after any publication write must not overwrite an event or lose visibility. If handling succeeds between index and mailbox commits, repair must preserve handled state and must not add the event to unresolved attention.
 
 The safety rule is asymmetric:
 
