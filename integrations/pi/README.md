@@ -18,7 +18,7 @@ The extension executes an argv array equivalent to:
 zxro turn settle $ZXRO_TURN_ID --source pi --status STATUS --message SUMMARY --stdin
 ```
 
-It does not invoke a shell. The stdin artifact contains the semantic event name, Pi stop reason, and optional error message. The bounded mailbox message contains no payload text. Pi reports adapter errors through its UI and extension error channel. Missing metadata, ambiguous outcomes, zxro errors, signals, and timeouts do not become successful settlements.
+It does not invoke a shell. The stdin artifact contains the semantic event name, Pi stop reason, and optional error message. The bounded mailbox message contains no payload text. Pi reports adapter errors through its UI and extension error channel. Missing metadata, ambiguous outcomes, zxro errors, closed stdin, signals, and timeouts do not become successful settlements. On timeout, the adapter sends `SIGTERM`, waits 100 ms, sends `SIGKILL` if needed, and reports failure only after the child closes.
 
 ## Hermetic gate
 
@@ -42,3 +42,5 @@ Keep this opt-in. It needs `acpx`, Pi credentials, and disposable zxro state.
 6. Remove the disposable target repository, acpx session, and `ZXRO_HOME`.
 
 Do not claim this smoke from the hermetic test. Record the installed acpx and Pi versions, exact commands, exit codes, turn IDs, event IDs, generations, and cleanup result.
+
+See [SMOKE.md](SMOKE.md) for the reproducible command and evidence from the 2026-08-25 acpx 0.13.1 and Pi 0.84.3 run.

@@ -61,15 +61,47 @@ test("metacharacters remain argv and payload data", async () => {
   assert.equal(call.argv.length, 10);
 });
 
-test("nonzero exit, timeout, and signal are failures", async () => {
-  for (const [body, extra] of [
-    ["process.exit(7)", {}],
-    ["setTimeout(() => {}, 10000)", { ZXRO_PI_TIMEOUT_MS: "20" }],
-    ["process.kill(process.pid, 'SIGTERM')", {}],
-  ] as const) {
-    const fake = await fakeCli(body);
-    await assert.rejects(settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake, extra)), /turn settle failed/);
-  }
+test("large payload plus immediate nonzero exit is a visible failure", async () => {
+  const fake = await fakeCli("process.exit(7)");
+  const message = { role: "assistant", stopReason: "error", errorMessage: "x".repeat(2 * 1024 * 1024) };
+  await assert.rejects(settlePiTurn(message, env(fake)), /turn settle failed: (stdin failed|exited 7)/);
+});
+
+test("closed stdin EPIPE is handled as a visible failure", async () => {
+  const fake = await fakeCli("process.stdin.destroy(); setTimeout(() => process.exit(0), 50)");
+  const message = { role: "assistant", stopReason: "error", errorMessage: "x".repeat(8 * 1024 * 1024) };
+  await assert.rejects(settlePiTurn(message, env(fake)), /turn settle failed: stdin failed/);
+});
+
+test("timeout escalates to SIGKILL and waits for child close", async () => {
+  const fake = await fakeCli(`
+const fs = require("node:fs");
+process.on("SIGTERM", () => fs.writeFileSync(process.env.CAPTURE, "term"));
+setInterval(() => {}, 1000);
+`);
+  const started = Date.now();
+  await assert.rejects(
+    settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake, { ZXRO_PI_TIMEOUT_MS: "250" })),
+    /timed out after 250ms; child closed with SIGKILL/,
+  );
+  assert.equal(await readFile(fake.capture, "utf8"), "term");
+  assert.ok(Date.now() - started >= 300);
+});
+
+test("signal termination is a visible failure", async () => {
+  const fake = await fakeCli("process.kill(process.pid, 'SIGTERM')");
+  await assert.rejects(settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake)), /terminated by SIGTERM/);
+});
+
+test("timeout race cannot turn a post-deadline clean exit into success", async () => {
+  const fake = await fakeCli(`
+process.on("SIGTERM", () => process.exit(0));
+setInterval(() => {}, 1000);
+`);
+  await assert.rejects(
+    settlePiTurn({ role: "assistant", stopReason: "stop" }, env(fake, { ZXRO_PI_TIMEOUT_MS: "250" })),
+    /timed out after 250ms; child closed with exit 0/,
+  );
 });
 
 test("terminal classifier accepts only documented final reasons", () => {

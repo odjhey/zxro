@@ -35,25 +35,47 @@ export function settlementMetadata(env: NodeJS.ProcessEnv): { turnId: string; ho
   return { turnId, home, executable: env.ZXRO_EXECUTABLE?.trim() || "zxro", timeoutMs };
 }
 
+const KILL_GRACE_MS = 100;
+
 async function run(executable: string, args: string[], input: string, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(executable, args, { env, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let stderr = "";
-    let settled = false;
-    const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
+    let stdinError: Error | undefined;
+    let timedOut = false;
+    let finished = false;
+    let killTimer: NodeJS.Timeout | undefined;
+    const clearTimers = () => {
+      clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
+    };
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }, KILL_GRACE_MS);
+    }, timeoutMs);
+
+    child.stdout.resume();
     child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => { if (stderr.length < 8192) stderr += chunk; });
+    child.stderr.on("data", (chunk) => {
+      if (stderr.length < 8192) stderr += String(chunk).slice(0, 8192 - stderr.length);
+    });
+    child.stdin.on("error", (error) => { stdinError = error; });
     child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
+      if (finished) return;
+      finished = true;
+      clearTimers();
       reject(error);
     });
     child.on("close", (code, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (code === 0 && signal === null) resolve();
+      if (finished) return;
+      finished = true;
+      clearTimers();
+      if (timedOut) reject(new Error(`timed out after ${timeoutMs}ms; child closed with ${signal ?? `exit ${code}`}`));
+      else if (stdinError) reject(new Error(`stdin failed: ${stdinError.message}`));
+      else if (code === 0 && signal === null) resolve();
       else reject(new Error(signal ? `terminated by ${signal}` : `exited ${code}: ${stderr.trim()}`));
     });
     child.stdin.end(input);
