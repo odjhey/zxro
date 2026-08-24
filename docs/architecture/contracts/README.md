@@ -4,8 +4,9 @@ description: "Index and stability rules for published interfaces, events, comman
 type: index
 tags: [architecture, contracts]
 status: current
+generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T15:13:40+08:00
+updated_at: 2026-08-24T16:23:00+08:00
 ---
 
 # Contracts
@@ -14,10 +15,11 @@ Contracts define information that crosses ownership boundaries. Keep implementat
 
 ## Files
 
+- [Durable store](./durable-store.md) — provider-neutral work, turn, artifact, mailbox, ack, concurrency, and crash-recovery behavior.
 - [Conventions and primitives](./conventions.md)
 - [Contract template](./contract-template.md)
 
-Add one file per cohesive contract family.
+The durable-store contract is intentionally independent from JSON/JSONL, Beads, mail products, or any other backend. Providers and adapters may change without changing the public zxro behavior when they preserve that contract.
 
 ## Stability rule
 
