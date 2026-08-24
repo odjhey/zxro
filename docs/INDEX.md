@@ -6,7 +6,7 @@ tags: [docs, meta, toc]
 status: current
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T16:31:00+08:00
+updated_at: 2026-08-24T16:41:00+08:00
 ---
 
 # Docs index
@@ -34,11 +34,13 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 |---|---|---|
 | [Architecture](./architecture/README.md) | index | Architecture reading path |
 | [Product architecture](./architecture/product-architecture.md) | architecture | zxro ownership boundaries, provider adapters, progressive context disclosure, mailbox attention, isolation, and end-to-end flow |
-| [Ubiquitous language](./architecture/ubiquitous-language.md) | glossary | Canonical watchtower, work, turn, session, inbox, generation, ack, and wake terms |
+| [Ubiquitous language](./architecture/ubiquitous-language.md) | glossary | Canonical watchtower, work, turn, runtime/session, DATA/CONTROL, inbox, generation, ack, and handled terms |
 | [Bounded contexts](./architecture/bounded-contexts/README.md) | index | Context index and guidance |
 | [Context template](./architecture/bounded-contexts/context-template.md) | bounded-context | Template for a context or capability boundary |
 | [Contracts](./architecture/contracts/README.md) | index | Contract index and stability rules |
 | [Durable store contract](./architecture/contracts/durable-store.md) | contract | Provider-neutral work, turn, artifact, delivery, read ack, handled state, concurrency, crash recovery, and adapter conformance semantics |
+| [Session binding contract](./architecture/contracts/session-binding.md) | contract | Durable work/turn-to-runtime address and optional provider-native conversation identity |
+| [Agent runtime port](./architecture/contracts/agent-runtime-port.md) | contract | Transport-neutral start, DATA, CONTROL, status, and exact-resume boundary around acpx/native runtimes |
 | [Contract conventions](./architecture/contracts/conventions.md) | contract | Shared contract conventions placeholder |
 | [Contract template](./architecture/contracts/contract-template.md) | contract | Template for a contract family |
 | [Diagrams](./architecture/diagrams/README.md) | index | Diagram index and source-of-truth rule |
@@ -71,7 +73,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [Surface template](./v0.x/surfaces/surface-template.md) | spec | Template for a later user or system interface |
 | [Engineering](./v0.x/engineering/README.md) | index | Engineering strategy index |
 | [Testing and agent workflow](./v0.x/engineering/testing-and-agent-workflow.md) | guide | Black-box CLI tests, durable-store conformance, delivery/attention separation, bounded reconciliation, crash-gap tests, and later integration smoke tests |
-| [Runtime and provisioning](./v0.x/engineering/runtime-and-provisioning.md) | guide | No-daemon local topology, `$ZXRO_HOME`, metadata environment, locking, and recovery posture |
+| [Runtime and provisioning](./v0.x/engineering/runtime-and-provisioning.md) | guide | No-daemon/no-listener topology, runtime-port boundary, `$ZXRO_HOME`, metadata environment, locking, and recovery posture |
 | [Validation](./v0.x/validation/README.md) | index | Validation document index |
 | [Release readiness](./v0.x/validation/release-readiness.md) | checklist | Acceptance and readiness template |
 

@@ -1,12 +1,12 @@
 ---
 name: v0x_runtime_and_provisioning
-description: "Local v0.x runtime topology, zxro home layout, configuration, and recovery posture without a daemon."
+description: "Local v0.x runtime topology, zxro home layout, configuration, runtime-port boundary, and recovery posture without a daemon."
 type: guide
 tags: [v0.x, engineering, runtime]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T15:33:00+08:00
+updated_at: 2026-08-24T16:41:00+08:00
 ---
 
 # v0.x runtime and provisioning
@@ -20,38 +20,44 @@ human / watchtower / hook
           |
        zxro CLI
           |
-     $ZXRO_HOME
+     durable provider
 
 agent execution remains separate:
 
 watchtower or human
       |
-    acpx CLI
+  agent runtime port
+      |
+ acpx / native adapter
       |
   Pi / Claude
 ```
 
 Later Pi and Claude integrations may invoke zxro at native completion boundaries, but zxro itself still does not stay resident.
 
+The [agent runtime port](../../architecture/contracts/agent-runtime-port.md) is semantic. zxro does not need to proxy it in v0.x; a watchtower may invoke acpx directly.
+
+## Ports and transports
+
+zxro v0.x opens **no TCP port, UDP port, or Unix-domain socket**.
+
+In architecture documents, `port` means a contract boundary. acpx/ACP/native harness transport is external to zxro. If a future adapter uses stdio, a Unix socket, or a daemon, that transport must preserve the same durable-store, session-binding, DATA/CONTROL, and exact-resume semantics.
+
+Do not copy Rozoro's `monitor.sock` simply because it worked there. Rozoro needed a resident semantic owner; zxro's current CLI contract does not.
+
 ## Home layout
 
-The initial layout is intentionally inspectable:
+The initial built-in provider is intentionally inspectable. Its exact files remain an implementation choice behind the durable-store contract, but the expected shape is local and per-home:
 
 ```text
 $ZXRO_HOME/
 ├── watchtowers/
-│   └── <watchtower-id>.json
 ├── work/
-│   └── <work-id>.json
 ├── turns/
-│   └── <turn-id>/
-│       ├── turn.json
-│       └── result.json
 └── inbox/
-    └── <watchtower-id>/
-        ├── events.jsonl
-        └── ack
 ```
+
+Turn state contains the durable session binding when known. Large artifacts remain separate from routine work/turn/mailbox reads.
 
 `ZXRO_HOME` defaults to `~/.zxro`.
 
@@ -67,6 +73,8 @@ ZXRO_WATCHTOWER_ID
 ```
 
 The turn record is authoritative. Environment variables exist so hooks and child processes can address that record without putting routing metadata into prompts.
+
+Runtime/session identity is durable turn data, not an environment-variable naming scheme. Provider credentials may pass through to an external runtime but must not be copied into zxro state.
 
 ## Watchtower projects
 
@@ -88,14 +96,20 @@ zxro core configuration comes from CLI arguments and `ZXRO_HOME`. It must not pe
 
 Agent-specific environment variables such as Claude profile or provider credentials may pass through a generic child-process helper later, but zxro must not copy their values into durable artifacts.
 
+Session identifiers are data, not executable commands. zxro must not persist shell command strings as its resume contract.
+
 ## Atomicity and locking
 
-- Replace current-state JSON files with write-to-temp, `fsync`, and `os.replace`.
-- Serialize append-only inbox writes with `fcntl.flock`.
-- `fsync` event files before reporting success.
-- Validate IDs before constructing paths.
-- Reject symlinks and unsafe ownership/permissions where zxro relies on path integrity.
-- Treat malformed artifacts as errors. Do not repair them by guessing.
+The built-in provider follows the [durable store contract](../../architecture/contracts/durable-store.md):
+
+- safe serialization is acceptable for concurrent writers;
+- successful mutations must be durable on caller exit;
+- IDs are validated before use as path/provider identifiers;
+- unsafe symlinks, ownership, permissions, malformed state, and conflicts fail closed;
+- settlement writes artifacts and terminal turn state before publishing the mailbox event;
+- retry repairs the allowed terminal-state-without-event crash gap idempotently.
+
+Provider-specific locking and fsync mechanics remain implementation details as long as those semantics hold.
 
 ## Observability
 
@@ -104,21 +118,29 @@ v0.x observability is intentionally local:
 - CLI exit code;
 - stderr diagnostic;
 - optional JSON stdout;
-- current-state JSON files;
-- append-only inbox JSONL;
+- provider current-state records;
 - `zxro inspect <work-id>` for a joined human-readable view.
 
-No metrics, traces, or background health checks are required.
+No metrics, traces, network health endpoint, or background health checks are required.
+
+Runtime status comes from the external runtime port and remains distinct from zxro work acceptance or turn settlement.
 
 ## Failure and recovery
 
-A wake notification is disposable. The inbox event is not. Integrations must append the durable event before attempting to wake a watchtower.
+A wake notification is disposable. The mailbox event is not. Integrations persist the durable settlement before attempting a wake.
 
-If zxro or acpx state is insufficient to continue a conversation, use the [native session recovery playbook](../../playbooks/native-session-recovery.md). zxro must not rewrite Pi or Claude native transcripts during recovery.
+A session binding may help locate the underlying conversation, but recording an ID does not guarantee exact resume capability. When the normal path cannot continue, use the [native session recovery playbook](../../playbooks/native-session-recovery.md).
+
+Exact resume must never silently become a cold start. If the runtime cannot prove the recorded conversation is resumable, fail and let the operator choose whether to create a new turn.
+
+zxro must not rewrite Pi or Claude native transcripts during recovery.
 
 ## Related
 
 - [Engineering index](./README.md)
 - [Technology stack](../scope/technology-stack.md)
 - [Product architecture](../../architecture/product-architecture.md)
+- [Durable store](../../architecture/contracts/durable-store.md)
+- [Session binding](../../architecture/contracts/session-binding.md)
+- [Agent runtime port](../../architecture/contracts/agent-runtime-port.md)
 - [Native session recovery](../../playbooks/native-session-recovery.md)
