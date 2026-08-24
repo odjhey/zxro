@@ -3,6 +3,7 @@ import json
 import os
 import re
 import uuid
+from collections import OrderedDict
 from datetime import datetime
 
 from ..contract import Artifact, MailboxEvent, Settlement, Turn
@@ -19,7 +20,8 @@ def timestamp():
 
 
 class LocalDurableLoop:
-    _artifact_envelope_cache = {}
+    _ARTIFACT_CACHE_LIMIT = 256
+    _artifact_envelope_cache = OrderedDict()
 
     def __init__(self, home, turns, registry=None, work=None):
         self.home, self.turns, self.registry, self.work = home, turns, registry, work
@@ -85,105 +87,143 @@ class LocalDurableLoop:
             raise UnsafeStateError("published event direct index mismatch")
 
     @staticmethod
+    def _artifact_identity(info):
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    @staticmethod
+    def _revalidate_artifact_identity(fd, directory_fd, filename, initial_info, path):
+        """Require the scanned descriptor and current directory entry to agree."""
+        try:
+            current_fd_info = os.fstat(fd)
+            current_path_info = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise UnsafeStateError("artifact record changed during inspection") from exc
+        except OSError as exc:
+            raise UnsafeStateError("cannot revalidate artifact record identity") from exc
+        check_stat(current_path_info, path, directory=False)
+        initial_identity = LocalDurableLoop._artifact_identity(initial_info)
+        if (LocalDurableLoop._artifact_identity(current_fd_info) != initial_identity
+                or LocalDurableLoop._artifact_identity(current_path_info) != initial_identity):
+            raise UnsafeStateError("artifact record changed during inspection")
+
+    @staticmethod
+    def _close_artifact_fd(fd, ref):
+        try:
+            os.close(fd)
+        except OSError as exc:
+            raise UnsafeStateError(f"cannot close artifact record: {ref}") from exc
+
+    @staticmethod
     def _artifact_body_metadata(access, ref):
         """Read only the bounded metadata around an inline M1 artifact body."""
         turn_id, kind = Artifact.parse_ref(ref)
         filename = f"{turn_id}--{kind}.json"
+        path = access.home / "artifacts" / filename
         try:
             with access.directory("artifacts") as directory_fd:
-                fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
                 try:
-                    info = os.fstat(fd)
-                    check_stat(info, access.home / "artifacts" / filename, directory=False)
-                    if info.st_size > MAX_RECORD_BYTES:
-                        raise UnsafeStateError("artifact record is too large")
-                    header = bytearray()
-                    content_start = None
-                    for offset in range(min(info.st_size, 512)):
-                        header.extend(os.pread(fd, 1, offset))
-                        if re.search(rb'"content_hex"\s*:\s*"$', header):
-                            content_start = offset + 1
-                            break
-                    if content_start is None:
-                        raise UnsafeStateError("invalid artifact record metadata")
-                    if re.fullmatch(rb'\{\s*"bytes"\s*:\s*[0-9]+\s*,\s*"content_hex"\s*:\s*"', header) is None:
-                        raise UnsafeStateError("invalid artifact record envelope")
-                    bytes_match = re.search(rb'"bytes"\s*:\s*([0-9]+)', header)
-                    if bytes_match is None:
-                        raise UnsafeStateError("invalid artifact record metadata")
-                    body_bytes = int(bytes_match.group(1))
-                    metadata_start = content_start + (body_bytes * 2) + 1
-                    if metadata_start > info.st_size:
-                        raise UnsafeStateError("invalid artifact record metadata")
-                    tail = os.pread(fd, min(info.st_size - metadata_start, 1024), metadata_start)
-                    cache_key = (
-                        str(access.home), filename, info.st_dev, info.st_ino,
-                        info.st_size, info.st_mtime_ns, info.st_ctime_ns,
-                    )
-                    cached = LocalDurableLoop._artifact_envelope_cache.get(cache_key)
-                    if cached is not None:
-                        return dict(cached)
+                    fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+                except FileNotFoundError:
+                    raise NotFoundError(f"artifact record not found: {ref}") from None
+                except OSError as exc:
+                    raise UnsafeStateError(f"cannot open artifact record: {ref}") from exc
+                try:
+                    try:
+                        info = os.fstat(fd)
+                        check_stat(info, path, directory=False)
+                        if info.st_size > MAX_RECORD_BYTES:
+                            raise UnsafeStateError("artifact record is too large")
+                        header = bytearray()
+                        content_start = None
+                        for offset in range(min(info.st_size, 512)):
+                            header.extend(os.pread(fd, 1, offset))
+                            if re.search(rb'"content_hex"\s*:\s*"$', header):
+                                content_start = offset + 1
+                                break
+                        if content_start is None:
+                            raise UnsafeStateError("invalid artifact record metadata")
+                        if re.fullmatch(rb'\{\s*"bytes"\s*:\s*[0-9]+\s*,\s*"content_hex"\s*:\s*"', header) is None:
+                            raise UnsafeStateError("invalid artifact record envelope")
+                        bytes_match = re.search(rb'"bytes"\s*:\s*([0-9]+)', header)
+                        if bytes_match is None:
+                            raise UnsafeStateError("invalid artifact record metadata")
+                        try:
+                            body_bytes = int(bytes_match.group(1))
+                        except ValueError as exc:
+                            raise UnsafeStateError("invalid artifact record metadata") from exc
+                        metadata_start = content_start + (body_bytes * 2) + 1
+                        if metadata_start > info.st_size:
+                            raise UnsafeStateError("invalid artifact record metadata")
+                        tail = os.pread(fd, min(info.st_size - metadata_start, 1024), metadata_start)
+                        cache_key = (
+                            str(access.home), filename, *LocalDurableLoop._artifact_identity(info)
+                        )
+                        cached = LocalDurableLoop._artifact_envelope_cache.pop(cache_key, None)
+                        if cached is not None:
+                            LocalDurableLoop._revalidate_artifact_identity(fd, directory_fd, filename, info, path)
+                            LocalDurableLoop._artifact_envelope_cache[cache_key] = cached
+                            return dict(cached)
+
+                        header.decode("utf-8")
+                        tail.decode("utf-8")
+
+                        def scalar(segment, key):
+                            match = re.search(rb'"' + key.encode("ascii") + rb'"\s*:\s*"([^"\r\n]*)"', segment)
+                            try:
+                                return match.group(1).decode("utf-8") if match else None
+                            except UnicodeDecodeError as exc:
+                                raise UnsafeStateError("invalid UTF-8 artifact metadata") from exc
+
+                        value = {
+                            "ref": scalar(tail, "ref"),
+                            "turn_id": scalar(tail, "turn_id"),
+                            "kind": scalar(tail, "kind"),
+                            "bytes": body_bytes,
+                            "sha256": scalar(tail, "sha256"),
+                        }
+                        if any(item is None for item in value.values()):
+                            raise UnsafeStateError("invalid artifact record metadata")
+                        expected_tail = (
+                            ",\"kind\":" + json.dumps(value["kind"], separators=(",", ":"))
+                            + ",\"ref\":" + json.dumps(value["ref"], separators=(",", ":"))
+                            + ",\"sha256\":" + json.dumps(value["sha256"], separators=(",", ":"))
+                            + ",\"turn_id\":" + json.dumps(value["turn_id"], separators=(",", ":"))
+                            + "}"
+                        ).encode("utf-8")
+                        if tail.rstrip(b" \t\r\n") != expected_tail:
+                            raise UnsafeStateError("invalid artifact record envelope")
+                        trailing_start = metadata_start + len(expected_tail)
+                        offset = trailing_start
+                        while offset < info.st_size:
+                            chunk = os.pread(fd, min(64 * 1024, info.st_size - offset), offset)
+                            if not chunk or any(byte not in b" \t\r\n" for byte in chunk):
+                                raise UnsafeStateError("invalid trailing artifact record bytes")
+                            offset += len(chunk)
+                        LocalDurableLoop._revalidate_artifact_identity(fd, directory_fd, filename, info, path)
+                        try:
+                            parsed = Artifact.parse_ref(value["ref"])
+                            digest = bytes.fromhex(value["sha256"])
+                            if parsed != (turn_id, kind) or value["turn_id"] != turn_id or value["kind"] != kind:
+                                raise ValueError("artifact identity mismatch")
+                            if type(value["bytes"]) is not int or value["bytes"] < 0 or len(digest) != 32 or len(value["sha256"]) != 64:
+                                raise ValueError("artifact metadata bounds")
+                        except (TypeError, ValueError, ValidationError) as exc:
+                            raise UnsafeStateError("invalid artifact record metadata") from exc
+                        cache = LocalDurableLoop._artifact_envelope_cache
+                        cache[cache_key] = dict(value)
+                        while len(cache) > LocalDurableLoop._ARTIFACT_CACHE_LIMIT:
+                            cache.popitem(last=False)
+                        return value
+                    except UnicodeDecodeError as exc:
+                        raise UnsafeStateError("invalid UTF-8 artifact metadata") from exc
+                    except OSError as exc:
+                        raise UnsafeStateError(f"cannot inspect artifact record: {ref}") from exc
                 finally:
-                    os.close(fd)
+                    LocalDurableLoop._close_artifact_fd(fd, ref)
         except FileNotFoundError:
             raise NotFoundError(f"artifact record not found: {ref}") from None
         except OSError as exc:
             raise UnsafeStateError(f"cannot inspect artifact record: {ref}") from exc
-
-        try:
-            header.decode("utf-8")
-            tail.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise UnsafeStateError("invalid UTF-8 artifact metadata") from exc
-
-        def scalar(segment, key):
-            match = re.search(rb'"' + key.encode("ascii") + rb'"\s*:\s*"([^"\r\n]*)"', segment)
-            try:
-                return match.group(1).decode("utf-8") if match else None
-            except UnicodeDecodeError as exc:
-                raise UnsafeStateError("invalid UTF-8 artifact metadata") from exc
-
-        value = {
-            "ref": scalar(tail, "ref"),
-            "turn_id": scalar(tail, "turn_id"),
-            "kind": scalar(tail, "kind"),
-            "bytes": body_bytes,
-            "sha256": scalar(tail, "sha256"),
-        }
-        if any(item is None for item in value.values()):
-            raise UnsafeStateError("invalid artifact record metadata")
-        expected_tail = (
-            ",\"kind\":" + json.dumps(value["kind"], separators=(",", ":"))
-            + ",\"ref\":" + json.dumps(value["ref"], separators=(",", ":"))
-            + ",\"sha256\":" + json.dumps(value["sha256"], separators=(",", ":"))
-            + ",\"turn_id\":" + json.dumps(value["turn_id"], separators=(",", ":"))
-            + "}"
-        ).encode("utf-8")
-        if tail.rstrip(b" \t\r\n") != expected_tail:
-            raise UnsafeStateError("invalid artifact record envelope")
-        trailing_start = metadata_start + len(expected_tail)
-        with access.directory("artifacts") as directory_fd:
-            fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
-            try:
-                offset = trailing_start
-                while offset < info.st_size:
-                    chunk = os.pread(fd, min(64 * 1024, info.st_size - offset), offset)
-                    if not chunk or any(byte not in b" \t\r\n" for byte in chunk):
-                        raise UnsafeStateError("invalid trailing artifact record bytes")
-                    offset += len(chunk)
-            finally:
-                os.close(fd)
-        try:
-            parsed = Artifact.parse_ref(value["ref"])
-            digest = bytes.fromhex(value["sha256"])
-            if parsed != (turn_id, kind) or value["turn_id"] != turn_id or value["kind"] != kind:
-                raise ValueError("artifact identity mismatch")
-            if type(value["bytes"]) is not int or value["bytes"] < 0 or len(digest) != 32 or len(value["sha256"]) != 64:
-                raise ValueError("artifact metadata bounds")
-        except (TypeError, ValueError, ValidationError) as exc:
-            raise UnsafeStateError("invalid artifact record metadata") from exc
-        LocalDurableLoop._artifact_envelope_cache[cache_key] = dict(value)
-        return value
 
     @staticmethod
     def _artifact_metadata(access, ref, cache=None):

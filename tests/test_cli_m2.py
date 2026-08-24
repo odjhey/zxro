@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.helpers import CliCase, ROOT, BIN, run_cli
+from zxro.errors import UnsafeStateError
 from zxro.localfs import m1_capabilities, m2_capabilities, providers
 import zxro.localfs.durable as durable_module
 
@@ -267,6 +268,75 @@ class InspectCliTests(CliCase):
         self.assertEqual(result.returncode, 5, result.stderr)
         self.assertEqual(result.stdout, "")
         self.assertNotIn("Traceback", result.stderr)
+
+    def test_artifact_path_races_and_filesystem_errors_fail_closed(self):
+        turn_id = self.create_turn()
+        self.assertEqual(self.settle(turn_id, "payload").returncode, 0)
+        artifact = self.home / "artifacts" / f"{turn_id}--stdin.json"
+        original = artifact.read_bytes()
+        registry, work, turns = providers(self.home)
+        inspector = m2_capabilities(self.home, registry, work, turns)
+        real_stat = durable_module.os.stat
+
+        def replace_before_revalidation(delete=False):
+            replaced = False
+
+            def raced_stat(path, *args, **kwargs):
+                nonlocal replaced
+                if path == artifact.name and kwargs.get("dir_fd") is not None and not replaced:
+                    replaced = True
+                    if delete:
+                        artifact.unlink()
+                    else:
+                        swap = artifact.with_name(artifact.name + ".swap")
+                        swap.write_bytes(b" " * len(original))
+                        os.chmod(swap, 0o600)
+                        os.replace(swap, artifact)
+                return real_stat(path, *args, **kwargs)
+
+            with mock.patch.object(durable_module.os, "stat", side_effect=raced_stat):
+                with self.assertRaises(UnsafeStateError):
+                    inspector.inspect("job")
+            self.assertTrue(replaced)
+            if not artifact.exists():
+                artifact.write_bytes(original)
+            else:
+                artifact.write_bytes(original)
+            os.chmod(artifact, 0o600)
+
+        replace_before_revalidation()
+        replace_before_revalidation(delete=True)
+
+        # A cache hit must still verify that the current pathname names the
+        # identity whose metadata was cached.
+        inspector.inspect("job")
+        replace_before_revalidation()
+
+        with mock.patch.object(durable_module.os, "pread", side_effect=OSError("I/O failure")):
+            with self.assertRaises(UnsafeStateError):
+                inspector.inspect("job")
+        with mock.patch.object(durable_module.os, "stat", side_effect=OSError("stat failure")):
+            with self.assertRaises(UnsafeStateError):
+                inspector.inspect("job")
+
+    def test_artifact_metadata_cache_is_bounded(self):
+        turn_id = self.create_turn()
+        self.assertEqual(self.settle(turn_id, "payload").returncode, 0)
+        artifact = self.home / "artifacts" / f"{turn_id}--stdin.json"
+        original = artifact.read_bytes()
+        durable_module.LocalDurableLoop._artifact_envelope_cache.clear()
+        registry, work, turns = providers(self.home)
+        for _ in range(durable_module.LocalDurableLoop._ARTIFACT_CACHE_LIMIT + 8):
+            artifact.write_bytes(original)
+            os.chmod(artifact, 0o600)
+            self.assertEqual(
+                m2_capabilities(self.home, registry, work, turns).inspect("job")["turns"][0]["artifact_bytes"],
+                len(b"payload"),
+            )
+        self.assertLessEqual(
+            len(durable_module.LocalDurableLoop._artifact_envelope_cache),
+            durable_module.LocalDurableLoop._ARTIFACT_CACHE_LIMIT,
+        )
 
     def test_sidecar_and_body_metadata_mismatches_fail_closed(self):
         turn_id = self.create_turn()
