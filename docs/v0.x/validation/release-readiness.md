@@ -31,6 +31,7 @@ updated_at: 2026-08-24T23:42:00+08:00
 | Session binding idempotency and conflict rejection | `TurnBindingCliTests.test_turn_bind_enriches_in_stages_and_rejects_conflicts` |
 | Progressive disclosure against record growth | `InspectCliTests.test_large_artifact_history_stays_behind_metadata` |
 | Disposable end-to-end manual loop | `FullLoopWalkthroughTests.test_disposable_full_loop_walkthrough` |
+| Cross-platform automated suite | [GitHub Actions run 32746778896](https://github.com/odjhey/zxro/actions/runs/32746778896), Python 3.11 and 3.12 on Ubuntu and macOS |
 
 ## Engineering readiness
 
