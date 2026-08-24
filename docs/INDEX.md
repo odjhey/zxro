@@ -6,7 +6,7 @@ tags: [docs, meta, toc]
 status: current
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T21:40:00+08:00
+updated_at: 2026-08-25T07:30:00+08:00
 ---
 
 # Docs index
@@ -87,6 +87,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [Documentation update](./playbooks/documentation-update.md) | guide | Keeping architecture docs aligned with changes |
 | [Native session recovery](./playbooks/native-session-recovery.md) | guide | Last-resort Pi/Claude session lookup and direct resume without confusing acpx and native IDs |
 | [Reports](./reports/README.md) | index | Dated assessments and findings |
+| [2026-08-25: Optional provider evaluation](./reports/2026-08-25-optional-provider-evaluation.md) | report | Beads and BSD `mailx` evidence, decisions, and implementation gates against the M0/M1 durable-store contract |
 | [2026-08-24: Rozoro lessons for zxro](./reports/2026-08-24-rozoro-lessons.md) | report | Operational lessons to copy, adapt, or deliberately not port from Rozoro |
 
 Reusable documentation skills:
