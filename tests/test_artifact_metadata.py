@@ -4,8 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from contextlib import redirect_stdout
+from io import StringIO
 
 from helpers import run_cli
+from zxro.cli import parser, run
 from zxro.errors import UnsafeStateError
 from zxro.localfs import m1_capabilities, providers
 import zxro.localfs.durable as durable
@@ -152,6 +155,52 @@ class ArtifactMetadataTests(unittest.TestCase):
         self.assertEqual(self.loop.stat(ref).ref, ref)
         second = run_cli(self.home, "--json", "migrate", "artifact-metadata")
         self.assertEqual(json.loads(second.stdout), {"already_indexed": 1, "failed": 0, "migrated": 0})
+
+    def test_failed_migration_reports_deterministic_partial_counts_and_refs(self):
+        turns = [self.settle(payload)[0] for payload in (b"one", b"two", b"three")]
+        turns.sort(key=lambda item: item.id)
+        first = self.home / "artifact-metadata" / f"{turns[0].id}--stdin.json"
+        first.unlink()
+        for turn in turns[1:]:
+            metadata = self.home / "artifact-metadata" / f"{turn.id}--stdin.json"
+            value = json.loads(metadata.read_text()); value["sha256"] = "0" * 64
+            metadata.chmod(0o600); metadata.write_text(json.dumps(value)); metadata.chmod(0o400)
+        result = run_cli(self.home, "--json", "migrate", "artifact-metadata")
+        self.assertEqual(result.returncode, 5)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("migrated=1 already_indexed=0 failed=2", result.stderr)
+        refs = ",".join(f"artifact:{turn.id}:stdin" for turn in turns[1:])
+        self.assertIn(f"affected_refs={refs}", result.stderr)
+
+    def test_migration_create_race_rereads_and_rejects_conflict_without_clobber(self):
+        turn, _ = self.settle()
+        path = self.home / "artifact-metadata" / f"{turn.id}--stdin.json"
+        expected = json.loads(path.read_text()); path.unlink()
+        conflicting = {**expected, "sha256": "0" * 64}
+        original = durable.atomic_create
+        injected = False
+        def racing_create(access, directory, filename, value, **kwargs):
+            nonlocal injected
+            if not injected:
+                injected = True
+                path.write_text(json.dumps(conflicting)); path.chmod(0o400)
+            return original(access, directory, filename, value, **kwargs)
+        with mock.patch.object(durable, "atomic_create", side_effect=racing_create):
+            with self.assertRaisesRegex(UnsafeStateError, "failed: migrated=0 already_indexed=0 failed=1"):
+                self.loop.migrate_artifact_metadata()
+        self.assertEqual(json.loads(path.read_text()), conflicting)
+
+    def test_cli_injects_separate_migration_capability(self):
+        class M1Only:
+            pass
+        class Migration:
+            def migrate_artifact_metadata(self):
+                return {"migrated": 0, "already_indexed": 0, "failed": 0}
+        args = parser().parse_args(["--home", str(self.home), "--json", "migrate", "artifact-metadata"])
+        output = StringIO()
+        with redirect_stdout(output):
+            run(args, core_factory=lambda home: (self.registry, object(), self.turns), m1_factory=lambda *args: M1Only(), migration_factory=lambda *args: Migration())
+        self.assertEqual(json.loads(output.getvalue()), {"migrated": 0, "already_indexed": 0, "failed": 0})
 
     def test_migration_interruption_converges(self):
         first, _ = self.settle(b"one")

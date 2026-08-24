@@ -199,13 +199,44 @@ def read_json(access: StoreAccess, directory: str, filename: str) -> dict:
 
 
 def atomic_create(access: StoreAccess, directory: str, filename: str, value: dict, *, mode: int = 0o600) -> None:
-    try:
-        read_json(access, directory, filename)
-    except NotFoundError:
-        pass
-    else:
-        raise ConflictError(f"record already exists: {Path(filename).stem}")
-    atomic_replace(access, directory, filename, value, mode=mode)
+    label = access.home / directory / filename
+    with access.directory(directory) as directory_fd:
+        temporary = f".zxro-tmp-{secrets.token_hex(16)}"
+        fd = None
+        try:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600, dir_fd=directory_fd)
+            payload = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+            if len(payload) > MAX_RECORD_BYTES:
+                raise UnsafeStateError(f"state record is too large: {label}")
+            view = memoryview(payload)
+            while view:
+                view = view[os.write(fd, view):]
+            os.fsync(fd)
+            os.fchmod(fd, mode)
+            os.fsync(fd)
+            os.close(fd)
+            fd = None
+            access.verify_directory(directory, directory_fd)
+            try:
+                os.link(temporary, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd, follow_symlinks=False)
+            except FileExistsError:
+                raise ConflictError(f"record already exists: {Path(filename).stem}") from None
+            os.unlink(temporary, dir_fd=directory_fd)
+            os.fsync(directory_fd)
+            access.verify_directory(directory, directory_fd)
+            record_fd = os.open(filename, os.O_RDONLY | _NOFOLLOW, dir_fd=directory_fd)
+            try:
+                _record_stat(record_fd, directory_fd, filename, label)
+            finally:
+                os.close(record_fd)
+        except BaseException:
+            if fd is not None:
+                os.close(fd)
+            try:
+                os.unlink(temporary, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+            raise
 
 
 def atomic_replace(access: StoreAccess, directory: str, filename: str, value: dict, *, mode: int = 0o600) -> None:

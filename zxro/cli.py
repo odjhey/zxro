@@ -3,7 +3,7 @@ import json
 import sys
 
 from .errors import ValidationError, ZxroError
-from .localfs import m1_capabilities, providers, resolve_home
+from .localfs import artifact_migration_capability, m1_capabilities, providers, resolve_home
 from .settle import MAX_STDIN_BYTES
 
 
@@ -56,7 +56,7 @@ def render(value, machine, *, turn_id_only=False, path_only=False):
         print("\n".join(f"{key}: {value[key]}" for key in value))
 
 
-def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
+def run(args, *, core_factory=providers, m1_factory=m1_capabilities, migration_factory=artifact_migration_capability):
     home = resolve_home(args.home)
     registry, work, turn = core_factory(home)
     loop = m1_factory(home, registry, turn)
@@ -84,7 +84,7 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         elif args.action == "pending": value = loop.pending(args.watchtower)
         else: value = loop.handle(args.event_id, args.watchtower)
     elif args.command == "ack": value = loop.ack(args.watchtower, args.through)
-    elif args.command == "migrate": value = loop.migrate_artifact_metadata()
+    elif args.command == "migrate": value = migration_factory(home, registry, turn).migrate_artifact_metadata()
     else: value, path_only = loop.artifact_path(args.ref), True
     if hasattr(value, "to_dict"): records = value.to_dict()
     elif isinstance(value, list): records = [item.to_dict() if hasattr(item, "to_dict") else item for item in value]

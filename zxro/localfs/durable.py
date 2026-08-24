@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 
 from ..contract import Artifact, ArtifactMetadata, MailboxEvent, Settlement, Turn
-from ..errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
+from ..errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError, ZxroError
 from ..ids import safe_string, validate_event_id, validate_id, validate_turn_id
 from .home import check_stat
 from ..settle import MAX_STDIN_BYTES, normalize_summary
@@ -436,26 +436,45 @@ class LocalDurableLoop:
 
     def migrate_artifact_metadata(self):
         migrated = already_indexed = 0
+        affected = []
         with mutation(self.home) as access:
             for name in self._artifact_record_names(access):
-                record = Artifact.from_dict(read_json(access, "artifacts", name))
-                expected = ArtifactMetadata(record.ref, record.turn_id, record.kind, record.bytes, record.sha256)
-                metadata_name = f"{record.turn_id}--{record.kind}.json"
-                if name != metadata_name:
-                    raise UnsafeStateError(f"artifact record identity does not match path: {name}")
+                parts = name[:-5].split("--", 1)
+                fallback_ref = f"artifact:{parts[0]}:{parts[1]}" if len(parts) == 2 else name
+                current_ref = fallback_ref
                 try:
-                    existing = ArtifactMetadata.from_dict(read_json(access, "artifact-metadata", metadata_name))
-                except NotFoundError:
-                    atomic_create(access, "artifact-metadata", metadata_name, expected.to_dict(), mode=0o400)
-                    migrated += 1
-                    self._fault("artifact-metadata-migration-write")
-                else:
-                    self._verify_metadata_entry(access, record.turn_id, record.kind)
-                    if existing != expected:
-                        raise UnsafeStateError(f"conflicting artifact metadata: {record.ref}")
-                    already_indexed += 1
-                self._seal_legacy_artifact(access, record.turn_id, record.kind)
-                self._verify_artifact_entry(access, record.turn_id, record.kind)
+                    record = Artifact.from_dict(read_json(access, "artifacts", name))
+                    current_ref = record.ref
+                    expected = ArtifactMetadata(record.ref, record.turn_id, record.kind, record.bytes, record.sha256)
+                    metadata_name = f"{record.turn_id}--{record.kind}.json"
+                    if name != metadata_name:
+                        raise UnsafeStateError(f"artifact record identity does not match path: {name}")
+                    try:
+                        existing = ArtifactMetadata.from_dict(read_json(access, "artifact-metadata", metadata_name))
+                    except NotFoundError:
+                        try:
+                            atomic_create(access, "artifact-metadata", metadata_name, expected.to_dict(), mode=0o400)
+                        except ConflictError:
+                            existing = ArtifactMetadata.from_dict(read_json(access, "artifact-metadata", metadata_name))
+                            self._verify_metadata_entry(access, record.turn_id, record.kind)
+                            if existing != expected:
+                                raise UnsafeStateError(f"conflicting artifact metadata: {record.ref}")
+                            already_indexed += 1
+                        else:
+                            migrated += 1
+                            self._fault("artifact-metadata-migration-write")
+                    else:
+                        self._verify_metadata_entry(access, record.turn_id, record.kind)
+                        if existing != expected:
+                            raise UnsafeStateError(f"conflicting artifact metadata: {record.ref}")
+                        already_indexed += 1
+                    self._seal_legacy_artifact(access, record.turn_id, record.kind)
+                    self._verify_artifact_entry(access, record.turn_id, record.kind)
+                except ZxroError:
+                    affected.append(current_ref)
+            if affected:
+                refs = ",".join(sorted(affected))
+                raise UnsafeStateError(f"artifact metadata migration failed: migrated={migrated} already_indexed={already_indexed} failed={len(affected)} affected_refs={refs}")
         return {"migrated": migrated, "already_indexed": already_indexed, "failed": 0}
 
     def artifact_path(self, ref):

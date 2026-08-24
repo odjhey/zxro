@@ -27,6 +27,32 @@ class M1ProviderConformance:
         with self.assertRaises(self.conflict_error):
             self.m1.settle(turn.id, "test", "failed", "done", None)
 
+    def test_artifact_stat_and_deliberate_resolution_conformance(self):
+        turn = self.create_turn()
+        payload = b"provider-neutral evidence"
+        _, event = self.m1.settle(turn.id, "test", "completed", "done", payload)
+        ref = event.artifact_refs[0]
+        metadata = self.m1.stat(ref)
+        self.assertEqual((metadata.ref, metadata.turn_id, metadata.kind, metadata.bytes), (ref, turn.id, "stdin", len(payload)))
+        self.assertEqual(self.m1.artifact_path(ref)["bytes"], len(payload))
+        self.assert_stat_cost_bounded(ref)
+
+        restore = self.remove_artifact_metadata(ref)
+        with self.assertRaises(self.unsafe_error):
+            self.m1.stat(ref)
+        restore()
+        restore = self.remove_artifact_body(ref)
+        with self.assertRaises(self.unsafe_error):
+            self.m1.stat(ref)
+        restore()
+        restore = self.corrupt_artifact_payload(ref)
+        self.assertEqual(self.m1.stat(ref).ref, ref)
+        with self.assertRaises(self.unsafe_error):
+            self.m1.artifact_path(ref)
+        restore()
+        with self.assertRaises(self.unsafe_error):
+            self.force_artifact_replacement(ref)
+
     def test_unread_ack_pending_and_out_of_order_idempotent_handle(self):
         events = [self.m1.settle(self.create_turn().id, "test", "completed", f"done {index}", None)[1] for index in range(1, 4)]
         self.assertEqual([event.generation for event in self.m1.unread("main")], [1, 2, 3])

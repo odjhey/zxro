@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,6 +35,61 @@ class BuiltinM1ProviderConformance(M1ProviderConformance, unittest.TestCase):
         for temporary in self.extra_temps:
             temporary.cleanup()
         self.temp.cleanup()
+
+    @staticmethod
+    def _ref_parts(ref):
+        _, turn_id, kind = ref.split(":")
+        return turn_id, kind
+
+    def assert_stat_cost_bounded(self, ref):
+        calls = []
+        original = durable_module.read_json
+        with mock.patch.object(durable_module, "read_json", side_effect=lambda access, directory, filename: (calls.append(directory), original(access, directory, filename))[1]):
+            self.m1.stat(ref)
+        self.assertEqual(calls, ["artifact-metadata"])
+
+    def remove_artifact_metadata(self, ref):
+        turn_id, kind = self._ref_parts(ref)
+        path = self.home / "artifact-metadata" / f"{turn_id}--{kind}.json"
+        saved = path.read_bytes(); path.unlink()
+        return lambda: (path.write_bytes(saved), path.chmod(0o400))
+
+    def remove_artifact_body(self, ref):
+        turn_id, kind = self._ref_parts(ref)
+        path = self.home / "artifacts" / f"{turn_id}--{kind}.json"
+        saved = path.read_bytes(); path.unlink()
+        return lambda: (path.write_bytes(saved), path.chmod(0o400))
+
+    def corrupt_artifact_payload(self, ref):
+        turn_id, kind = self._ref_parts(ref)
+        path = self.home / "artifacts" / f"{turn_id}--{kind}.json"
+        saved = path.read_bytes(); value = json.loads(saved)
+        content = bytes.fromhex(value["content_hex"]); value["content_hex"] = bytes(byte ^ 1 for byte in content).hex()
+        path.chmod(0o600); path.write_text(json.dumps(value)); path.chmod(0o400)
+        def restore():
+            path.chmod(0o600); path.write_bytes(saved); path.chmod(0o400)
+        return restore
+
+    def force_artifact_replacement(self, ref):
+        turn_id, kind = self._ref_parts(ref)
+        body = self.home / "artifacts" / f"{turn_id}--{kind}.json"
+        replacement = self.home / "artifacts" / "conformance-replacement.json"
+        replacement.write_bytes(body.read_bytes()); replacement.chmod(0o400)
+        real_stat = durable_module.os.stat
+        artifact_directory = (self.home / "artifacts").stat()
+        target_calls = 0
+        def replacing(path, *args, **kwargs):
+            nonlocal target_calls
+            result = real_stat(path, *args, **kwargs)
+            directory_fd = kwargs.get("dir_fd")
+            in_artifacts = directory_fd is not None and os.fstat(directory_fd).st_ino == artifact_directory.st_ino
+            if path == body.name and in_artifacts:
+                target_calls += 1
+                if target_calls == 2:
+                    os.replace(replacement, body)
+            return result
+        with mock.patch.object(durable_module.os, "stat", side_effect=replacing):
+            return self.m1.stat(ref)
 
     def remove_turn(self, turn_id):
         path = self.home / "turns" / f"{turn_id}.json"
