@@ -1,11 +1,13 @@
+import json
 import os
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 from unittest import mock
 
 from tests.helpers import CliCase, ROOT, BIN, run_cli
-from zxro.localfs import m2_capabilities, providers
+from zxro.localfs import m1_capabilities, m2_capabilities, providers
 import zxro.localfs.durable as durable_module
 
 
@@ -57,6 +59,12 @@ class TurnBindingCliTests(CliCase):
         )
         self.assertEqual(bound["state"], "settled")
         self.assertEqual(bound["native_session_id"], "native-settled")
+
+    def test_native_session_source_uses_bounded_provenance_grammar(self):
+        turn_id = self.create_turn().stdout.strip()
+        for source in ("manual source", "acpx/agent", ".manual", "a" * 65):
+            with self.subTest(source=source):
+                self.assertEqual(self.cli("turn", "bind", turn_id, "--source", source).returncode, 2)
 
     def test_turn_create_round_trips_native_identity_and_source(self):
         result = self.create_turn("native-1", "acpx.agentSessionId")
@@ -186,6 +194,107 @@ class InspectCliTests(CliCase):
             direct = inspector.inspect("job")
         self.assertEqual(len(direct["turns"]), 8)
         self.assertEqual(artifact_body_reads, [])
+
+    def test_m1_without_sidecars_uses_bounded_metadata_reads(self):
+        turn_id = self.create_turn()
+        payload = "legacy-payload-" + "x" * (128 * 1024)
+        self.assertEqual(self.settle(turn_id, payload).returncode, 0)
+        (self.home / "artifact-metadata" / f"{turn_id}--stdin.json").unlink()
+        registry, work, turns = providers(self.home)
+        inspector = m2_capabilities(self.home, registry, work, turns)
+        original = durable_module.os.pread
+        read_sizes = []
+
+        def counted(fd, size, offset):
+            read_sizes.append(size)
+            return original(fd, size, offset)
+
+        with mock.patch.object(durable_module.os, "pread", side_effect=counted):
+            result = inspector.inspect("job")
+        self.assertEqual(result["turns"][0]["artifact_bytes"], len(payload.encode()))
+        self.assertLess(sum(read_sizes), 4096)
+
+        calls = []
+        original_json = durable_module.read_json
+
+        def counted_json(access, directory, filename):
+            if directory == "artifacts":
+                calls.append(filename)
+            return original_json(access, directory, filename)
+
+        with mock.patch.object(durable_module, "read_json", side_effect=counted_json):
+            inspector.inspect("job")
+        self.assertEqual(calls, [])
+
+    def test_sidecar_and_body_metadata_mismatches_fail_closed(self):
+        turn_id = self.create_turn()
+        self.assertEqual(self.settle(turn_id, "payload").returncode, 0)
+        sidecar = self.home / "artifact-metadata" / f"{turn_id}--stdin.json"
+        artifact = self.home / "artifacts" / f"{turn_id}--stdin.json"
+        original_sidecar = sidecar.read_bytes()
+        value = json.loads(original_sidecar)
+        value["bytes"] += 1
+        sidecar.write_text(json.dumps(value))
+        self.assertEqual(self.cli("inspect", "job").returncode, 5)
+        sidecar.write_bytes(original_sidecar)
+
+        original_artifact = artifact.read_bytes()
+        body = json.loads(original_artifact)
+        body["bytes"] += 1
+        artifact.write_text(json.dumps(body))
+        self.assertEqual(self.cli("inspect", "job").returncode, 5)
+        artifact.write_bytes(original_artifact)
+        artifact.unlink()
+        self.assertEqual(self.cli("inspect", "job").returncode, 5)
+
+    def test_inspect_uses_a_coherent_locked_snapshot(self):
+        turn_id = self.create_turn()
+        registry, work, turns = providers(self.home)
+        inspector = m2_capabilities(self.home, registry, work, turns)
+        loop = m1_capabilities(self.home, registry, turns)
+        entered = threading.Event()
+        release = threading.Event()
+        settled = threading.Event()
+        result = {}
+        original_summary = inspector._artifact_summary_for_turn
+
+        def paused_summary(access, turn, artifact_cache=None):
+            entered.set()
+            self.assertTrue(release.wait(5))
+            return original_summary(access, turn, artifact_cache)
+
+        def inspect():
+            result["value"] = inspector.inspect("job")
+
+        def settle():
+            loop.settle(turn_id, "manual", "completed", "done", None)
+            settled.set()
+
+        with mock.patch.object(inspector, "_artifact_summary_for_turn", side_effect=paused_summary):
+            inspect_thread = threading.Thread(target=inspect)
+            inspect_thread.start()
+            self.assertTrue(entered.wait(5))
+            settle_thread = threading.Thread(target=settle)
+            settle_thread.start()
+            self.assertFalse(settled.wait(0.1))
+            release.set()
+            inspect_thread.join(5)
+            settle_thread.join(5)
+        self.assertFalse(inspect_thread.is_alive())
+        self.assertTrue(settled.is_set())
+        self.assertEqual(result["value"]["inbox"]["highest_generation"], 0)
+        self.assertEqual(result["value"]["turns"][0]["state"], "running")
+
+    def test_m1_rollback_rejects_m2_native_source_records(self):
+        created = self.cli(
+            "turn", "create", "--work", "job", "--agent", "pi", "--session", "native",
+            "--cwd", "/crew", "--native-session-id", "native-1", "--native-session-source", "acpx.agentSessionId",
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        turn_id = created.stdout.strip()
+        record = json.loads((self.home / "turns" / f"{turn_id}.json").read_text())
+        pre_m2_optional = {"native_session_id", "outcome", "summary", "artifact_refs", "settlement"}
+        self.assertIn("native_session_source", set(record) - pre_m2_optional)
 
     def test_inspect_is_read_only_and_fails_closed_on_bad_metadata(self):
         turn_id = self.create_turn()

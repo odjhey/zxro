@@ -6,14 +6,15 @@ from pathlib import Path
 from unittest import mock
 
 from zxro.errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
-from zxro.localfs import m1_capabilities, providers
+from zxro.localfs import m1_capabilities, m2_capabilities, providers
 import zxro.localfs.durable as durable_module
 
 from conformance.m1_base import M1ProviderConformance
+from conformance.m2_base import M2ProviderConformance
 from helpers import run_cli
 
 
-class BuiltinM1ProviderConformance(M1ProviderConformance, unittest.TestCase):
+class BuiltinM1ProviderConformance(M2ProviderConformance, M1ProviderConformance, unittest.TestCase):
     unsafe_error = UnsafeStateError
     conflict_error = ConflictError
     not_found_error = NotFoundError
@@ -25,6 +26,7 @@ class BuiltinM1ProviderConformance(M1ProviderConformance, unittest.TestCase):
         self.home = Path(self.temp.name) / "home"
         self.registry, self.work, self.turns = providers(self.home)
         self.m1 = m1_capabilities(self.home, self.registry, self.turns)
+        self.m2 = m2_capabilities(self.home, self.registry, self.work, self.turns)
         self.registry.create("main", "/watchtower")
         self.work.create("job", "main")
         self.published = 0

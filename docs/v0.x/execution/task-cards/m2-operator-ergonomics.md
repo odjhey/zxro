@@ -6,7 +6,7 @@ tags: [v0.x, execution, cli]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: "2026-08-24T20:20:00+08:00"
-updated_at: "2026-08-25T00:10:00+08:00"
+updated_at: "2026-08-25T00:07:00+08:00"
 ---
 
 # M2 operator ergonomics task card
@@ -40,6 +40,8 @@ Out of scope:
 - `turn env` must emit exactly the four `ZXRO_*` values already used by future resume tooling.
 - `turn bind` may fill missing `native_session_id` or `native_session_source`; repeated writes with the same values are no-op.
 - Conflicting identity updates fail closed instead of replacing existing values.
+- `native_session_source` uses the bounded provenance grammar in the [session binding contract](../../../architecture/contracts/session-binding.md).
+- A pre-M2 binary cannot decode a turn record after M2 persists `native_session_source`. Rollback requires a pre-binding home or a forward-compatible migration; it must not edit durable records by hand.
 
 ## Acceptance evidence
 
@@ -50,6 +52,8 @@ Out of scope:
 | resume metadata helpers stay correct and parseable | `TurnBindingCliTests.test_turn_env_outputs_exact_resume_metadata_and_shell_quotes_home` |
 | progressive disclosure is preserved when old artifacts expand | `InspectCliTests.test_large_artifact_history_stays_behind_metadata` |
 | manual full-loop walkthrough remains runnable | `FullLoopWalkthroughTests.test_disposable_full_loop_walkthrough` |
+| provider-neutral M2 binding and inspection semantics | `BuiltinM1ProviderConformance.test_native_binding_is_immutable_and_staged` and `test_inspect_returns_bounded_work_metadata` through `M2ProviderConformance` |
+| provenance grammar and M1 rollback consequence are explicit | `TurnBindingCliTests.test_native_session_source_uses_bounded_provenance_grammar` and `test_m1_rollback_rejects_m2_native_source_records` |
 
 ## Gates
 
@@ -58,6 +62,8 @@ Out of scope:
 - [x] `python3 -m unittest discover -s tests -v` passes for updated suite.
 - [x] GitHub Actions passed on Python 3.11 and 3.12 across Ubuntu and macOS for exact head `fd03d95` in [run 32747867543](https://github.com/odjhey/zxro/actions/runs/32747867543).
 - [x] The CLI-spec full-loop block runs from a checkout with only the standard library and the `bin/zxro` shim.
+- [x] Provider-neutral M2 conformance covers binding and bounded inspection.
+- [x] The M1 rollback consequence of the new turn field is documented and tested.
 - [ ] Independent architecture, security, and compatibility review approves the PR.
 
 ## Related

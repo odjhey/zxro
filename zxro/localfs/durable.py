@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import uuid
 from datetime import datetime
 
@@ -9,7 +10,7 @@ from ..errors import ConflictError, NotFoundError, UnsafeStateError, ValidationE
 from ..ids import safe_string, validate_event_id, validate_id, validate_turn_id
 from .home import check_stat
 from ..settle import MAX_STDIN_BYTES, normalize_summary
-from .ioutil import MAX_RECORD_BYTES, atomic_create, atomic_replace, mutation, read_json, reading
+from .ioutil import MAX_RECORD_BYTES, atomic_create, atomic_replace, locked_reading, mutation, read_json, reading
 
 
 def timestamp():
@@ -82,35 +83,96 @@ class LocalDurableLoop:
             raise UnsafeStateError("published event direct index mismatch")
 
     @staticmethod
-    def _artifact_metadata(access, ref):
+    def _artifact_body_metadata(access, ref):
+        """Read only the bounded metadata around an inline M1 artifact body."""
         turn_id, kind = Artifact.parse_ref(ref)
+        filename = f"{turn_id}--{kind}.json"
         try:
-            value = read_json(access, "artifact-metadata", f"{turn_id}--{kind}.json")
-        except NotFoundError:
-            artifact = Artifact.from_dict(read_json(access, "artifacts", f"{turn_id}--{kind}.json"))
-            return {
-                "ref": artifact.ref,
-                "turn_id": artifact.turn_id,
-                "kind": artifact.kind,
-                "bytes": artifact.bytes,
-                "sha256": artifact.sha256,
-            }
-        required = {"ref", "turn_id", "kind", "bytes", "sha256"}
+            with access.directory("artifacts") as directory_fd:
+                fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+                try:
+                    info = os.fstat(fd)
+                    check_stat(info, access.home / "artifacts" / filename, directory=False)
+                    if info.st_size > MAX_RECORD_BYTES:
+                        raise UnsafeStateError("artifact record is too large")
+                    header = bytearray()
+                    content_start = None
+                    for offset in range(min(info.st_size, 512)):
+                        header.extend(os.pread(fd, 1, offset))
+                        if re.search(rb'"content_hex"\s*:\s*"$', header):
+                            content_start = offset + 1
+                            break
+                    if content_start is None:
+                        raise UnsafeStateError("invalid artifact record metadata")
+                    bytes_match = re.search(rb'"bytes"\s*:\s*([0-9]+)', header)
+                    if bytes_match is None:
+                        raise UnsafeStateError("invalid artifact record metadata")
+                    body_bytes = int(bytes_match.group(1))
+                    metadata_start = content_start + (body_bytes * 2) + 1
+                    if metadata_start > info.st_size:
+                        raise UnsafeStateError("invalid artifact record metadata")
+                    tail = os.pread(fd, min(info.st_size - metadata_start, 1024), metadata_start)
+                finally:
+                    os.close(fd)
+        except FileNotFoundError:
+            raise NotFoundError(f"artifact record not found: {ref}") from None
+        except OSError as exc:
+            raise UnsafeStateError(f"cannot inspect artifact record: {ref}") from exc
+
+        def scalar(segment, key):
+            match = re.search(rb'"' + key.encode("ascii") + rb'"\s*:\s*"([^"\r\n]*)"', segment)
+            return match.group(1).decode("utf-8") if match else None
+
+        value = {
+            "ref": scalar(tail, "ref"),
+            "turn_id": scalar(tail, "turn_id"),
+            "kind": scalar(tail, "kind"),
+            "bytes": body_bytes,
+            "sha256": scalar(tail, "sha256"),
+        }
+        if any(item is None for item in value.values()):
+            raise UnsafeStateError("invalid artifact record metadata")
         try:
-            parsed = Artifact.parse_ref(value.get("ref"))
-            digest = bytes.fromhex(value.get("sha256", ""))
-            valid = set(value) == required
-            valid = valid and parsed == (turn_id, kind)
-            valid = valid and value.get("turn_id") == turn_id and value.get("kind") == kind
-            valid = valid and type(value.get("bytes")) is int and value["bytes"] >= 0
-            valid = valid and len(digest) == 32 and len(value["sha256"]) == 64
+            parsed = Artifact.parse_ref(value["ref"])
+            digest = bytes.fromhex(value["sha256"])
+            if parsed != (turn_id, kind) or value["turn_id"] != turn_id or value["kind"] != kind:
+                raise ValueError("artifact identity mismatch")
+            if type(value["bytes"]) is not int or value["bytes"] < 0 or len(digest) != 32 or len(value["sha256"]) != 64:
+                raise ValueError("artifact metadata bounds")
         except (TypeError, ValueError, ValidationError) as exc:
-            raise UnsafeStateError("invalid artifact metadata") from exc
-        if not valid:
-            raise UnsafeStateError("invalid artifact metadata")
+            raise UnsafeStateError("invalid artifact record metadata") from exc
         return value
 
-    def _validate_event(self, access, event, *, metadata_only=False):
+    @staticmethod
+    def _artifact_metadata(access, ref, cache=None):
+        if cache is not None and ref in cache:
+            return cache[ref]
+        body = LocalDurableLoop._artifact_body_metadata(access, ref)
+        turn_id, kind = Artifact.parse_ref(ref)
+        try:
+            sidecar = read_json(access, "artifact-metadata", f"{turn_id}--{kind}.json")
+        except NotFoundError:
+            value = body
+        else:
+            required = {"ref", "turn_id", "kind", "bytes", "sha256"}
+            try:
+                parsed = Artifact.parse_ref(sidecar.get("ref"))
+                digest = bytes.fromhex(sidecar.get("sha256", ""))
+                valid = set(sidecar) == required
+                valid = valid and parsed == (turn_id, kind)
+                valid = valid and sidecar.get("turn_id") == turn_id and sidecar.get("kind") == kind
+                valid = valid and type(sidecar.get("bytes")) is int and sidecar["bytes"] >= 0
+                valid = valid and len(digest) == 32 and len(sidecar["sha256"]) == 64
+            except (TypeError, ValueError, ValidationError) as exc:
+                raise UnsafeStateError("invalid artifact metadata") from exc
+            if not valid or sidecar != body:
+                raise UnsafeStateError("artifact metadata does not match artifact record")
+            value = sidecar
+        if cache is not None:
+            cache[ref] = value
+        return value
+
+    def _validate_event(self, access, event, *, metadata_only=False, artifact_cache=None):
         try:
             turn = self.turns.get_from(access, event.turn_id)
         except NotFoundError as exc:
@@ -120,22 +182,18 @@ class LocalDurableLoop:
             raise UnsafeStateError("mailbox event does not match terminal turn")
         for ref in event.artifact_refs:
             try:
-                if metadata_only:
-                    artifact = self._artifact_metadata(access, ref)
-                else:
-                    turn_id, kind = Artifact.parse_ref(ref)
-                    artifact = Artifact.from_dict(read_json(access, "artifacts", f"{turn_id}--{kind}.json")).to_dict()
+                artifact = self._artifact_metadata(access, ref, artifact_cache)
             except NotFoundError as exc:
                 raise UnsafeStateError("mailbox event references missing artifact") from exc
             if artifact["ref"] != ref or artifact["turn_id"] != event.turn_id or artifact["sha256"] != turn.settlement.payload_sha256:
                 raise UnsafeStateError("mailbox event artifact does not match durable settlement metadata")
         return event
 
-    def _artifact_summary_for_turn(self, access, turn):
+    def _artifact_summary_for_turn(self, access, turn, artifact_cache=None):
         total_bytes = 0
         for ref in turn.artifact_refs:
             try:
-                artifact = self._artifact_metadata(access, ref)
+                artifact = self._artifact_metadata(access, ref, artifact_cache)
             except NotFoundError as exc:
                 raise UnsafeStateError("turn references missing artifact") from exc
             if turn.settlement is None or artifact["sha256"] != turn.settlement.payload_sha256:
@@ -143,18 +201,18 @@ class LocalDurableLoop:
             total_bytes += artifact["bytes"]
         return len(turn.artifact_refs), total_bytes
 
-    def _read_only_unread_count(self, access, watchtower_id):
+    def _read_only_unread_count(self, access, watchtower_id, artifact_cache=None):
         box = self._mailbox(access, watchtower_id)
         try:
             events = [self._event(access, watchtower_id, generation) for generation in range(box["ack"] + 1, box["highest"] + 1)]
             for event in events:
                 self._validate_index(access, event)
-                self._validate_event(access, event, metadata_only=True)
+                self._validate_event(access, event, metadata_only=True, artifact_cache=artifact_cache)
         except NotFoundError as exc:
             raise UnsafeStateError("mailbox index references missing event or artifact metadata") from exc
         return len(events)
 
-    def _read_only_pending_count(self, access, watchtower_id):
+    def _read_only_pending_count(self, access, watchtower_id, artifact_cache=None):
         box = self._mailbox(access, watchtower_id)
         resolved = []
         seen = set()
@@ -167,22 +225,23 @@ class LocalDurableLoop:
             unseen = [self._event_by_id(access, event_id) for event_id in resolved]
             for event in unseen:
                 self._validate_index(access, event)
-                self._validate_event(access, event, metadata_only=True)
+                self._validate_event(access, event, metadata_only=True, artifact_cache=artifact_cache)
         except NotFoundError as exc:
             raise UnsafeStateError("mailbox index references missing event or artifact metadata") from exc
         return sum(1 for event in unseen if self._handled(access, event) is None)
 
     def inspect(self, work_id):
         work_id = validate_id(work_id, "work id")
-        with reading(self.home) as access:
+        artifact_cache = {}
+        with locked_reading(self.home) as access:
             work = self.work.get_from(access, work_id)
             if self.registry is not None:
                 watchtower = self.registry.get_from(access, work.watchtower_id)
             else:
                 watchtower = type("Watchtower", (), {"id": work.watchtower_id, "cwd": ""})
-            turns = self.turns.list(work_id)
-            unread_count = self._read_only_unread_count(access, work.watchtower_id)
-            pending_count = self._read_only_pending_count(access, work.watchtower_id)
+            turns = self.turns.list_from(access, work_id)
+            unread_count = self._read_only_unread_count(access, work.watchtower_id, artifact_cache)
+            pending_count = self._read_only_pending_count(access, work.watchtower_id, artifact_cache)
             box = self._mailbox(access, work.watchtower_id)
             summary = {
                 "work": {
@@ -203,7 +262,7 @@ class LocalDurableLoop:
                 "turns": [],
             }
             for item in turns:
-                artifact_count, artifact_bytes = self._artifact_summary_for_turn(access, item)
+                artifact_count, artifact_bytes = self._artifact_summary_for_turn(access, item, artifact_cache)
                 summary["turns"].append({
                     "id": item.id,
                     "agent": item.agent,

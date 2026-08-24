@@ -106,6 +106,32 @@ def reading(home: Path):
 
 
 @contextmanager
+def locked_reading(home: Path):
+    """Read an existing home while excluding concurrent mutations."""
+    with StoreAccess(home) as access:
+        try:
+            lock_stat = os.stat(".lock", dir_fd=access.home_fd, follow_symlinks=False)
+            check_stat(lock_stat, access.home / ".lock", directory=False)
+            fd = os.open(".lock", os.O_RDWR | _NOFOLLOW, dir_fd=access.home_fd)
+            current = os.fstat(fd)
+            check_stat(current, access.home / ".lock", directory=False)
+            if not _same_inode(lock_stat, current):
+                raise UnsafeStateError("store lock changed while opening")
+        except FileNotFoundError:
+            raise NotFoundError("zxro store lock does not exist") from None
+        except OSError as exc:
+            raise UnsafeStateError(f"cannot open store lock: {exc}") from exc
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            _verify_lock(access, fd, current)
+            yield access
+            _verify_lock(access, fd, current)
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+
+@contextmanager
 def mutation(home: Path):
     with StoreAccess(home, create=True) as access:
         flags = os.O_RDWR | os.O_CREAT | _NOFOLLOW

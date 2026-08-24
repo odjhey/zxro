@@ -9,7 +9,7 @@ sources:
   - ref: https://github.com/odjhey/rozoro/blob/master/docs/plans/2026-08-22-000356-session-linking/plan.md
     credibility: primary
 created_at: 2026-08-24T16:41:00+08:00
-updated_at: 2026-08-24T16:41:00+08:00
+updated_at: 2026-08-25T00:07:00+08:00
 ---
 
 # Session binding contract
@@ -127,6 +127,8 @@ pi.session
 claude.session
 manual
 ```
+
+The source must match `[A-Za-z][A-Za-z0-9]*(?:[._-][A-Za-z0-9]+)*` and must be at most 64 characters. This keeps provenance readable while excluding whitespace, path separators, control characters, and shell syntax.
 
 The source helps an operator understand whether an ID came from a public adapter surface or manual recovery. It must not contain credentials, transcript bodies, or arbitrary command text.
 

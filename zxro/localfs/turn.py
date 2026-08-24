@@ -6,7 +6,7 @@ from pathlib import Path
 
 from zxro.contract import Artifact, Settlement, Turn
 from zxro.errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
-from zxro.ids import lexical_absolute, safe_string, validate_event_id, validate_id, validate_turn_id
+from zxro.ids import lexical_absolute, safe_string, validate_event_id, validate_id, validate_native_session_source, validate_turn_id
 from .ioutil import atomic_create, atomic_replace, list_records, mutation, read_json, reading
 
 
@@ -19,6 +19,8 @@ class LocalTurnStore:
         agent, session = safe_string(agent, "agent"), safe_string(session, "session")
         native_session_id = safe_string(native_session_id, "native session id", required=False)
         native_session_source = safe_string(native_session_source, "native session source", required=False)
+        if native_session_source is not None:
+            validate_native_session_source(native_session_source)
         if native_session_source is not None and native_session_id is None:
             raise ValidationError("native session source requires a native session id")
         cwd = lexical_absolute(cwd)
@@ -49,6 +51,8 @@ class LocalTurnStore:
         id = validate_turn_id(id)
         native_session_id = safe_string(native_session_id, "native session id", required=False)
         native_session_source = safe_string(native_session_source, "native session source", required=False)
+        if native_session_source is not None:
+            validate_native_session_source(native_session_source)
         if native_session_id is None and native_session_source is None:
             raise ValidationError("native session id or native session source is required")
         with reading(self.home) as access:
@@ -84,20 +88,23 @@ class LocalTurnStore:
         return record
 
     def list(self, work_id=None, state=None):
+        with reading(self.home) as access:
+            return self.list_from(access, work_id, state)
+
+    def list_from(self, access, work_id=None, state=None):
         if work_id is not None:
             validate_id(work_id, "work id")
         if state is not None and state not in {"running", "settled"}:
             raise ValidationError(f"invalid turn state: {state!r}")
         try:
-            with reading(self.home) as access:
-                records = [self._decode(item) for item in list_records(access, "turns")]
-                for record in records:
-                    try:
-                        owner = self.work.get_from(access, record.work_id)
-                    except Exception as exc:
-                        raise UnsafeStateError(f"invalid turn ownership: {exc}") from exc
-                    if owner.watchtower_id != record.watchtower_id:
-                        raise UnsafeStateError("turn watchtower does not match work owner")
+            records = [self._decode(item) for item in list_records(access, "turns")]
+            for record in records:
+                try:
+                    owner = self.work.get_from(access, record.work_id)
+                except Exception as exc:
+                    raise UnsafeStateError(f"invalid turn ownership: {exc}") from exc
+                if owner.watchtower_id != record.watchtower_id:
+                    raise UnsafeStateError("turn watchtower does not match work owner")
         except NotFoundError:
             return []
         return sorted((item for item in records if (work_id is None or item.work_id == work_id) and (state is None or item.state == state)), key=lambda item: item.id)
@@ -119,6 +126,7 @@ class LocalTurnStore:
                 safe_string(data["native_session_id"], "native session id")
             if "native_session_source" in data:
                 safe_string(data["native_session_source"], "native session source")
+                validate_native_session_source(data["native_session_source"])
             if data.get("native_session_source") is not None and data.get("native_session_id") is None:
                 raise ValueError("native session source requires a native session id")
             normalized_cwd = lexical_absolute(data["cwd"])

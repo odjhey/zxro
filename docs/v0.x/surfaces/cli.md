@@ -448,7 +448,7 @@ inbox:
   pending attention: 2
 ```
 
-`inspect` is read-only. It must not reconcile, ack, handle, repair, resume, or print artifact contents. Artifact counts, references, and byte sizes are acceptable; accumulated handoff text is not.
+`inspect` is read-only. It must not reconcile, ack, handle, repair, resume, or print artifact contents. Artifact counts, references, and byte sizes are acceptable; accumulated handoff text is not. The built-in provider takes the store lock for the whole joined read, so turn, artifact metadata, and mailbox counts come from one coherent snapshot. Legacy M1 artifact records without metadata sidecars are read through bounded metadata windows and are cached for the snapshot; their inline payloads are never loaded into routine-read memory.
 
 ## Manual full-loop example
 
