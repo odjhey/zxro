@@ -19,6 +19,8 @@ def timestamp():
 
 
 class LocalDurableLoop:
+    _artifact_envelope_cache = {}
+
     def __init__(self, home, turns, registry=None, work=None):
         self.home, self.turns, self.registry, self.work = home, turns, registry, work
 
@@ -114,8 +116,13 @@ class LocalDurableLoop:
                     if metadata_start > info.st_size:
                         raise UnsafeStateError("invalid artifact record metadata")
                     tail = os.pread(fd, min(info.st_size - metadata_start, 1024), metadata_start)
-                    end_offset = max(0, info.st_size - 1024)
-                    end_tail = os.pread(fd, min(info.st_size, 1024), end_offset)
+                    cache_key = (
+                        str(access.home), filename, info.st_dev, info.st_ino,
+                        info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+                    )
+                    cached = LocalDurableLoop._artifact_envelope_cache.get(cache_key)
+                    if cached is not None:
+                        return dict(cached)
                 finally:
                     os.close(fd)
         except FileNotFoundError:
@@ -126,7 +133,6 @@ class LocalDurableLoop:
         try:
             header.decode("utf-8")
             tail.decode("utf-8")
-            end_tail.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise UnsafeStateError("invalid UTF-8 artifact metadata") from exc
 
@@ -155,9 +161,18 @@ class LocalDurableLoop:
         ).encode("utf-8")
         if tail.rstrip(b" \t\r\n") != expected_tail:
             raise UnsafeStateError("invalid artifact record envelope")
-        end_trimmed = end_tail.rstrip(b" \t\r\n")
-        if end_trimmed and end_trimmed[-1:] != b"}":
-            raise UnsafeStateError("invalid trailing artifact record bytes")
+        trailing_start = metadata_start + len(expected_tail)
+        with access.directory("artifacts") as directory_fd:
+            fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            try:
+                offset = trailing_start
+                while offset < info.st_size:
+                    chunk = os.pread(fd, min(64 * 1024, info.st_size - offset), offset)
+                    if not chunk or any(byte not in b" \t\r\n" for byte in chunk):
+                        raise UnsafeStateError("invalid trailing artifact record bytes")
+                    offset += len(chunk)
+            finally:
+                os.close(fd)
         try:
             parsed = Artifact.parse_ref(value["ref"])
             digest = bytes.fromhex(value["sha256"])
@@ -167,6 +182,7 @@ class LocalDurableLoop:
                 raise ValueError("artifact metadata bounds")
         except (TypeError, ValueError, ValidationError) as exc:
             raise UnsafeStateError("invalid artifact record metadata") from exc
+        LocalDurableLoop._artifact_envelope_cache[cache_key] = dict(value)
         return value
 
     @staticmethod
