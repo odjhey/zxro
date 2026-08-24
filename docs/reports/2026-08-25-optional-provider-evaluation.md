@@ -4,9 +4,9 @@ description: "Evaluation of Beads and BSD mailx against the M0 and M1 durable-st
 type: report
 tags: [reports, providers, storage, mailbox, v0.x]
 status: draft
-created_at: "2026-08-25T07:30:00+08:00"
-updated_at: "2026-08-25T12:00:00+08:00"
-generated: "OpenAI Codex, ADP-EVAL attempt 3, 2026-08-25"
+created_at: "2026-08-25T06:45:30+08:00"
+updated_at: "2026-08-25T07:15:42+08:00"
+generated: "OpenAI Codex, ADP-EVAL attempt 4; evidence collected by 2026-08-25T07:15:42+08:00"
 sources:
   - ref: ../architecture/contracts/durable-store.md
     credibility: primary
