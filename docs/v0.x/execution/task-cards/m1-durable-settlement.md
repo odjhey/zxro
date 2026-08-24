@@ -68,7 +68,7 @@ M1 depends on merged PR #6 at commit `7dbb533` and accepts [decision 0002](../..
 - [x] ADR 0002 accepted.
 - [x] Retry equality and durable event identity recorded.
 - [x] Focused black-box tests pass locally on Python 3.11+.
-- [x] GitHub Actions passed on Python 3.11 and 3.12 across Ubuntu and macOS for exact implementation head `1979962952ca5217ff4f127cd7f2ea497eaa4277` in [run 32740610643](https://github.com/odjhey/zxro/actions/runs/32740610643).
+- [x] GitHub Actions passed on Python 3.11 and 3.12 across Ubuntu and macOS for exact implementation head `2bc201a1393b56853db7498c528d192a04854ac1` in [run 32741777149](https://github.com/odjhey/zxro/actions/runs/32741777149).
 - [ ] Independent architecture, security, and compatibility review approves the PR.
 
 ## Related
