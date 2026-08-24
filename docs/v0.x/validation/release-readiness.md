@@ -5,7 +5,7 @@ type: checklist
 tags: [v0.x, validation, release]
 status: draft
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-25T00:25:00+08:00
+updated_at: 2026-08-25T00:29:00+08:00
 ---
 
 # v0.x Release Readiness
@@ -35,7 +35,7 @@ updated_at: 2026-08-25T00:25:00+08:00
 | Provider-neutral M2 behavior | `BuiltinM1ProviderConformance.test_native_binding_is_immutable_and_staged`, `test_m2_missing_objects_have_no_side_effects`, `test_m2_inspect_is_read_only`, `test_native_provenance_rejects_unbounded_or_unsafe_values`, `test_m2_artifact_metadata_corruption_fails_closed`, and `test_inspect_returns_bounded_work_metadata` through `M2ProviderConformance` |
 | Progressive disclosure against record growth | `InspectCliTests.test_large_artifact_history_stays_behind_metadata` |
 | Disposable end-to-end manual loop | `FullLoopWalkthroughTests.test_disposable_full_loop_walkthrough`; CLI-spec block uses the `bin/zxro` shim, manual settlement, and a captured JSON event ID |
-| Immutable implementation-head suite | Last code-bearing commit `b09b0f5`; [GitHub Actions run 32749301568](https://github.com/odjhey/zxro/actions/runs/32749301568) passed Python 3.11 and 3.12 on Ubuntu and macOS |
+| Immutable implementation-head suite | Last code-bearing commit `3a0e939`; [GitHub Actions run 32750988935](https://github.com/odjhey/zxro/actions/runs/32750988935) passed Python 3.11 and 3.12 on Ubuntu and macOS |
 | Final PR-head CI | Verified externally through the [PR #8 GitHub checks](https://github.com/odjhey/zxro/pull/8/checks); this row intentionally carries no self-referential SHA claim |
 
 The implementation-head row is immutable evidence for the code-bearing change. Documentation-only commits may advance the PR head without changing that row. GitHub's PR checks are authoritative for the current head.

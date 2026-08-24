@@ -6,7 +6,7 @@ tags: [v0.x, execution, cli]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: "2026-08-24T20:20:00+08:00"
-updated_at: "2026-08-25T00:25:00+08:00"
+updated_at: "2026-08-25T00:29:00+08:00"
 ---
 
 # M2 operator ergonomics task card
@@ -60,7 +60,7 @@ Out of scope:
 - [x] Progressive disclosure and artifact-byte accounting in inspect remain stable.
 - [x] `turn bind` uses immutable identity semantics from the session-binding contract.
 - [x] `python3 -m unittest discover -s tests -v` passes for updated suite.
-- [x] Immutable implementation-head evidence is recorded for the last code-bearing commit `b09b0f5`: Python 3.11 and 3.12 across Ubuntu and macOS passed in [run 32749301568](https://github.com/odjhey/zxro/actions/runs/32749301568).
+- [x] Immutable implementation-head evidence is recorded for the last code-bearing commit `3a0e939`: Python 3.11 and 3.12 across Ubuntu and macOS passed in [run 32750988935](https://github.com/odjhey/zxro/actions/runs/32750988935).
 - [x] The CLI-spec full-loop block runs from a checkout with only the standard library and the `bin/zxro` shim.
 - [x] Provider-neutral M2 conformance covers binding, missing objects, read-only behavior, provenance rejection, bounded inspection, and corruption.
 - [x] The M1 rollback consequence of the new turn field is documented and tested.
