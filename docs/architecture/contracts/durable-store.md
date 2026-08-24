@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-24T23:58:00+08:00
+updated_at: 2026-08-25T10:00:00+08:00
 ---
 
 # Durable store contract
@@ -148,15 +148,21 @@ An artifact is potentially large evidence that routine reconciliation must not i
 
 Examples include reports, review findings, test logs, diffs, screenshots, raw hook payloads, and transcript exports.
 
-Minimum metadata:
+Authoritative metadata has this exact logical shape:
 
 ```json
 {
   "ref": "artifact:550e8400-e29b-41d4-a716-446655440000:review",
+  "turn_id": "550e8400-e29b-41d4-a716-446655440000",
   "kind": "review",
-  "bytes": 18432
+  "bytes": 18432,
+  "sha256": "4f7e...64-lowercase-hex-characters"
 }
 ```
+
+Routine metadata validation checks the exact schema, typed reference identity, owning turn agreement, a nonnegative byte count, digest shape, and the existence and safety of the provider body object. It must reject missing, malformed, writable, symlinked, or conflicting metadata. It also rejects a missing, writable, symlinked, replaced, or otherwise unsafe body entry. This check reads bounded metadata and filesystem identity only. It does not read, decode, scan, or hash payload bytes, so same-length payload corruption may pass.
+
+Deliberate payload validation through `artifact.resolve` or `artifact path` reads the complete body. It verifies the decoded byte count and SHA-256 against authoritative metadata before returning a target. It must detect same-length payload corruption and metadata/body disagreement.
 
 A provider may store artifact bytes itself or resolve the reference to another durable location. The reference is opaque to callers.
 
@@ -326,9 +332,9 @@ artifact.stat(ref) -> metadata
 artifact.resolve(ref) -> deliberate read target
 ```
 
-`artifact.resolve` may return a local path, a provider handle, or another explicit retrieval target. It must never cause routine work, turn, inbox, or inspection reads to inline the artifact body.
+`artifact.stat` performs routine metadata validation. `artifact.resolve` may return a local path, a provider handle, or another explicit retrieval target after full payload validation. Neither operation may permit traversal outside the active provider namespace. Routine work, turn, inbox, and inspection reads consume `artifact.stat` through the provider port and never inline artifact bodies.
 
-Artifact references must not permit traversal outside the active provider namespace.
+Upgraded built-in homes require authoritative metadata. If an M1 artifact has no metadata, routine reads fail under unsafe-state exit 5 with a migration-required message. The operator runs `zxro migrate artifact-metadata` once for all artifacts in the active home. Migration takes the store's mutation lock, fully validates each legacy artifact, preserves its bytes and reference, writes only missing metadata, rejects conflicts, and converges after interruption. It does not run during routine reads.
 
 ## Mailbox-store operations
 
@@ -428,15 +434,16 @@ Provider composition must not require a distributed transaction.
 zxro settles a turn in this order:
 
 ```text
-1. persist referenced artifacts
-2. commit terminal turn state with its allocated event ID
-3. create the immutable generation event without overwriting
-4. create the direct event-ID index without overwriting
-5. advance mailbox high-water and unresolved state
-6. return success
+1. persist referenced artifact bodies
+2. persist matching authoritative artifact metadata
+3. commit terminal turn state with its allocated event ID
+4. create the immutable generation event without overwriting
+5. create the direct event-ID index without overwriting
+6. advance mailbox high-water and unresolved state
+7. return success
 ```
 
-Steps 3 through 5 form a resumable publication state machine. Before mutating the requested turn or assigning a generation, settlement must resolve and validate the direct index of the mailbox's already-published boundary events at generations `highest` and `highest - 1`; a missing or mismatched boundary index fails closed without touching the requested turn or mailbox. Retry or another settlement then reconciles and validates an immutable event at `highest + 1` before proceeding. A committed direct index above high-water must advance mailbox state before success. Interruption before or after any publication write must not overwrite an event or lose visibility. If handling succeeds between index and mailbox commits, repair must preserve handled state and must not add the event to unresolved attention.
+Steps 4 through 6 form a resumable publication state machine. Before mutating the requested turn or assigning a generation, settlement must resolve and validate the direct index of the mailbox's already-published boundary events at generations `highest` and `highest - 1`; a missing or mismatched boundary index fails closed without touching the requested turn or mailbox. Retry or another settlement then reconciles and validates an immutable event at `highest + 1` before proceeding. A committed direct index above high-water must advance mailbox state before success. Interruption before or after any publication write must not overwrite an event or lose visibility. If handling succeeds between index and mailbox commits, repair must preserve handled state and must not add the event to unresolved attention.
 
 The safety rule is asymmetric:
 
@@ -444,7 +451,7 @@ The safety rule is asymmetric:
 
 `unread` and `pending` must fail closed if an event's terminal turn, ownership, settlement identity, outcome, summary, or artifact metadata is missing or disagrees. They must not return a partially validated envelope.
 
-A process may crash after step 2 and before step 3. That leaves a settled turn whose mailbox event has not yet been published. This state is recoverable. Retrying settlement or reconciliation must detect the committed settlement and idempotently publish the missing event.
+A process may crash after step 3 and before step 4. That leaves a settled turn whose mailbox event has not yet been published. This state is recoverable. Retrying settlement or reconciliation must detect the committed settlement and idempotently publish the missing event.
 
 A process must not report successful settlement to its caller until mailbox publication is durable.
 

@@ -49,11 +49,14 @@ class BuiltinM1ProviderConformance(M1ProviderConformance, unittest.TestCase):
         return self.turns.get(turn.id).settlement.event_id
 
     def corrupt_artifact_relationship(self, turn, event):
-        path = self.home / "artifacts" / f"{turn.id}--stdin.json"; saved = path.read_bytes()
+        path = self.home / "artifact-metadata" / f"{turn.id}--stdin.json"; saved = path.read_bytes()
+        path.chmod(0o600)
         value = json.loads(saved); content = b"replacement"
-        value.update(bytes=len(content), sha256=hashlib.sha256(content).hexdigest(), content_hex=content.hex())
-        path.write_text(json.dumps(value))
-        return lambda: path.write_bytes(saved)
+        value.update(bytes=len(content), sha256=hashlib.sha256(content).hexdigest())
+        path.write_text(json.dumps(value)); path.chmod(0o400)
+        def restore():
+            path.chmod(0o600); path.write_bytes(saved); path.chmod(0o400)
+        return restore
 
     def corrupt_event_identity_lookup(self, event, invalid_generation):
         path = self.home / "inbox-index" / f"{event.event_id}.json"; saved = path.read_bytes()

@@ -37,6 +37,8 @@ def parser():
     ack = commands.add_parser("ack"); ack.add_argument("--watchtower", required=True); ack.add_argument("--through", required=True, type=int)
     artifact = commands.add_parser("artifact").add_subparsers(dest="action", required=True)
     path = artifact.add_parser("path"); path.add_argument("ref")
+    migrate = commands.add_parser("migrate").add_subparsers(dest="action", required=True)
+    migrate.add_parser("artifact-metadata")
     return root
 
 
@@ -82,6 +84,7 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         elif args.action == "pending": value = loop.pending(args.watchtower)
         else: value = loop.handle(args.event_id, args.watchtower)
     elif args.command == "ack": value = loop.ack(args.watchtower, args.through)
+    elif args.command == "migrate": value = loop.migrate_artifact_metadata()
     else: value, path_only = loop.artifact_path(args.ref), True
     if hasattr(value, "to_dict"): records = value.to_dict()
     elif isinstance(value, list): records = [item.to_dict() if hasattr(item, "to_dict") else item for item in value]

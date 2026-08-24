@@ -3,6 +3,8 @@ from datetime import datetime
 import unicodedata
 from typing import Protocol
 
+from .errors import ValidationError
+
 
 @dataclass(frozen=True)
 class Watchtower:
@@ -78,6 +80,38 @@ class Artifact:
             from .errors import UnsafeStateError
             raise UnsafeStateError("invalid artifact record")
         return record
+
+
+@dataclass(frozen=True)
+class ArtifactMetadata:
+    ref: str
+    turn_id: str
+    kind: str
+    bytes: int
+    sha256: str
+
+    def to_dict(self):
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, value):
+        if set(value) != set(cls.__dataclass_fields__):
+            from .errors import UnsafeStateError
+            raise UnsafeStateError("invalid artifact metadata schema")
+        try:
+            metadata = cls(**value)
+            identity = Artifact.parse_ref(metadata.ref)
+            valid = identity == (metadata.turn_id, metadata.kind)
+            valid = valid and type(metadata.bytes) is int and metadata.bytes >= 0
+            valid = valid and isinstance(metadata.sha256, str) and len(metadata.sha256) == 64
+            valid = valid and all(character in "0123456789abcdef" for character in metadata.sha256)
+        except (TypeError, ValueError, ValidationError) as exc:
+            from .errors import UnsafeStateError
+            raise UnsafeStateError("invalid artifact metadata") from exc
+        if not valid:
+            from .errors import UnsafeStateError
+            raise UnsafeStateError("invalid artifact metadata")
+        return metadata
 
 
 @dataclass(frozen=True)
@@ -181,7 +215,12 @@ class MailboxCapability(Protocol):
 
 
 class ArtifactCapability(Protocol):
+    def stat(self, ref: str) -> ArtifactMetadata: ...
     def artifact_path(self, ref: str) -> dict: ...
+
+
+class ArtifactMigrationCapability(Protocol):
+    def migrate_artifact_metadata(self) -> dict: ...
 
 
 class M1Capabilities(SettlementCapability, MailboxCapability, ArtifactCapability, Protocol):

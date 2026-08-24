@@ -4,7 +4,7 @@ import os
 import uuid
 from datetime import datetime
 
-from ..contract import Artifact, MailboxEvent, Settlement, Turn
+from ..contract import Artifact, ArtifactMetadata, MailboxEvent, Settlement, Turn
 from ..errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from ..ids import safe_string, validate_event_id, validate_id, validate_turn_id
 from .home import check_stat
@@ -90,11 +90,10 @@ class LocalDurableLoop:
         if expected != event:
             raise UnsafeStateError("mailbox event does not match terminal turn")
         for ref in event.artifact_refs:
-            turn_id, kind = Artifact.parse_ref(ref)
             try:
-                artifact = Artifact.from_dict(read_json(access, "artifacts", f"{turn_id}--{kind}.json"))
+                artifact = self._stat_from(access, ref)
             except NotFoundError as exc:
-                raise UnsafeStateError("mailbox event references missing artifact") from exc
+                raise UnsafeStateError("mailbox event references missing artifact metadata") from exc
             if artifact.ref != ref or artifact.turn_id != event.turn_id or artifact.sha256 != turn.settlement.payload_sha256:
                 raise UnsafeStateError("mailbox event artifact does not match durable settlement metadata")
         return event
@@ -176,7 +175,9 @@ class LocalDurableLoop:
                     encoded_size = len((json.dumps(artifact, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
                     if encoded_size > MAX_RECORD_BYTES:
                         raise ValidationError(f"stdin payload too large to store as a durable artifact: {len(payload)} bytes")
-                    atomic_replace(access, "artifacts", f"{turn_id}--stdin.json", artifact)
+                    atomic_replace(access, "artifacts", f"{turn_id}--stdin.json", artifact, mode=0o400)
+                    metadata = ArtifactMetadata(ref, turn_id, "stdin", len(payload), digest).to_dict()
+                    atomic_replace(access, "artifact-metadata", f"{turn_id}--stdin.json", metadata, mode=0o400)
                     artifact_refs = (ref,)
                 settled_at = timestamp()
                 settlement = Settlement(source, outcome, message, digest, event_id, settled_at)
@@ -310,14 +311,135 @@ class LocalDurableLoop:
                 self._fault("handle-mailbox-commit")
             return handled
 
+    @staticmethod
+    def _verify_artifact_entry(access, turn_id, kind):
+        filename = f"{turn_id}--{kind}.json"
+        label = access.home / "artifacts" / filename
+        with access.directory("artifacts") as directory_fd:
+            try:
+                before = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                check_stat(before, label, directory=False)
+                if before.st_mode & 0o222:
+                    raise UnsafeStateError("artifact body is writable")
+                fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+                try:
+                    current = os.fstat(fd)
+                    check_stat(current, label, directory=False)
+                    after = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                    if (before.st_dev, before.st_ino) != (current.st_dev, current.st_ino) or (current.st_dev, current.st_ino) != (after.st_dev, after.st_ino):
+                        raise UnsafeStateError("artifact body changed during verification")
+                finally:
+                    os.close(fd)
+            except FileNotFoundError:
+                raise UnsafeStateError("missing artifact body referenced by metadata") from None
+            except OSError as exc:
+                raise UnsafeStateError(f"cannot verify artifact body: {exc}") from exc
+
+    @staticmethod
+    def _seal_legacy_artifact(access, turn_id, kind):
+        filename = f"{turn_id}--{kind}.json"
+        label = access.home / "artifacts" / filename
+        with access.directory("artifacts") as directory_fd:
+            fd = None
+            try:
+                before = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                check_stat(before, label, directory=False)
+                fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+                current = os.fstat(fd)
+                if (before.st_dev, before.st_ino) != (current.st_dev, current.st_ino):
+                    raise UnsafeStateError("legacy artifact body changed while sealing")
+                os.fchmod(fd, 0o400)
+                os.fsync(fd)
+                after = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                if (current.st_dev, current.st_ino) != (after.st_dev, after.st_ino):
+                    raise UnsafeStateError("legacy artifact body changed while sealing")
+            except OSError as exc:
+                raise UnsafeStateError(f"cannot seal legacy artifact body {label}: {exc}") from exc
+            finally:
+                if fd is not None:
+                    os.close(fd)
+
+    @staticmethod
+    def _verify_metadata_entry(access, turn_id, kind):
+        filename = f"{turn_id}--{kind}.json"
+        label = access.home / "artifact-metadata" / filename
+        with access.directory("artifact-metadata") as directory_fd:
+            try:
+                info = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                check_stat(info, label, directory=False)
+                if info.st_mode & 0o222:
+                    raise UnsafeStateError("artifact metadata is writable")
+            except FileNotFoundError:
+                raise NotFoundError(f"artifact metadata not found: {turn_id}:{kind}") from None
+            except OSError as exc:
+                raise UnsafeStateError(f"cannot verify artifact metadata: {exc}") from exc
+
+    @classmethod
+    def _stat_from(cls, access, ref):
+        turn_id, kind = Artifact.parse_ref(ref)
+        try:
+            cls._verify_metadata_entry(access, turn_id, kind)
+            metadata = ArtifactMetadata.from_dict(read_json(access, "artifact-metadata", f"{turn_id}--{kind}.json"))
+            cls._verify_metadata_entry(access, turn_id, kind)
+        except NotFoundError as exc:
+            raise UnsafeStateError("artifact metadata migration required; run 'zxro migrate artifact-metadata'") from exc
+        if metadata.ref != ref:
+            raise UnsafeStateError("artifact metadata does not match requested reference")
+        cls._verify_artifact_entry(access, turn_id, kind)
+        return metadata
+
+    def stat(self, ref):
+        with reading(self.home) as access:
+            return self._stat_from(access, ref)
+
+    @staticmethod
+    def _artifact_record_names(access):
+        with access.directory("artifacts") as directory_fd:
+            try:
+                names = sorted(os.listdir(directory_fd))
+            except OSError as exc:
+                raise UnsafeStateError(f"cannot list artifacts: {exc}") from exc
+        unexpected = [name for name in names if not (name.endswith(".json") or name.endswith(".bin") or name.startswith(".zxro-tmp-"))]
+        if unexpected:
+            raise UnsafeStateError(f"unexpected artifact entry: {unexpected[0]}")
+        return [name for name in names if name.endswith(".json")]
+
+    def migrate_artifact_metadata(self):
+        migrated = already_indexed = 0
+        with mutation(self.home) as access:
+            for name in self._artifact_record_names(access):
+                record = Artifact.from_dict(read_json(access, "artifacts", name))
+                expected = ArtifactMetadata(record.ref, record.turn_id, record.kind, record.bytes, record.sha256)
+                metadata_name = f"{record.turn_id}--{record.kind}.json"
+                if name != metadata_name:
+                    raise UnsafeStateError(f"artifact record identity does not match path: {name}")
+                try:
+                    existing = ArtifactMetadata.from_dict(read_json(access, "artifact-metadata", metadata_name))
+                except NotFoundError:
+                    atomic_create(access, "artifact-metadata", metadata_name, expected.to_dict(), mode=0o400)
+                    migrated += 1
+                    self._fault("artifact-metadata-migration-write")
+                else:
+                    self._verify_metadata_entry(access, record.turn_id, record.kind)
+                    if existing != expected:
+                        raise UnsafeStateError(f"conflicting artifact metadata: {record.ref}")
+                    already_indexed += 1
+                self._seal_legacy_artifact(access, record.turn_id, record.kind)
+                self._verify_artifact_entry(access, record.turn_id, record.kind)
+        return {"migrated": migrated, "already_indexed": already_indexed, "failed": 0}
+
     def artifact_path(self, ref):
         artifact = Artifact.parse_ref(ref)
         with reading(self.home) as access:
-            Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
-        with mutation(self.home) as access:
+            metadata = self._stat_from(access, ref)
             record = Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
-            if Artifact.parse_ref(record.ref) != artifact:
-                raise UnsafeStateError("artifact record does not match requested reference")
+            if Artifact.parse_ref(record.ref) != artifact or ArtifactMetadata(record.ref, record.turn_id, record.kind, record.bytes, record.sha256) != metadata:
+                raise UnsafeStateError("artifact body does not match authoritative metadata")
+        with mutation(self.home) as access:
+            metadata = self._stat_from(access, ref)
+            record = Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
+            if Artifact.parse_ref(record.ref) != artifact or ArtifactMetadata(record.ref, record.turn_id, record.kind, record.bytes, record.sha256) != metadata:
+                raise UnsafeStateError("artifact body does not match authoritative metadata")
             filename = f"{record.turn_id}--{record.kind}.bin"
             path = self.home / "artifacts" / filename
             content = bytes.fromhex(record.content_hex)

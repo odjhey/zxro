@@ -49,7 +49,7 @@ class DurableLoopCliTests(CliCase):
         self.assertEqual(self.cli("artifact", "path", ref).returncode, 5)
         path.unlink()
         record = self.home / "artifacts" / f"{turn}--stdin.json"
-        data = json.loads(record.read_text()); data["content_hex"] = "zz"; record.write_text(json.dumps(data))
+        data = json.loads(record.read_text()); data["content_hex"] = "zz"; record.chmod(0o600); record.write_text(json.dumps(data))
         self.assertEqual(self.cli("artifact", "path", ref).returncode, 5)
 
     def test_artifact_record_must_match_requested_reference(self):
@@ -58,7 +58,7 @@ class DurableLoopCliTests(CliCase):
         self.assertEqual(self.settle(second, "--stdin", input="two").returncode, 0)
         source = self.home / "artifacts" / f"{second}--stdin.json"
         target = self.home / "artifacts" / f"{first}--stdin.json"
-        target.write_bytes(source.read_bytes())
+        target.chmod(0o600); target.write_bytes(source.read_bytes())
         result = self.cli("artifact", "path", f"artifact:{first}:stdin")
         self.assertEqual(result.returncode, 5, result.stderr)
 
@@ -68,7 +68,7 @@ class DurableLoopCliTests(CliCase):
         record = self.home / "artifacts" / f"{turn}--stdin.json"
         data = json.loads(record.read_text())
         data["bytes"] = False
-        record.write_text(json.dumps(data))
+        record.chmod(0o600); record.write_text(json.dumps(data))
         self.assertEqual(self.cli("artifact", "path", f"artifact:{turn}:stdin").returncode, 5)
 
     def test_oversized_artifact_is_rejected_before_settlement(self):
@@ -199,14 +199,14 @@ class DurableLoopCliTests(CliCase):
     def test_artifact_digest_and_unresolved_owner_are_cross_checked(self):
         turn = self.turn()
         self.assertEqual(self.settle(turn, "--stdin", input="original").returncode, 0)
-        artifact = self.home / "artifacts" / f"{turn}--stdin.json"
+        artifact = self.home / "artifact-metadata" / f"{turn}--stdin.json"
         original_record = artifact.read_bytes()
         value = json.loads(original_record)
         replacement = b"replacement"
-        value.update(bytes=len(replacement), sha256=__import__("hashlib").sha256(replacement).hexdigest(), content_hex=replacement.hex())
-        artifact.write_text(json.dumps(value))
+        value.update(bytes=len(replacement), sha256=__import__("hashlib").sha256(replacement).hexdigest())
+        artifact.chmod(0o600); artifact.write_text(json.dumps(value)); artifact.chmod(0o400)
         self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
-        artifact.write_bytes(original_record)
+        artifact.chmod(0o600); artifact.write_bytes(original_record); artifact.chmod(0o400)
 
         self.assertEqual(self.cli("watchtower", "create", "other", "--cwd", "/other").returncode, 0)
         self.assertEqual(self.cli("work", "create", "other-job", "--watchtower", "other").returncode, 0)

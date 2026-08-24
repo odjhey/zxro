@@ -198,17 +198,17 @@ def read_json(access: StoreAccess, directory: str, filename: str) -> dict:
     return value
 
 
-def atomic_create(access: StoreAccess, directory: str, filename: str, value: dict) -> None:
+def atomic_create(access: StoreAccess, directory: str, filename: str, value: dict, *, mode: int = 0o600) -> None:
     try:
         read_json(access, directory, filename)
     except NotFoundError:
         pass
     else:
         raise ConflictError(f"record already exists: {Path(filename).stem}")
-    atomic_replace(access, directory, filename, value)
+    atomic_replace(access, directory, filename, value, mode=mode)
 
 
-def atomic_replace(access: StoreAccess, directory: str, filename: str, value: dict) -> None:
+def atomic_replace(access: StoreAccess, directory: str, filename: str, value: dict, *, mode: int = 0o600) -> None:
     label = access.home / directory / filename
     with access.directory(directory) as directory_fd:
         temporary = f".zxro-tmp-{secrets.token_hex(16)}"
@@ -223,6 +223,8 @@ def atomic_replace(access: StoreAccess, directory: str, filename: str, value: di
             while view:
                 written = os.write(fd, view)
                 view = view[written:]
+            os.fsync(fd)
+            os.fchmod(fd, mode)
             os.fsync(fd)
             os.close(fd)
             fd = None
