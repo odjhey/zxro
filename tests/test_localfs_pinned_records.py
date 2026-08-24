@@ -792,6 +792,144 @@ class PinnedRecordTests(unittest.TestCase):
         self.assertIs(caught.exception.__cause__, marker)
         self.assertEqual(json.loads(target.read_text()), {"id": "job"})
 
+    def test_post_link_low_level_causes_are_direct_and_directory_exit_is_enclosed(self):
+        import zxro.localfs.ioutil as ioutil
+
+        target = self.home / "work" / "job.json"
+        prefix = f"state record may have been published: {target}"
+        real_open = os.open
+        real_read = os.read
+        real_fsync = os.fsync
+        for case in ("open", "read", "fsync"):
+            with self.subTest(case=case):
+                if target.exists():
+                    target.chmod(0o600)
+                    target.unlink()
+                marker = OSError(f"{case} low-level marker")
+                linked = False
+                fired = False
+                real_link = os.link
+
+                def link(*args, **kwargs):
+                    nonlocal linked
+                    result = real_link(*args, **kwargs)
+                    linked = True
+                    return result
+
+                def opened(name, flags, *args, **kwargs):
+                    nonlocal fired
+                    if case == "open" and linked and name == "job.json" and not fired:
+                        fired = True
+                        raise marker
+                    return real_open(name, flags, *args, **kwargs)
+
+                def read(fd, size):
+                    nonlocal fired
+                    if case == "read" and linked and not fired:
+                        fired = True
+                        raise marker
+                    return real_read(fd, size)
+
+                def fsync(fd):
+                    nonlocal fired
+                    if case == "fsync" and linked and stat.S_ISDIR(os.fstat(fd).st_mode) and not fired:
+                        fired = True
+                        raise marker
+                    return real_fsync(fd)
+
+                with mutation(self.home) as access, mock.patch("zxro.localfs.ioutil.os.link", side_effect=link), mock.patch(
+                    "zxro.localfs.ioutil.os.open", side_effect=opened
+                ), mock.patch("zxro.localfs.ioutil.os.read", side_effect=read), mock.patch(
+                    "zxro.localfs.ioutil.os.fsync", side_effect=fsync
+                ):
+                    with self.assertRaises(UnsafeStateError) as caught:
+                        with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                            pass
+                self.assertTrue(fired)
+                self.assertEqual(str(caught.exception), prefix)
+                self.assertIs(caught.exception.__cause__, marker)
+                self.assertEqual(json.loads(target.read_text()), {"id": "job"})
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o400)
+
+        target.chmod(0o600)
+        target.unlink()
+        marker = OSError("directory exit marker")
+        fired = False
+        with mutation(self.home) as access:
+            real_verify = access.verify_directory
+
+            def fail_directory_exit(*args, **kwargs):
+                nonlocal fired
+                fired = True
+                raise UnsafeStateError("directory exit normalized") from marker
+
+            with mock.patch.object(access, "verify_directory", side_effect=fail_directory_exit):
+                with self.assertRaises(UnsafeStateError) as caught:
+                    with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                        pass
+        self.assertTrue(fired)
+        self.assertEqual(str(caught.exception), prefix)
+        self.assertIs(caught.exception.__cause__, marker)
+        self.assertEqual(json.loads(target.read_text()), {"id": "job"})
+
+    def test_post_link_metadata_identity_and_initial_checkpoint_are_enclosed(self):
+        import zxro.localfs.ioutil as ioutil
+
+        target = self.home / "work" / "job.json"
+        prefix = f"state record may have been published: {target}"
+        for case in ("metadata", "identity", "checkpoint"):
+            with self.subTest(case=case):
+                if target.exists():
+                    target.chmod(0o600)
+                    target.unlink()
+                marker = RuntimeError(f"{case} marker")
+                linked = False
+                fired = False
+                real_link = os.link
+                real_check = ioutil._check_record_fd
+                real_identity = ioutil._check_record_identity
+                real_verify = ioutil.PinnedRecord.verify_current
+
+                def link(*args, **kwargs):
+                    nonlocal linked
+                    result = real_link(*args, **kwargs)
+                    linked = True
+                    return result
+
+                def check(*args, **kwargs):
+                    nonlocal fired
+                    if case == "metadata" and linked and not fired:
+                        fired = True
+                        raise marker
+                    return real_check(*args, **kwargs)
+
+                def identity(*args, **kwargs):
+                    nonlocal fired
+                    if case == "identity" and linked and not fired:
+                        fired = True
+                        raise marker
+                    return real_identity(*args, **kwargs)
+
+                def verify(*args, **kwargs):
+                    nonlocal fired
+                    if case == "checkpoint" and linked and not fired:
+                        fired = True
+                        raise marker
+                    return real_verify(*args, **kwargs)
+
+                with mutation(self.home) as access, mock.patch("zxro.localfs.ioutil.os.link", side_effect=link), mock.patch(
+                    "zxro.localfs.ioutil._check_record_fd", side_effect=check
+                ), mock.patch("zxro.localfs.ioutil._check_record_identity", side_effect=identity), mock.patch.object(
+                    ioutil.PinnedRecord, "verify_current", side_effect=verify, autospec=True
+                ):
+                    with self.assertRaises(UnsafeStateError) as caught:
+                        with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                            pass
+                self.assertTrue(fired)
+                self.assertEqual(str(caught.exception), prefix)
+                self.assertIs(caught.exception.__cause__, marker)
+                self.assertEqual(json.loads(target.read_text()), {"id": "job"})
+
     def test_post_link_parse_validator_and_mismatch_use_stable_boundary(self):
         target = self.home / "work" / "job.json"
         prefix = f"state record may have been published: {target}"

@@ -382,11 +382,14 @@ class _PublishedIndeterminate(UnsafeStateError):
 def _raise_indeterminate(label: Path, exc: BaseException):
     if isinstance(exc, _PublishedIndeterminate):
         raise exc
-    raise _PublishedIndeterminate(f"state record may have been published: {label}") from exc
+    origin = exc
+    while isinstance(origin, UnsafeStateError) and origin.__cause__ is not None:
+        origin = origin.__cause__
+    raise _PublishedIndeterminate(f"state record may have been published: {label}") from origin
 
 
 @contextmanager
-def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str, expected: dict, *, validate: Callable[[dict], dict], mode: int = 0o400, _accept_existing: bool = True) -> Iterator[PinnedRecord]:
+def _publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str, expected: dict, *, validate: Callable[[dict], dict], mode: int, _accept_existing: bool, _state: dict) -> Iterator[PinnedRecord]:
     label = access.home / directory / filename
     normalized = validate(expected)
     payload = _encoded(expected, label)
@@ -422,6 +425,7 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
             try:
                 os.link(temporary, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd, follow_symlinks=False)
                 destination_created = True
+                _state["destination_created"] = True
             except FileExistsError:
                 cleanup_temp = _temp_name_is_current(directory_fd, temporary, temp_fd, label, mode=mode)
                 if cleanup_temp:
@@ -475,9 +479,14 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
         except OSError as exc:
             raise UnsafeStateError(f"cannot publish state record {label}: {exc}") from exc
         finally:
+            close_error = None
             for fd in (sample_fd, record_fd, temp_fd):
                 if fd is not None:
-                    os.close(fd)
+                    try:
+                        os.close(fd)
+                    except OSError as exc:
+                        if close_error is None:
+                            close_error = exc
             if cleanup_temp:
                 # No mismatch was observed for this outcome. This direct unlink
                 # still has the unavoidable same-UID replacement window.
@@ -485,6 +494,24 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                     _remove_temp(directory_fd, temporary)
                 except UnsafeStateError:
                     pass
+            if close_error is not None:
+                raise close_error
+
+@contextmanager
+def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str, expected: dict, *, validate: Callable[[dict], dict], mode: int = 0o400, _accept_existing: bool = True) -> Iterator[PinnedRecord]:
+    state = {"destination_created": False}
+    label = access.home / directory / filename
+    try:
+        with _publish_json_exact_pinned(
+            access, directory, filename, expected, validate=validate, mode=mode,
+            _accept_existing=_accept_existing, _state=state,
+        ) as pin:
+            yield pin
+    except BaseException as exc:
+        if state["destination_created"]:
+            _raise_indeterminate(label, exc)
+        raise
+
 
 def atomic_create(access: StoreAccess, directory: str, filename: str, value: dict) -> None:
     label = access.home / directory / filename
