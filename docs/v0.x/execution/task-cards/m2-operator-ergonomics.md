@@ -6,7 +6,7 @@ tags: [v0.x, execution, cli]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: "2026-08-24T20:20:00+08:00"
-updated_at: "2026-08-25T00:14:00+08:00"
+updated_at: "2026-08-25T00:20:00+08:00"
 ---
 
 # M2 operator ergonomics task card
@@ -60,11 +60,13 @@ Out of scope:
 - [x] Progressive disclosure and artifact-byte accounting in inspect remain stable.
 - [x] `turn bind` uses immutable identity semantics from the session-binding contract.
 - [x] `python3 -m unittest discover -s tests -v` passes for updated suite.
-- [x] GitHub Actions passed on Python 3.11 and 3.12 across Ubuntu and macOS for exact implementation head `b09b0f5` in [run 32749301568](https://github.com/odjhey/zxro/actions/runs/32749301568).
+- [x] Immutable implementation-head evidence is recorded for the last code-bearing commit `b09b0f5`: Python 3.11 and 3.12 across Ubuntu and macOS passed in [run 32749301568](https://github.com/odjhey/zxro/actions/runs/32749301568).
 - [x] The CLI-spec full-loop block runs from a checkout with only the standard library and the `bin/zxro` shim.
 - [x] Provider-neutral M2 conformance covers binding and bounded inspection.
 - [x] The M1 rollback consequence of the new turn field is documented and tested.
 - [ ] Independent architecture, security, and compatibility review approves the PR.
+
+The implementation-head evidence above is immutable and intentionally points to the last code-bearing commit. Documentation-only commits do not change that implementation evidence. The current PR head is verified externally through the [PR #8 GitHub checks](https://github.com/odjhey/zxro/pull/8/checks), rather than by a self-referential checked SHA in this document.
 
 ## Related
 
