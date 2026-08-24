@@ -1,7 +1,10 @@
 import json
 import os
+import queue
+import socket
 import stat
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -252,6 +255,96 @@ class PinnedRecordTests(unittest.TestCase):
                     self.assertEqual(json.loads(target.read_text()), expected)
                     target.chmod(0o600)
                     target.unlink()
+
+    def test_nonregular_records_fail_promptly_without_state_changes(self):
+        target = self.home / "work" / "job.json"
+        outside = Path(self.temp.name) / "outside"
+        outside.write_text("unchanged")
+
+        def assert_prompt(operation):
+            results = queue.Queue()
+
+            def run():
+                try:
+                    operation()
+                except BaseException as exc:
+                    results.put(exc)
+                else:
+                    results.put(None)
+
+            thread = threading.Thread(target=run, daemon=True)
+            thread.start()
+            thread.join(1)
+            self.assertFalse(thread.is_alive(), "record operation blocked on a non-regular path")
+            self.assertIsInstance(results.get_nowait(), UnsafeStateError)
+
+        def open_operation():
+            with mutation(self.home) as access:
+                with open_json_pinned(access, "work", "job.json"):
+                    pass
+
+        def publish_operation():
+            with mutation(self.home) as access:
+                with publish_json_exact_pinned(
+                    access, "work", "job.json", {"id": "job"}, validate=lambda value: value
+                ):
+                    pass
+
+        fixtures = ["fifo"]
+        if hasattr(socket, "AF_UNIX"):
+            fixtures.append("socket")
+        for fixture in fixtures:
+            with self.subTest(fixture=fixture):
+                bound_socket = None
+                if fixture == "fifo":
+                    os.mkfifo(target, 0o600)
+                else:
+                    bound_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    bound_socket.bind(str(target))
+                try:
+                    inode = target.lstat()
+                    assert_prompt(open_operation)
+                    self.assertEqual(target.lstat().st_ino, inode.st_ino)
+                    assert_prompt(publish_operation)
+                    self.assertEqual(target.lstat().st_ino, inode.st_ino)
+                    self.assertEqual(outside.read_text(), "unchanged")
+                    self.assertEqual(list(target.parent.glob(".zxro-tmp-*")), [])
+                finally:
+                    if bound_socket is not None:
+                        bound_socket.close()
+                    target.unlink()
+
+    def test_record_open_validation_failure_closes_all_new_descriptors(self):
+        self.write_record("job.json", {"id": "job"}, mode=0o600)
+        opened = []
+        closed = []
+        real_open = os.open
+        real_close = os.close
+        real_fstat = os.fstat
+        with StoreAccess(self.home) as access:
+            def track_open(*args, **kwargs):
+                fd = real_open(*args, **kwargs)
+                opened.append(fd)
+                return fd
+
+            def fail_record_fstat(fd):
+                info = real_fstat(fd)
+                if stat.S_ISREG(info.st_mode):
+                    raise OSError("injected record fstat failure")
+                return info
+
+            def track_close(fd):
+                closed.append(fd)
+                return real_close(fd)
+
+            with mock.patch("zxro.localfs.ioutil.os.open", side_effect=track_open), mock.patch(
+                "zxro.localfs.ioutil.os.fstat", side_effect=fail_record_fstat
+            ), mock.patch("zxro.localfs.ioutil.os.close", side_effect=track_close):
+                with self.assertRaises(UnsafeStateError):
+                    with open_json_pinned(access, "work", "job.json"):
+                        pass
+        self.assertEqual(len(opened), 2)
+        self.assertEqual(set(opened), set(closed))
 
     def test_directory_open_failure_closes_new_descriptor(self):
         opened = []

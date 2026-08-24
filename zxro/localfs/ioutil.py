@@ -11,6 +11,8 @@ from .home import MANAGED_DIRS, check_stat, prepare_home
 
 _DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+_RECORD_FLAGS = os.O_RDONLY | _NOFOLLOW | _NONBLOCK
 MAX_RECORD_BYTES = 16 * 1024 * 1024
 
 
@@ -37,10 +39,17 @@ class StoreAccess:
                 raise UnsafeStateError(f"state path changed while opening: {self.home}")
             self.verify_home()
             return self
-        except FileNotFoundError:
-            raise NotFoundError("zxro home does not exist") from None
-        except OSError as exc:
-            raise UnsafeStateError(f"cannot open zxro home {self.home}: {exc}") from exc
+        except BaseException as exc:
+            if self.home_fd is not None:
+                os.close(self.home_fd)
+                self.home_fd = None
+            if isinstance(exc, FileNotFoundError):
+                raise NotFoundError("zxro home does not exist") from None
+            if isinstance(exc, UnsafeStateError):
+                raise
+            if isinstance(exc, OSError):
+                raise UnsafeStateError(f"cannot open zxro home {self.home}: {exc}") from exc
+            raise
 
     def __exit__(self, *_):
         if self.home_fd is not None:
@@ -176,6 +185,33 @@ def _record_stat(fd, directory_fd, filename, label, *, readonly=False):
         raise UnsafeStateError(f"state record changed during operation: {label}")
 
 
+def _open_record(directory_fd: int, filename: str, label: Path, *, readonly: bool = False) -> int:
+    fd = None
+    try:
+        before = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+        check_stat(before, label, directory=False)
+        if readonly and before.st_mode & 0o222:
+            raise UnsafeStateError(f"state record is writable: {label}")
+        fd = os.open(filename, _RECORD_FLAGS, dir_fd=directory_fd)
+        current = os.fstat(fd)
+        check_stat(current, label, directory=False)
+        if readonly and current.st_mode & 0o222:
+            raise UnsafeStateError(f"state record is writable: {label}")
+        if not _same_inode(before, current):
+            raise UnsafeStateError(f"state record changed while opening: {label}")
+        return fd
+    except BaseException as exc:
+        if fd is not None:
+            os.close(fd)
+        if isinstance(exc, FileNotFoundError):
+            raise NotFoundError(f"record not found: {Path(filename).stem}") from None
+        if isinstance(exc, UnsafeStateError):
+            raise
+        if isinstance(exc, OSError):
+            raise UnsafeStateError(f"cannot open state record {label}: {exc}") from exc
+        raise
+
+
 def _read_bounded(fd: int, max_bytes: int, label: Path) -> bytes:
     try:
         os.lseek(fd, 0, os.SEEK_SET)
@@ -249,12 +285,7 @@ def _check_record_identity(value: dict, filename: str, label: Path) -> dict:
 def open_json_pinned(access: StoreAccess, directory: str, filename: str, *, readonly: bool = False, max_bytes: int = MAX_RECORD_BYTES) -> Iterator[PinnedRecord]:
     label = access.home / directory / filename
     with access.directory(directory) as directory_fd:
-        try:
-            record_fd = os.open(filename, os.O_RDONLY | _NOFOLLOW, dir_fd=directory_fd)
-        except FileNotFoundError:
-            raise NotFoundError(f"record not found: {Path(filename).stem}") from None
-        except OSError as exc:
-            raise UnsafeStateError(f"cannot open state record {label}: {exc}") from exc
+        record_fd = _open_record(directory_fd, filename, label, readonly=readonly)
         try:
             _record_stat(record_fd, directory_fd, filename, label, readonly=readonly)
             raw = _read_bounded(record_fd, max_bytes, label)
@@ -318,11 +349,9 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                 os.unlink(temporary, dir_fd=directory_fd)
                 temporary = None
                 try:
-                    record_fd = os.open(filename, os.O_RDONLY | _NOFOLLOW, dir_fd=directory_fd)
-                except FileNotFoundError:
+                    record_fd = _open_record(directory_fd, filename, label, readonly=readonly)
+                except NotFoundError:
                     raise UnsafeStateError(f"state record changed during publication: {label}") from None
-                except OSError as exc:
-                    raise UnsafeStateError(f"cannot open existing state record {label}: {exc}") from exc
             if temporary is not None:
                 os.unlink(temporary, dir_fd=directory_fd)
                 temporary = None
