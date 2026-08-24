@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-24T23:15:00+08:00
+updated_at: 2026-08-24T23:58:00+08:00
 ---
 
 # Durable store contract
@@ -436,7 +436,7 @@ zxro settles a turn in this order:
 6. return success
 ```
 
-Steps 3 through 5 form a resumable publication state machine. Retry or another settlement reconciles and validates an immutable event at `highest + 1` before mutating the requested turn or assigning a generation. A committed direct index above high-water must advance mailbox state before success. Interruption before or after any publication write must not overwrite an event or lose visibility. If handling succeeds between index and mailbox commits, repair must preserve handled state and must not add the event to unresolved attention.
+Steps 3 through 5 form a resumable publication state machine. Before mutating the requested turn or assigning a generation, settlement must resolve and validate the direct index of the mailbox's already-published boundary events at generations `highest` and `highest - 1`; a missing or mismatched boundary index fails closed without touching the requested turn or mailbox. Retry or another settlement then reconciles and validates an immutable event at `highest + 1` before proceeding. A committed direct index above high-water must advance mailbox state before success. Interruption before or after any publication write must not overwrite an event or lose visibility. If handling succeeds between index and mailbox commits, repair must preserve handled state and must not add the event to unresolved attention.
 
 The safety rule is asymmetric:
 
