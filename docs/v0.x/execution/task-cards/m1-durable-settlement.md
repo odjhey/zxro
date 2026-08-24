@@ -6,7 +6,7 @@ tags: [v0.x, execution, cli, mailbox]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: "2026-08-24T20:05:00+08:00"
-updated_at: "2026-08-24T21:05:00+08:00"
+updated_at: "2026-08-24T21:40:00+08:00"
 ---
 
 # M1 durable settlement task card
@@ -30,6 +30,9 @@ M1 depends on merged PR #6 at commit `7dbb533` and accepts [decision 0002](../..
 - The built-in provider stores each immutable event and handled marker as a separate bounded record. Per-watchtower high-water and unresolved indexes plus a direct event-ID index keep reads independent of handled and unrelated history.
 - Mailbox reads resolve and compare the terminal turn and every referenced artifact metadata record before exposing an event. Missing or mismatched links fail with unsafe-state exit 5.
 - Missing-object and read-like M1 commands open state without creating it. A nonexistent home remains absent after exit 3.
+- Immutable event, direct index, and mailbox commits are individually resumable. Before/after faults at every write and an interleaved settlement cannot overwrite an event or hide a committed result.
+- CLI handlers receive provider-neutral settlement, mailbox, and artifact capabilities. Reusable M1 conformance cases do not import the built-in provider; built-in setup and read-budget instrumentation stay in its fixture.
+- Stdin reads stop at the supported limit plus one byte before hashing, hex encoding, or JSON encoding.
 - Running M0 turn records remain valid. M1 adds fields only at settlement.
 - An M0 binary cannot decode an M1 settled turn. Rollback tests must use a copied pre-settlement home or a fresh home.
 
@@ -44,7 +47,10 @@ M1 depends on merged PR #6 at commit `7dbb533` and accepts [decision 0002](../..
 | Twelve concurrent settlements lose no successful write and assign unique ordered generations | `DurableLoopCliTests.test_concurrent_settlements_have_unique_ordered_generations` |
 | Raw stdin stays behind an artifact reference and out of the event envelope | `DurableLoopCliTests.test_settlement_idempotency_payload_and_artifact` |
 | Oversized input is rejected before settlement; malformed or changed artifact evidence fails closed | `DurableLoopCliTests.test_oversized_artifact_is_rejected_before_settlement` and `test_artifact_corruption_fails_closed` |
-| Missing or mismatched terminal turns and artifact metadata fail closed | `DurableLoopCliTests.test_inbox_fails_closed_for_missing_terminal_turn_or_artifact` plus mailbox conformance coverage |
+| Missing or mismatched terminal turns and artifact metadata fail closed | `DurableLoopCliTests.test_inbox_fails_closed_for_missing_terminal_turn_or_artifact`, `test_artifact_digest_and_unresolved_owner_are_cross_checked`, plus reusable M1 conformance coverage |
+| Publication resumes around every event/index/mailbox write without overwrite, including an interleaved settlement | `DurableLoopCliTests.test_three_record_publication_resumes_without_overwrite` |
+| Stdin overflow is rejected before settlement using a file-backed oversized input | `DurableLoopCliTests.test_oversized_artifact_is_rejected_before_settlement` |
+| M1 capability semantics are reusable across provider fixtures | `M1ProviderConformance` and `BuiltinM1ProviderConformance` |
 | Empty unread/pending and one new settlement do not read handled history | `MailboxScalingConformance.test_empty_views_and_new_settlement_ignore_handled_history` |
 | Missing M1 objects leave a nonexistent home untouched | `MissingM1ObjectsHaveNoSideEffects.test_missing_commands_do_not_create_home` |
 | M0 CRUD, isolation, malformed-state, path, lock, and atomic-write behavior remains intact | Existing conformance and `LocalFsInvariantTests` suite |

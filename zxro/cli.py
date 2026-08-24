@@ -2,8 +2,9 @@ import argparse
 import json
 import sys
 
-from .errors import ZxroError
-from .localfs import LocalDurableLoop, providers, resolve_home
+from .errors import ValidationError, ZxroError
+from .localfs import m1_capabilities, providers, resolve_home
+from .settle import MAX_STDIN_BYTES
 
 
 def parser():
@@ -53,10 +54,10 @@ def render(value, machine, *, turn_id_only=False, path_only=False):
         print("\n".join(f"{key}: {value[key]}" for key in value))
 
 
-def run(args):
+def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
     home = resolve_home(args.home)
-    registry, work, turn = providers(home)
-    loop = LocalDurableLoop(home, turn, registry)
+    registry, work, turn = core_factory(home)
+    loop = m1_factory(home, registry, turn)
     path_only = False
     if args.command == "watchtower":
         if args.action == "create": value = registry.create(args.id, args.cwd, args.agent, args.session)
@@ -72,7 +73,9 @@ def run(args):
         elif args.action == "show": value = turn.get(args.id)
         elif args.action == "list": value = turn.list(args.work, args.state)
         else:
-            payload = sys.stdin.buffer.read() if args.stdin else None
+            payload = sys.stdin.buffer.read(MAX_STDIN_BYTES + 1) if args.stdin else None
+            if payload is not None and len(payload) > MAX_STDIN_BYTES:
+                raise ValidationError(f"stdin payload too large: maximum is {MAX_STDIN_BYTES} bytes")
             value, _ = loop.settle(args.id, args.source, args.status, args.message, payload)
     elif args.command == "inbox":
         if args.action == "unread": value = loop.unread(args.watchtower)

@@ -6,7 +6,7 @@ tags: [v0.x, execution, delivery, cli]
 status: draft
 generated: "Claude Fable 5, 2026-08-24"
 created_at: "2026-08-24T17:06:13+08:00"
-updated_at: "2026-08-24T20:20:00+08:00"
+updated_at: "2026-08-24T21:40:00+08:00"
 ---
 
 # CLI-first delivery plan
@@ -56,7 +56,7 @@ zxro/
   settle.py               # settlement orchestration across capabilities (PR2)
   localfs/                # built-in provider; private behind contract.py
     home.py               # $ZXRO_HOME resolution, layout, path and symlink safety
-    ioutil.py             # flock, atomic write (tmp + fsync + os.replace), fail-closed JSON/JSONL
+    ioutil.py             # flock, atomic write (tmp + fsync + os.replace), fail-closed indexed JSON
     registry.py  work.py  turn.py  artifact.py  mailbox.py
 tests/
   helpers.py              # run_cli() subprocess helper, temporary-home fixture
@@ -103,7 +103,7 @@ $ZXRO_HOME/
   .lock                           # store lock
 ```
 
-This layout is a provider implementation detail. Tests and callers other than `test_localfs_invariants.py` must not depend on it. M1 uses one bounded record per immutable event and handled marker rather than one ever-growing JSONL record. Per-watchtower high-water and unresolved indexes let `unread` read only generations after ack, let `pending` read only unresolved IDs, and let `handle` use direct event-ID lookup. Handled history and other watchtowers do not add reads to these operations.
+This layout is a provider implementation detail. Tests and callers other than `test_localfs_invariants.py` must not depend on it. M1 uses one bounded record per immutable event and handled marker rather than one ever-growing event-stream record. Per-watchtower high-water and unresolved indexes let `unread` read only generations after ack, let `pending` read only unresolved IDs, and let `handle` use direct event-ID lookup. Handled history and other watchtowers do not add reads to these operations.
 
 ### Concurrency
 

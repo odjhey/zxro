@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-24T20:50:00+08:00
+updated_at: 2026-08-24T21:40:00+08:00
 ---
 
 # Durable store contract
@@ -20,7 +20,7 @@ The contract has two goals:
 - let zxro implementation proceed now against a stable behavior boundary;
 - let candidate off-the-shelf tools be evaluated by conformance instead of by similarity to zxro's first implementation.
 
-The built-in v0 provider may use JSON, JSONL, filesystem locks, and per-turn files. Those are implementation choices, not this contract.
+The built-in v0 provider may use indexed JSON, filesystem locks, and per-turn files. Those are implementation choices, not this contract.
 
 ## Owners and consumers
 
@@ -61,7 +61,7 @@ The useful capability groups are:
 
 A candidate may implement only one group. For example, Beads may satisfy the work-store contract while zxro keeps turns locally and another CLI provides mailbox semantics.
 
-Provider composition must not change public zxro command behavior.
+Provider composition must not change public zxro command behavior. Core code injects the M1 settlement, mailbox, and artifact capabilities defined in `zxro.contract`; CLI handlers do not construct a built-in M1 provider directly. Provider conformance fixtures target those capabilities and can be reused with provider-specific setup and fault hooks.
 
 ## Canonical objects
 
@@ -426,9 +426,13 @@ zxro settles a turn in this order:
 ```text
 1. persist referenced artifacts
 2. commit terminal turn state with its allocated event ID
-3. publish one unhandled mailbox event with the same event ID
-4. return success
+3. create the immutable generation event without overwriting
+4. create the direct event-ID index without overwriting
+5. advance mailbox high-water and unresolved state
+6. return success
 ```
+
+Steps 3 through 5 form a resumable publication state machine. Retry or another settlement reconciles an immutable event at `highest + 1` before assigning a generation. A committed direct index above high-water must advance mailbox state before success. Interruption before or after any publication write must not overwrite an event or lose visibility.
 
 The safety rule is asymmetric:
 

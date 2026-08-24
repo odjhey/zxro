@@ -6,7 +6,7 @@ tags: [v0.x, execution]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T20:50:00+08:00
+updated_at: 2026-08-24T21:40:00+08:00
 ---
 
 # v0.x implementation plan
@@ -15,7 +15,7 @@ updated_at: 2026-08-24T20:50:00+08:00
 
 Build the CLI as the first product. Every state transition must be runnable by hand and testable through subprocess calls before any harness hook performs it automatically.
 
-Implementation targets the [durable store contract](../../architecture/contracts/durable-store.md), not the first on-disk schema. The first provider is the dependency-free local JSON/JSONL implementation. Optional providers such as Beads or a local mailbox CLI can be added later as adapters if they pass the same semantic conformance tests.
+Implementation targets the [durable store contract](../../architecture/contracts/durable-store.md), not the first on-disk schema. The first provider is the dependency-free local indexed-JSON implementation. Optional providers such as Beads or a local mailbox CLI can be added later as adapters if they pass the same semantic conformance tests.
 
 The first complete slice is the durable artifact loop:
 

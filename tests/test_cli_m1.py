@@ -1,7 +1,9 @@
 import concurrent.futures
 import json
+import os
 import subprocess
 
+from zxro.settle import MAX_STDIN_BYTES
 from helpers import CliCase, ROOT, BIN, run_cli
 
 
@@ -69,7 +71,12 @@ class DurableLoopCliTests(CliCase):
 
     def test_oversized_artifact_is_rejected_before_settlement(self):
         turn = self.turn()
-        result = self.settle(turn, "--stdin", input="x" * (9 * 1024 * 1024))
+        payload = self.home.parent / "oversized.bin"
+        with payload.open("wb") as stream:
+            stream.truncate(MAX_STDIN_BYTES + 1)
+        environment = {**os.environ, "ZXRO_HOME": str(self.home)}
+        with payload.open("rb") as stream:
+            result = subprocess.run([str(BIN), "turn", "settle", turn, "--source", "manual", "--status", "completed", "--message", "done", "--stdin"], cwd=ROOT, env=environment, stdin=stream, capture_output=True, text=True)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(self.ok_json("turn", "show", turn)["state"], "running")
         self.assertEqual(self.ok_json("inbox", "unread", "--watchtower", "main"), [])
@@ -126,7 +133,7 @@ class DurableLoopCliTests(CliCase):
         event = self.ok_json("inbox", "unread", "--watchtower", "main")[0]
         path = self.home / "inbox-index" / f"{event['event_id']}.json"
         value = json.loads(path.read_text()); value["generation"] = 2; path.write_text(json.dumps(value))
-        self.assertEqual(self.cli("inbox", "handle", event["event_id"]).returncode, 3)
+        self.assertEqual(self.cli("inbox", "handle", event["event_id"]).returncode, 5)
 
     def test_crash_gap_retry_preserves_event_identity(self):
         turn = self.turn()
@@ -139,6 +146,21 @@ class DurableLoopCliTests(CliCase):
         event = self.ok_json("inbox", "unread", "--watchtower", "main")
         self.assertEqual([(e["event_id"], e["generation"]) for e in event], [(event_id, 1)])
 
+    def test_three_record_publication_resumes_without_overwrite(self):
+        for point in ("before-event-commit", "event-commit", "before-index-commit", "index-commit", "before-mailbox-commit", "mailbox-commit"):
+            with self.subTest(point=point):
+                first = self.turn()
+                crashed = self.settle(first, env={"ZXRO_FAULT_EXIT_AFTER": point})
+                self.assertEqual(crashed.returncode, 86)
+                first_id = self.ok_json("turn", "show", first)["settlement"]["event_id"]
+                second = self.turn()
+                self.assertEqual(self.settle(second).returncode, 0)
+                self.assertEqual(self.settle(first).returncode, 0)
+                events = [event for event in self.ok_json("inbox", "unread", "--watchtower", "main") if event["turn_id"] in {first, second}]
+                self.assertEqual([event["generation"] for event in events], list(range(events[0]["generation"], events[0]["generation"] + 2)))
+                self.assertEqual({event["turn_id"] for event in events}, {first, second})
+                self.assertEqual(next(event["event_id"] for event in events if event["turn_id"] == first), first_id)
+
     def test_crash_repair_rejects_mismatched_existing_event(self):
         turn = self.turn()
         self.assertEqual(self.settle(turn, env={"ZXRO_FAULT_EXIT_AFTER": "turn-commit"}).returncode, 86)
@@ -148,6 +170,27 @@ class DurableLoopCliTests(CliCase):
         value = json.loads(index.read_text()); value["event_id"] = event_id
         (self.home / "inbox-index" / f"{event_id}.json").write_text(json.dumps(value))
         self.assertEqual(self.settle(turn).returncode, 5)
+
+    def test_artifact_digest_and_unresolved_owner_are_cross_checked(self):
+        turn = self.turn()
+        self.assertEqual(self.settle(turn, "--stdin", input="original").returncode, 0)
+        artifact = self.home / "artifacts" / f"{turn}--stdin.json"
+        original_record = artifact.read_bytes()
+        value = json.loads(original_record)
+        replacement = b"replacement"
+        value.update(bytes=len(replacement), sha256=__import__("hashlib").sha256(replacement).hexdigest(), content_hex=replacement.hex())
+        artifact.write_text(json.dumps(value))
+        self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
+        artifact.write_bytes(original_record)
+
+        self.assertEqual(self.cli("watchtower", "create", "other", "--cwd", "/other").returncode, 0)
+        self.assertEqual(self.cli("work", "create", "other-job", "--watchtower", "other").returncode, 0)
+        other_turn = self.turn("other-job")
+        self.assertEqual(self.settle(other_turn).returncode, 0)
+        other_event = self.ok_json("inbox", "unread", "--watchtower", "other")[0]
+        box = self.home / "inbox" / "main.json"
+        state = json.loads(box.read_text()); state["unresolved"].append(other_event["event_id"]); box.write_text(json.dumps(state))
+        self.assertEqual(self.cli("inbox", "pending", "--watchtower", "main").returncode, 5)
 
     def test_mailbox_events_validate_all_envelope_fields(self):
         turn = self.turn()

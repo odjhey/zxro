@@ -6,7 +6,7 @@ tags: [decisions, v0.x, cli, python]
 status: current
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-24T15:33:00+08:00
+updated_at: 2026-08-24T21:40:00+08:00
 ---
 
 # 0001: Build the v0 CLI first with Python stdlib
@@ -15,7 +15,7 @@ updated_at: 2026-08-24T15:33:00+08:00
 
 zxro is still discovering its durable artifact and mailbox model. The first integrations are expected to be a Pi extension and Claude Code hooks, while acpx already provides persistent ACP sessions. Building around those integrations too early would couple zxro's core data model to harness details before the artifact contract has been exercised manually.
 
-The core work is local control-plane code: validated paths, JSON records, append-only JSONL, file locking, atomic replacement, CLI parsing, and subprocess-oriented tests.
+The core work is local control-plane code: validated paths, JSON records, file locking, atomic creation and replacement, CLI parsing, and subprocess-oriented tests.
 
 ## Options considered
 
@@ -48,6 +48,10 @@ Do not embed acpx or add harness-specific integration until the manual durable a
 - Claude integration remains a command hook that invokes the zxro CLI.
 - A future Go, Rust, or TypeScript rewrite remains possible if the CLI and artifact contracts stay independent from Python module APIs.
 - `acpx/runtime` is deferred. If zxro later takes responsibility for agent execution, TypeScript becomes worth reevaluating.
+
+## M1 storage refinement
+
+M1 uses immutable per-generation JSON records plus direct event-ID and per-watchtower indexes instead of one append-only JSONL stream. This remains a Python standard-library file provider, but it makes three-record publication resumable and keeps mailbox access independent of historical event count.
 
 ## Rule or follow-up
 

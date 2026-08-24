@@ -6,7 +6,7 @@ tags: [docs, meta, toc]
 status: current
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T17:06:13+08:00
+updated_at: 2026-08-24T21:40:00+08:00
 ---
 
 # Docs index
@@ -53,7 +53,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [Decision records](./decisions/README.md) | index | Decision format and index |
 | [Decision template](./decisions/0000-template.md) | decision | Copyable decision-record template |
 | [0001: Build the v0 CLI first with Python stdlib](./decisions/0001-v0-cli-first-python-stdlib.md) | decision | Dependency-free Python CLI first; harness integrations and compiled rewrite deferred |
-| [0002: Separate inbox delivery position from attention handling](./decisions/0002-separate-delivery-from-attention.md) | decision | Proposed split between read acknowledgement and independently handled inbox events |
+| [0002: Separate inbox delivery position from attention handling](./decisions/0002-separate-delivery-from-attention.md) | decision | Accepted split between read acknowledgement and independently handled inbox events |
 
 ## v0.x
 

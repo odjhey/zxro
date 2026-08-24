@@ -6,7 +6,7 @@ tags: [v0.x, scope, technology]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T16:31:00+08:00
+updated_at: 2026-08-24T21:40:00+08:00
 ---
 
 # v0.x technology stack
@@ -20,7 +20,7 @@ updated_at: 2026-08-24T16:31:00+08:00
 | CLI parsing | `argparse` | Included in Python and sufficient for a small hierarchical CLI | [0001](../../decisions/0001-v0-cli-first-python-stdlib.md) |
 | Storage behavior | [Durable store contract](../../architecture/contracts/durable-store.md) | Work, turn, artifact, mailbox delivery, read ack, attention handling, concurrency, crash recovery, and progressive disclosure are product semantics rather than filesystem semantics | — |
 | Built-in current-state records | JSON files | Human-readable default provider with no database dependency | [0001](../../decisions/0001-v0-cli-first-python-stdlib.md) |
-| Built-in mailbox event stream | Append-only JSONL | Immutable ordered local delivery with ordinary-tool inspection and replay | [0001](../../decisions/0001-v0-cli-first-python-stdlib.md) |
+| Built-in mailbox event stream | Immutable per-generation JSON records with direct event-ID indexes | Ordered local delivery, resumable publication, and bounded mailbox access without history scans | [0001](../../decisions/0001-v0-cli-first-python-stdlib.md) |
 | Built-in mailbox read state | Small monotonic ack record per watchtower | Keeps delivery position cheap and independent from attention state | [0002](../../decisions/0002-separate-delivery-from-attention.md) |
 | Built-in mailbox attention state | Separate event-ID keyed handled records | Allows out-of-order handling without rewriting immutable events or abusing the read cursor | [0002](../../decisions/0002-separate-delivery-from-attention.md) |
 | Large evidence | Per-turn files referenced from bounded records | Keeps routine watchtower context independent from accumulated report and log size | — |
@@ -31,7 +31,7 @@ updated_at: 2026-08-24T16:31:00+08:00
 | Automated tests | `python3 -m unittest` plus stdlib subprocess/tempfile helpers | Black-box CLI and provider-conformance tests without a test-framework dependency | [0001](../../decisions/0001-v0-cli-first-python-stdlib.md) |
 | Agent session client | acpx CLI, outside zxro core | ACP session creation, persistence, queueing, resume, and cancellation already exist outside zxro | — |
 
-The JSON/JSONL layout is the first built-in provider, not the architecture contract. Public zxro behavior must remain stable if a later adapter stores the same logical objects elsewhere.
+The indexed JSON layout is the first built-in provider, not the architecture contract. Public zxro behavior must remain stable if a later adapter stores the same logical objects elsewhere.
 
 ## Integration languages
 

@@ -6,7 +6,7 @@ tags: [architecture, target-state, zxro]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T16:31:00+08:00
+updated_at: 2026-08-24T21:40:00+08:00
 ---
 
 # Product architecture
@@ -47,7 +47,7 @@ For v0.x, acpx owns the agent-session layer. Pi and Claude own their native exec
 - The watchtower project and the crew target are separate directories. A watchtower loads its own `AGENTS.md`, skills, prompts, and settings from its project cwd. Each crew turn has an independent target cwd.
 - Multiple watchtowers may share one `$ZXRO_HOME`. Use separate homes when operators, companies, customers, or experiments must not share durable zxro state.
 - Integrations reduce to CLI operations. Pi extensions, Claude hooks, CI jobs, and humans must be able to produce the same durable state through documented zxro commands.
-- Storage engines are replaceable behind the [durable store contract](./contracts/durable-store.md). The built-in JSON/JSONL layout is the first provider, not the product contract.
+- Storage engines are replaceable behind the [durable store contract](./contracts/durable-store.md). The built-in indexed-JSON layout is the first provider, not the product contract.
 - Durable turn state is committed before a settlement event is published. A lost process between those writes must be repairable by idempotent retry, and a mailbox event must never point at a missing durable result.
 - Delivery position and attention are separate. Read ack records what the watchtower has observed; handled state records which actionable events no longer need attention.
 - Reconciliation cost is bounded by new or unresolved bounded events, not task age or artifact size.
