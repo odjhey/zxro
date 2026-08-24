@@ -130,7 +130,7 @@ class LocalDurableLoop:
         self._validate_event(access, event)
         index = {"event_id": event.event_id, "watchtower_id": event.watchtower_id, "generation": generation}
         try:
-            existing = read_json(access, "inbox-index", f"{event.event_id}.json")
+            existing = self._index(access, event.event_id)
         except NotFoundError:
             atomic_create(access, "inbox-index", f"{event.event_id}.json", index)
         else:

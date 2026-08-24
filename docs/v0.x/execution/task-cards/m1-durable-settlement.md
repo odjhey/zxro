@@ -6,7 +6,7 @@ tags: [v0.x, execution, cli, mailbox]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: "2026-08-24T20:05:00+08:00"
-updated_at: "2026-08-24T23:15:00+08:00"
+updated_at: "2026-08-24T23:35:00+08:00"
 ---
 
 # M1 durable settlement task card
@@ -53,7 +53,8 @@ M1 depends on merged PR #6 at commit `7dbb533` and accepts [decision 0002](../..
 | M1 settlement, conflict, delivery, ack integrity, handling recovery, concurrency, terminal-commit repair, isolation, progressive-disclosure, missing-object, cross-record mismatch, corruption, and scaling semantics are reusable across providers through contract-semantic fixture hooks | All cases in `M1ProviderConformance`, run by `BuiltinM1ProviderConformance`; indexed-JSON publication windows remain in `DurableLoopCliTests` |
 | Empty unread/pending and one new settlement do not read ordinary handled history | `M1ProviderConformance.test_empty_views_and_new_settlement_ignore_handled_history` |
 | Marker-committed crash history compacts automatically; repeated empty pending reads return to the fixed baseline | `M1ProviderConformance.test_marker_committed_crash_history_compacts_to_fixed_empty_pending_cost`, using built-in read instrumentation in `BuiltinM1ProviderConformance` |
-| Direct identity generation uses a strict integer schema, and ack rejects non-integer API values before state access | `DurableLoopCliTests.test_direct_index_generation_requires_strict_integer_for_all_consumers` and `M1ProviderConformance.test_ack_api_rejects_non_integer_without_mutation` |
+| Direct identity generation uses one strict integer schema in consumers and partial-publication repair, while ack rejects non-integer API values before state access | `DurableLoopCliTests.test_direct_index_generation_requires_strict_integer_for_all_consumers`, `test_partial_publication_index_corruption_precedes_unrelated_turn_mutation`, and `M1ProviderConformance.test_ack_api_rejects_non_integer_without_mutation` |
+| A genuinely missing index after immutable-event commit remains a repairable publication window | `DurableLoopCliTests.test_missing_partial_index_remains_a_repairable_event_commit_window` |
 | A handle between index and mailbox commit remains handled after repair | `DurableLoopCliTests.test_handle_between_index_and_mailbox_survives_repair` |
 | Malformed next publication leaves the requested turn running | `DurableLoopCliTests.test_malformed_next_event_leaves_requested_turn_running` |
 | Ack rejects missing terminal or intermediate generations without advancing | `DurableLoopCliTests.test_ack_rejects_missing_terminal_and_intermediate_generations_without_advancing` and `M1ProviderConformance.test_ack_integrity_failure_does_not_advance` |

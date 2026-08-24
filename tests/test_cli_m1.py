@@ -2,6 +2,8 @@ import concurrent.futures
 import json
 import os
 import subprocess
+import tempfile
+from pathlib import Path
 
 from zxro.settle import MAX_STDIN_BYTES
 from helpers import CliCase, ROOT, BIN, run_cli
@@ -239,6 +241,43 @@ class DurableLoopCliTests(CliCase):
         data["summary"] = data["settlement"]["summary"] = "e\u0301"
         path.write_text(json.dumps(data))
         self.assertEqual(self.cli("turn", "show", turn).returncode, 5)
+
+    def test_partial_publication_index_corruption_precedes_unrelated_turn_mutation(self):
+        corruptions = {
+            "boolean": lambda value: {**value, "generation": True},
+            "integral-float": lambda value: {**value, "generation": 1.0},
+            "string": lambda value: {**value, "generation": "1"},
+            "missing-generation": lambda value: {key: item for key, item in value.items() if key != "generation"},
+            "mismatched-owner": lambda value: {**value, "watchtower_id": "other"},
+            "mismatched-generation": lambda value: {**value, "generation": 2},
+        }
+        for label, corrupt in corruptions.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                home = Path(temporary) / "home"
+                self.assertEqual(run_cli(home, "watchtower", "create", "main", "--cwd", "/wt").returncode, 0)
+                self.assertEqual(run_cli(home, "work", "create", "job", "--watchtower", "main").returncode, 0)
+                first = run_cli(home, "turn", "create", "--work", "job", "--agent", "pi", "--session", "one", "--cwd", "/tmp").stdout.strip()
+                crashed = run_cli(home, "turn", "settle", first, "--source", "test", "--status", "completed", "--message", "first", env={"ZXRO_FAULT_EXIT_AFTER": "index-commit"})
+                self.assertEqual(crashed.returncode, 86)
+                first_record = json.loads(run_cli(home, "--json", "turn", "show", first).stdout)
+                index = home / "inbox-index" / f"{first_record['settlement']['event_id']}.json"
+                index.write_text(json.dumps(corrupt(json.loads(index.read_text()))))
+                second = run_cli(home, "turn", "create", "--work", "job", "--agent", "pi", "--session", "two", "--cwd", "/tmp").stdout.strip()
+                mailbox = home / "inbox" / "main.json"
+                before = mailbox.read_bytes() if mailbox.exists() else None
+                result = run_cli(home, "turn", "settle", second, "--source", "test", "--status", "completed", "--message", "second")
+                self.assertEqual(result.returncode, 5, result.stderr)
+                self.assertEqual(mailbox.read_bytes() if mailbox.exists() else None, before)
+                second_record = json.loads(run_cli(home, "--json", "turn", "show", second).stdout)
+                self.assertEqual(second_record["state"], "running")
+
+    def test_missing_partial_index_remains_a_repairable_event_commit_window(self):
+        turn = self.turn()
+        self.assertEqual(self.settle(turn, env={"ZXRO_FAULT_EXIT_AFTER": "event-commit"}).returncode, 86)
+        event_id = self.ok_json("turn", "show", turn)["settlement"]["event_id"]
+        self.assertFalse((self.home / "inbox-index" / f"{event_id}.json").exists())
+        self.assertEqual(self.settle(turn).returncode, 0)
+        self.assertEqual(self.ok_json("inbox", "unread", "--watchtower", "main")[0]["event_id"], event_id)
 
     def test_malformed_next_event_leaves_requested_turn_running(self):
         turn = self.turn()
