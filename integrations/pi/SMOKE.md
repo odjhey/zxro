@@ -2,28 +2,29 @@
 
 Run date: 2026-08-25
 
-Versions:
-
-- acpx 0.13.1, invoked as `npx -y acpx@0.13.1`
-- Pi 0.84.3
-- zxro head `8ea87a0d74f3bf676ebef44875fa2cd0d7a5cd76` plus the child-process fix in PR #16
-
-The machine already had working Pi credentials. The command used a temporary target, temporary `ZXRO_HOME`, an exact acpx package version, denied tool permissions, and removed the temporary directory afterward.
+This run used acpx 0.13.1, Pi 0.84.3, and PR #16 code head `73791acf6309b9d52883fedb0c46b3d121a76533`. The machine already had working Pi credentials.
 
 ## Commands
 
-Run from the repository root:
+These commands run from any normal checkout of PR #16. They do not depend on a named worktree. The first checks ensure the checkout is the current PR head and the installed tools have the tested versions.
 
 ```sh
 set -euo pipefail
-WT=$PWD/.worktrees/int-pi-agent-settlement
-SMOKE=$(mktemp -d /tmp/zxro-int-pi-smoke2.XXXXXX)
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+git fetch -q origin pull/16/head
+test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)"
+test "$(pi --version)" = 0.84.3
+test "$(npx -y acpx@0.13.1 --version)" = 0.13.1
+
+SMOKE=$(mktemp -d /tmp/zxro-int-pi-smoke3.XXXXXX)
 TARGET=$SMOKE/target
 HOME_DIR=$SMOKE/home
-ZXRO=$WT/bin/zxro
+ZXRO=$ROOT/bin/zxro
 mkdir -p "$TARGET/.pi/extensions/zxro" "$HOME_DIR"
-cp "$WT/integrations/pi/index.ts" "$WT/integrations/pi/adapter.ts" \
-  "$TARGET/.pi/extensions/zxro/"
+cp integrations/pi/{index.ts,adapter.ts} "$TARGET/.pi/extensions/zxro/"
+grep -Fq 'pi.on("agent_settled"' "$TARGET/.pi/extensions/zxro/index.ts"
+
 ZXRO_HOME=$HOME_DIR "$ZXRO" watchtower create smoke-wt --cwd "$TARGET"
 ZXRO_HOME=$HOME_DIR "$ZXRO" work create smoke-work --watchtower smoke-wt
 PI_TURN=$(ZXRO_HOME=$HOME_DIR "$ZXRO" --json turn create \
@@ -35,8 +36,12 @@ PI_TURN=$(ZXRO_HOME=$HOME_DIR "$ZXRO" --json turn create \
   ZXRO_TURN_ID=$PI_TURN \
   ZXRO_EXECUTABLE=$ZXRO \
   npx -y acpx@0.13.1 --timeout 90 --deny-all --format quiet \
-    pi exec 'Reply with exactly: smoke complete'
+    pi exec 'Reply with exactly: smoke complete' \
+    >"$SMOKE/acpx.out" 2>"$SMOKE/acpx.err"
 )
+test ! -s "$SMOKE/acpx.err"
+grep -Fq 'smoke complete' "$SMOKE/acpx.out"
+
 MANUAL_TURN=$(ZXRO_HOME=$HOME_DIR "$ZXRO" --json turn create \
   --work smoke-work --agent manual --session manual-smoke --cwd "$TARGET" |
   python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
@@ -44,45 +49,53 @@ printf '%s' '{"event":"agent_settled","stopReason":"stop"}' |
   ZXRO_HOME=$HOME_DIR "$ZXRO" turn settle "$MANUAL_TURN" \
     --source pi --status completed \
     --message 'Pi agent settled after a completed response.' --stdin
-ZXRO_HOME=$HOME_DIR "$ZXRO" --json turn show "$PI_TURN"
-ZXRO_HOME=$HOME_DIR "$ZXRO" --json turn show "$MANUAL_TURN"
-ZXRO_HOME=$HOME_DIR "$ZXRO" --json inbox unread --watchtower smoke-wt
-pi --version
-npx -y acpx@0.13.1 --version
+
+PI_JSON=$(ZXRO_HOME=$HOME_DIR "$ZXRO" --json turn show "$PI_TURN")
+MANUAL_JSON=$(ZXRO_HOME=$HOME_DIR "$ZXRO" --json turn show "$MANUAL_TURN")
+INBOX=$(ZXRO_HOME=$HOME_DIR "$ZXRO" --json inbox unread --watchtower smoke-wt)
+printf '%s\n%s\n%s\n' "$PI_JSON" "$MANUAL_JSON" "$INBOX"
+ARTIFACT=$(printf '%s' "$PI_JSON" |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["artifact_refs"][0])')
+ARTIFACT_PATH=$(ZXRO_HOME=$HOME_DIR "$ZXRO" artifact path "$ARTIFACT")
+test "$(cat "$ARTIFACT_PATH")" = \
+  '{"event":"agent_settled","stopReason":"stop"}'
+
 rm -rf "$SMOKE"
 test ! -e "$SMOKE"
 ```
 
+The copied project extension was the only file in the disposable project's `.pi/extensions` directory. The exact `agent_settled` registration check ran before acpx. After acpx returned, the zxro turn had source `pi` and its stdin artifact contained the adapter's exact semantic payload. Those checks prove project extension discovery even though the pi-acp startup banner listed only global extensions.
+
 ## Observed result
 
-The acpx invocation exited 0, printed `smoke complete`, and wrote no stderr output.
+The head and version assertions passed. acpx exited 0, printed `smoke complete`, and wrote zero stderr bytes.
 
 Pi settlement:
 
 ```text
-turn:       52b13960-fee7-4e9c-a8f0-54316a3e31ec
-event:      evt-4180e5b3624b4fbcb5aae0bfd6532076
+turn:       3c32198a-5fb5-4551-b4da-c03aa171aa19
+event:      evt-5e963b0be2f745b68e68df80d60834f0
 generation: 1
 outcome:    completed
 source:     pi
-artifact:   artifact:52b13960-fee7-4e9c-a8f0-54316a3e31ec:stdin
+artifact:   artifact:3c32198a-5fb5-4551-b4da-c03aa171aa19:stdin
 payload sha256: 945515bfe6e147e2d428b55a93e99f28ccd468ae8a0eb8e82075d9ebaf690486
 ```
 
 Manual settlement:
 
 ```text
-turn:       168b899f-806e-4e5e-ac3f-30fa9d3695aa
-event:      evt-c48d30011ecb411f917e877818886703
+turn:       365db3d4-7356-4155-9a7d-cde5bd83c52b
+event:      evt-9c698a49257c4e9ba605c3ce2b7db8dd
 generation: 2
 outcome:    completed
 source:     pi
-artifact:   artifact:168b899f-806e-4e5e-ac3f-30fa9d3695aa:stdin
+artifact:   artifact:365db3d4-7356-4155-9a7d-cde5bd83c52b:stdin
 payload sha256: 945515bfe6e147e2d428b55a93e99f28ccd468ae8a0eb8e82075d9ebaf690486
 ```
 
-Both turns had the same terminal outcome, source, bounded summary, payload digest, and one stdin artifact reference. Their event IDs and generations differed as expected for distinct turns. Inbox output contained two `turn_settled` events at generations 1 and 2. The cleanup check passed after removing `/tmp/zxro-int-pi-smoke2.W3DWPt`.
+Both turns had the same outcome, source, bounded summary, payload digest, and artifact shape. Their event IDs and generations differed because they were separate turns. Artifact resolution returned `{"event":"agent_settled","stopReason":"stop"}`. The command removed `/tmp/zxro-int-pi-smoke3.iEVfNR`, and the final absence check passed.
 
 ## Limits
 
-This smoke covers normal completion through a real acpx/Pi session. Hermetic tests cover Pi failure and cancellation classification, duplicate delivery, early child exit, EPIPE, timeout escalation, timeout races, and signal termination. The smoke used credentials already configured on this machine and does not prove credential setup on another host. Global Pi extensions also loaded, but the disposable project extension path identified this adapter and the resulting zxro source, payload digest, turn ID, and event prove its settlement call.
+This smoke covers normal completion. Hermetic tests cover failure and cancellation classification, duplicate delivery, UUID v4 validation, early exit, EPIPE, bounded stderr, TERM and KILL timeout outcomes, clean-exit timeout races, stress, signals, and POSIX descendant cleanup. Windows does not have the POSIX process-group cleanup check. Credentials were already configured, so this run does not test credential setup. `npx` may need network access if acpx 0.13.1 is not cached.
