@@ -14,7 +14,7 @@ sources:
     credibility: primary
 stale_after: 2026-10-01
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-25T06:42:49+08:00
+updated_at: 2026-08-25T07:03:00+08:00
 ---
 
 # Native session recovery
@@ -46,7 +46,7 @@ zxro turn list --work <work-id>
 zxro turn show <turn-id>
 ```
 
-After M2 adds `inspect`, `zxro inspect <work-id>` may provide the same lookup as a convenience. Recovery must not depend on it.
+After deferred M2b adds `inspect`, `zxro inspect <work-id>` may provide the same lookup as a convenience. Recovery must not depend on it.
 
 ## Ask acpx first
 
@@ -62,19 +62,52 @@ If acpx is not installed globally, run a reviewed, pinned release without changi
 npx --yes acpx@0.13.1 --cwd <crew-cwd> --format json <agent> sessions show <session-name>
 ```
 
-Look for:
+In JSON output, look for:
 
 ```json
 {
   "acpxRecordId": "...",
-  "acpxSessionId": "...",
+  "acpSessionId": "...",
   "agentSessionId": "..."
 }
 ```
 
-Do not pass `acpxRecordId` or `acpxSessionId` to Pi or Claude. Use `agentSessionId` only when present.
+The default text output labels `acpSessionId` as `sessionId`. This text label is still the ACP protocol session ID, not the provider-native ID. Some other acpx 0.13.1 JSON commands label the same value `acpxSessionId`, so identify the value by the command and meaning rather than spelling alone.
+
+Do not pass `acpxRecordId`, `acpSessionId`, the text `sessionId`, or JSON `acpxSessionId` to Pi or Claude. Use `agentSessionId` only when present.
 
 If acpx does not expose a native ID, use the provider-specific picker below.
+
+## Stop acpx control
+
+Do not open a native client while an acpx prompt can still write to the conversation. Let the current acpx prompt finish normally. If it cannot finish, cancel it cooperatively with the same cwd, agent, and session name:
+
+```sh
+acpx --cwd <crew-cwd> <agent> cancel --session <session-name>
+```
+
+With the pinned package:
+
+```sh
+npx --yes acpx@0.13.1 --cwd <crew-cwd> <agent> cancel --session <session-name>
+```
+
+Wait for the process running the original prompt to exit. Then close acpx control and confirm the public session metadata reports `closed: true`:
+
+```sh
+acpx --cwd <crew-cwd> <agent> sessions close <session-name>
+acpx --cwd <crew-cwd> --format json <agent> sessions show <session-name>
+```
+
+Record the actual terminal outcome in zxro. Do not report a cancellation as completion. Use one of these commands as appropriate:
+
+```sh
+zxro turn settle <turn-id> --source operator --status completed --message "acpx turn completed before native recovery"
+zxro turn settle <turn-id> --source operator --status failed --message "acpx turn failed before native recovery"
+zxro turn settle <turn-id> --source operator --status cancelled --message "acpx turn cancelled before native recovery"
+```
+
+Confirm `zxro turn show <turn-id>` reports the same terminal state and settlement before starting Pi or Claude. If acpx does not close or the zxro outcome is unknown, stop. Do not guess and do not start native takeover.
 
 ## Pi recovery
 
@@ -151,7 +184,7 @@ Do not keep a native Pi or Claude interactive process actively writing the same 
 
 For break-glass takeover:
 
-1. allow the acpx turn to settle or stop it;
+1. complete the [acpx stop and zxro settlement steps](#stop-acpx-control);
 2. open the native session;
 3. inspect or intervene;
 4. exit the native client before returning control to acpx.
@@ -179,11 +212,11 @@ The command review on 2026-08-25 used:
 - Pi 0.84.3;
 - Claude Code 2.1.241.
 
-The review confirmed the documented `zxro work show`, `zxro turn list --work`, `zxro turn show`, and `acpx <agent> sessions show` command forms from their help output. It also confirmed that acpx 0.13.1 exposes separate local session metadata and provider session commands.
+The review confirmed the documented `zxro work show`, `zxro turn list --work`, `zxro turn show`, `zxro turn settle`, and acpx session, cancel, status, and close command forms from their help output. acpx 0.13.1 `sessions show --format json` returns `acpxRecordId`, `acpSessionId`, and `agentSessionId`. Its text output labels those first two fields `id` and `sessionId`. No provider session was needed to verify these CLI output paths.
 
 The live native takeover checks remain blocked. This environment has no globally installed acpx executable and no disposable Pi or Claude credentials. The pinned npx package makes acpx available, but starting provider conversations would use an existing account and may incur charges. No provider conversation was started, no picker or known-ID resume was claimed, and no provider transcript or record was read or edited.
 
-To complete validation, provision disposable Pi and Claude credentials, then run both picker and known-ID recovery from disposable target repositories. Capture the acpx `acpxRecordId`, `acpxSessionId`, and `agentSessionId` fields from the public `sessions show` output. Pass only `agentSessionId` to the native client.
+To complete validation, provision disposable Pi and Claude credentials, then run both picker and known-ID recovery from disposable target repositories. Capture the acpx `acpxRecordId`, `acpSessionId`, and `agentSessionId` fields from public JSON `sessions show` output. Pass only `agentSessionId` to the native client.
 
 ## Related
 
