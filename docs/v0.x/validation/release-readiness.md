@@ -5,7 +5,7 @@ type: checklist
 tags: [v0.x, validation, release]
 status: draft
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-25T00:05:00+08:00
+updated_at: 2026-08-25T00:10:00+08:00
 ---
 
 # v0.x Release Readiness
@@ -31,7 +31,7 @@ updated_at: 2026-08-25T00:05:00+08:00
 | Session binding idempotency and conflict rejection | `TurnBindingCliTests.test_turn_bind_enriches_in_stages_and_rejects_conflicts` |
 | Progressive disclosure against record growth | `InspectCliTests.test_large_artifact_history_stays_behind_metadata` |
 | Disposable end-to-end manual loop | `FullLoopWalkthroughTests.test_disposable_full_loop_walkthrough`; CLI-spec block uses the `bin/zxro` shim, manual settlement, and a captured JSON event ID |
-| Cross-platform automated suite | [GitHub Actions run 32747141626](https://github.com/odjhey/zxro/actions/runs/32747141626), Python 3.11 and 3.12 on Ubuntu and macOS, exact head `d245b78` |
+| Cross-platform automated suite | [GitHub Actions run 32747867543](https://github.com/odjhey/zxro/actions/runs/32747867543), Python 3.11 and 3.12 on Ubuntu and macOS, exact head `fd03d95` |
 
 ## Engineering readiness
 
