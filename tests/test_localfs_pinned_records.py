@@ -6,6 +6,7 @@ import stat
 import tempfile
 import threading
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
@@ -596,6 +597,61 @@ class PinnedRecordTests(unittest.TestCase):
         self.assertEqual(outside.read_text(), "untouched")
         entries[0].unlink()
 
+    def test_direct_cleanup_window_may_remove_undetected_replacements(self):
+        target = self.home / "work" / "job.json"
+        outside = Path(self.temp.name) / "outside-direct-window"
+        outside.write_text("untouched")
+        real_fsync = os.fsync
+        fired = False
+
+        def replace_during_file_fsync(fd):
+            nonlocal fired
+            if not stat.S_ISDIR(os.fstat(fd).st_mode) and not fired:
+                fired = True
+                temporary = next(target.parent.glob(".zxro-tmp-*"))
+                temporary.unlink()
+                temporary.symlink_to(outside)
+                raise OSError("injected pre-sample fsync failure")
+            return real_fsync(fd)
+
+        with mutation(self.home) as access, mock.patch(
+            "zxro.localfs.ioutil.os.fsync", side_effect=replace_during_file_fsync
+        ):
+            with self.assertRaisesRegex(UnsafeStateError, "cannot publish"):
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    pass
+        self.assertTrue(fired)
+        self.assertFalse(target.exists())
+        self.assertEqual(list(target.parent.glob(".zxro-tmp-*")), [])
+        self.assertEqual(outside.read_text(), "untouched")
+
+    def test_replacement_after_matching_observation_is_admitted_unlink_window(self):
+        import zxro.localfs.ioutil as ioutil
+
+        target = self.home / "work" / "job.json"
+        outside = Path(self.temp.name) / "outside-after-match"
+        outside.write_text("untouched")
+        real_remove = ioutil._remove_temp
+        fired = False
+
+        def replace_before_direct_unlink(directory_fd, temporary):
+            nonlocal fired
+            if not fired:
+                fired = True
+                os.unlink(temporary, dir_fd=directory_fd)
+                os.symlink(outside, temporary, dir_fd=directory_fd)
+            return real_remove(directory_fd, temporary)
+
+        with mutation(self.home) as access, mock.patch(
+            "zxro.localfs.ioutil._remove_temp", side_effect=replace_before_direct_unlink
+        ):
+            with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                pass
+        self.assertTrue(fired)
+        self.assertEqual(json.loads(target.read_text()), {"id": "job"})
+        self.assertEqual(list(target.parent.glob(".zxro-tmp-*")), [])
+        self.assertEqual(outside.read_text(), "untouched")
+
     def test_generic_link_failure_preserves_replaced_temp_name(self):
         target = self.home / "work" / "job.json"
         outside = Path(self.temp.name) / "outside-link-failure"
@@ -675,7 +731,7 @@ class PinnedRecordTests(unittest.TestCase):
         self.assertTrue(eexist_fired)
         self.assertEqual(list(target.parent.glob(".zxro-tmp-*")), [])
 
-    def test_post_link_open_failure_cleans_confirmed_operation_temp(self):
+    def test_post_link_open_failure_cleans_when_no_mismatch_was_observed(self):
         target = self.home / "work" / "job.json"
         real_open = os.open
         fired = False
@@ -696,6 +752,93 @@ class PinnedRecordTests(unittest.TestCase):
         self.assertTrue(fired)
         self.assertEqual(json.loads(target.read_text()), {"id": "job"})
         self.assertEqual(list(target.parent.glob(".zxro-tmp-*")), [])
+
+    def test_operation_created_body_and_common_reread_use_one_stable_boundary(self):
+        import zxro.localfs.ioutil as ioutil
+
+        target = self.home / "work" / "job.json"
+        label = self.home / "work" / "job.json"
+        prefix = f"state record may have been published: {label}"
+        body_error = RuntimeError("body marker")
+        with mutation(self.home) as access:
+            with self.assertRaises(UnsafeStateError) as caught:
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    raise body_error
+        self.assertEqual(str(caught.exception), prefix)
+        self.assertIs(caught.exception.__cause__, body_error)
+        self.assertEqual(json.loads(target.read_text()), {"id": "job"})
+        target.chmod(0o600)
+        target.unlink()
+
+        real_read = ioutil._read_bounded
+        calls = 0
+        marker = OSError("common reread marker")
+
+        def fail_common_reread(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise marker
+            return real_read(*args, **kwargs)
+
+        with mutation(self.home) as access, mock.patch(
+            "zxro.localfs.ioutil._read_bounded", side_effect=fail_common_reread
+        ):
+            with self.assertRaises(UnsafeStateError) as caught:
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    pass
+        self.assertEqual(calls, 3)
+        self.assertEqual(str(caught.exception), prefix)
+        self.assertIs(caught.exception.__cause__, marker)
+        self.assertEqual(json.loads(target.read_text()), {"id": "job"})
+
+    def test_post_link_parse_validator_and_mismatch_use_stable_boundary(self):
+        target = self.home / "work" / "job.json"
+        prefix = f"state record may have been published: {target}"
+        cases = ("parse", "validator", "mismatch")
+        for case in cases:
+            with self.subTest(case=case):
+                if target.exists():
+                    target.chmod(0o600)
+                    target.unlink()
+                marker = ValueError(f"{case} marker")
+                calls = 0
+
+                def validator(value):
+                    nonlocal calls
+                    calls += 1
+                    if case == "validator" and calls == 2:
+                        raise marker
+                    if case == "mismatch" and calls == 2:
+                        return {"id": "different"}
+                    return value
+
+                patcher = mock.patch("zxro.localfs.ioutil._parse_object", side_effect=marker) if case == "parse" else nullcontext()
+                with mutation(self.home) as access, patcher:
+                    with self.assertRaises(UnsafeStateError) as caught:
+                        with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=validator):
+                            pass
+                self.assertEqual(str(caught.exception), prefix)
+                if case in ("parse", "validator"):
+                    self.assertIs(caught.exception.__cause__, marker)
+                else:
+                    self.assertIsInstance(caught.exception.__cause__, UnsafeStateError)
+                self.assertEqual(json.loads(target.read_text()), {"id": "job"})
+
+    def test_eexist_body_and_exit_errors_are_not_indeterminate(self):
+        target = self.write_record("job.json", {"id": "job"})
+        body_error = RuntimeError("existing body marker")
+        with mutation(self.home) as access:
+            with self.assertRaises(RuntimeError) as caught:
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    raise body_error
+        self.assertIs(caught.exception, body_error)
+
+        with mutation(self.home) as access:
+            with self.assertRaises(UnsafeStateError) as caught:
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    target.chmod(0o444)
+        self.assertNotIn("may have been published", str(caught.exception))
 
     @unittest.skipUnless(Path("/proc/self/fd").exists(), "requires procfs")
     def test_closed_pin_loop_does_not_leak_descriptors(self):

@@ -350,10 +350,10 @@ def _encoded(value: dict, label: Path) -> bytes:
 
 
 def _remove_temp(directory_fd: int, temporary: str) -> None:
-    """Direct cleanup after a successful identity sample.
+    """Best-effort direct cleanup after no mismatch was observed.
 
-    Portable pathname unlink cannot bind the sample to the unlink. A same-UID
-    process can still replace the name in that unavoidable window.
+    A sample is only an observation. It is not bound to this unlink. Direct
+    unlink may remove a same-UID replacement installed after that observation.
     """
     try:
         os.unlink(temporary, dir_fd=directory_fd)
@@ -373,6 +373,16 @@ def _temp_name_is_current(directory_fd: int, temporary: str, temp_fd: int, label
     finally:
         if sample_fd is not None:
             os.close(sample_fd)
+
+
+class _PublishedIndeterminate(UnsafeStateError):
+    pass
+
+
+def _raise_indeterminate(label: Path, exc: BaseException):
+    if isinstance(exc, _PublishedIndeterminate):
+        raise exc
+    raise _PublishedIndeterminate(f"state record may have been published: {label}") from exc
 
 
 @contextmanager
@@ -425,8 +435,8 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                 cleanup_temp = _temp_name_is_current(directory_fd, temporary, temp_fd, label, mode=mode)
                 raise
             else:
-                cleanup_temp = _temp_name_is_current(directory_fd, temporary, temp_fd, label, mode=mode)
                 try:
+                    cleanup_temp = _temp_name_is_current(directory_fd, temporary, temp_fd, label, mode=mode)
                     record_fd = _open_record(directory_fd, filename, label, readonly=readonly, mode=mode)
                     if not _same_inode(os.fstat(record_fd), os.fstat(temp_fd)):
                         raise UnsafeStateError(f"published state record changed during operation: {label}")
@@ -438,38 +448,39 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                         _remove_temp(directory_fd, temporary)
                         cleanup_temp = False
                     os.fsync(directory_fd)
+                    raw = _read_bounded(record_fd, MAX_RECORD_BYTES, label)
+                    value = _check_record_identity(_parse_object(raw, label), filename, label)
+                    existing_normalized = validate(value)
+                    if existing_normalized != normalized:
+                        raise UnsafeStateError(f"published state record validation mismatch: {label}")
+                    pin = PinnedRecord(access, directory, filename, directory_fd, record_fd, value, raw, readonly, MAX_RECORD_BYTES, mode=mode)
+                    pin.verify_current()
+                    yield pin
+                    pin.verify_current()
+                    return
                 except BaseException as exc:
-                    raise UnsafeStateError(f"state record may have been published: {label}: {exc}") from exc
+                    _raise_indeterminate(label, exc)
 
             raw = _read_bounded(record_fd, MAX_RECORD_BYTES, label)
             value = _check_record_identity(_parse_object(raw, label), filename, label)
             existing_normalized = validate(value)
-            if not destination_created and (not _accept_existing or existing_normalized != normalized):
+            if not _accept_existing or existing_normalized != normalized:
                 raise ConflictError(f"record already exists: {Path(filename).stem}")
-            if destination_created and existing_normalized != normalized:
-                raise UnsafeStateError(f"state record may have been published: {label}: validation mismatch")
             pin = PinnedRecord(access, directory, filename, directory_fd, record_fd, value, raw, readonly, MAX_RECORD_BYTES, mode=mode)
-            try:
-                pin.verify_current()
-                yield pin
-                pin.verify_current()
-            except BaseException as exc:
-                if destination_created and not (isinstance(exc, UnsafeStateError) and "may have been published" in str(exc)):
-                    raise UnsafeStateError(f"state record may have been published: {label}: {exc}") from exc
-                raise
+            pin.verify_current()
+            yield pin
+            pin.verify_current()
         except (NotFoundError, UnsafeStateError, ConflictError):
             raise
         except OSError as exc:
-            if destination_created:
-                raise UnsafeStateError(f"state record may have been published: {label}: {exc}") from exc
             raise UnsafeStateError(f"cannot publish state record {label}: {exc}") from exc
         finally:
             for fd in (sample_fd, record_fd, temp_fd):
                 if fd is not None:
                     os.close(fd)
             if cleanup_temp:
-                # This outcome's fresh matching sample authorized cleanup. Direct
-                # unlink still has the unavoidable same-UID replacement window.
+                # No mismatch was observed for this outcome. This direct unlink
+                # still has the unavoidable same-UID replacement window.
                 try:
                     _remove_temp(directory_fd, temporary)
                 except UnsafeStateError:
