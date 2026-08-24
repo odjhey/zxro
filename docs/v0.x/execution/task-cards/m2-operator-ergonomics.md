@@ -6,7 +6,7 @@ tags: [v0.x, execution, cli]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: "2026-08-24T20:20:00+08:00"
-updated_at: "2026-08-24T23:47:00+08:00"
+updated_at: "2026-08-24T23:50:00+08:00"
 ---
 
 # M2 operator ergonomics task card
@@ -56,7 +56,7 @@ Out of scope:
 - [x] Progressive disclosure and artifact-byte accounting in inspect remain stable.
 - [x] `turn bind` uses immutable identity semantics from the session-binding contract.
 - [x] `python3 -m unittest discover -s tests -v` passes for updated suite.
-- [x] GitHub Actions passed on Python 3.11 and 3.12 across Ubuntu and macOS for exact implementation head `af6ca62` in [run 32746778896](https://github.com/odjhey/zxro/actions/runs/32746778896).
+- [x] GitHub Actions passed on Python 3.11 and 3.12 across Ubuntu and macOS for exact implementation head `1617ecb` in [run 32746944228](https://github.com/odjhey/zxro/actions/runs/32746944228).
 - [ ] Independent architecture, security, and compatibility review approves the PR.
 
 ## Related
