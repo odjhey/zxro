@@ -233,7 +233,7 @@ class LocalDurableLoop:
             for event in events:
                 self._validate_index(access, event)
                 self._validate_event(access, event)
-        with mutation(self.home) as access:
+        with mutation(self.home, layout=("inbox",)) as access:
             if self.registry is not None:
                 self.registry.get_from(access, watchtower_id)
             box = self._mailbox(access, watchtower_id)
@@ -278,7 +278,7 @@ class LocalDurableLoop:
         with reading(self.home) as access:
             if self.registry is not None:
                 self.registry.get_from(access, watchtower_id)
-        with mutation(self.home) as access:
+        with mutation(self.home, layout=("inbox",)) as access:
             if self.registry is not None:
                 self.registry.get_from(access, watchtower_id)
             box = self._mailbox(access, watchtower_id)
@@ -302,7 +302,7 @@ class LocalDurableLoop:
             if watchtower_id is not None and event.watchtower_id != validate_id(watchtower_id, "watchtower id"):
                 raise NotFoundError(f"event not found: {event_id}")
             self._validate_event(access, event)
-        with mutation(self.home) as access:
+        with mutation(self.home, layout=("inbox", "inbox-handled")) as access:
             event = self._validate_event(access, self._event_by_id(access, event_id))
             box = self._mailbox(access, event.watchtower_id)
             handled = self._handled(access, event)
@@ -335,23 +335,27 @@ class LocalDurableLoop:
                 raise UnsafeStateError(f"cannot verify artifact body: {exc}") from exc
 
     @staticmethod
+    def _check_readonly_artifact(info, label):
+        check_stat(info, label, directory=False)
+        if info.st_mode & 0o222:
+            raise UnsafeStateError(f"artifact is writable: {label}")
+
+    @staticmethod
     def _verify_artifact_entry(access, turn_id, kind, expected_identity=None):
         filename = f"{turn_id}--{kind}.json"
         label = access.home / "artifacts" / filename
         with access.directory("artifacts") as directory_fd:
             try:
                 before = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
-                check_stat(before, label, directory=False)
-                if before.st_mode & 0o222:
-                    raise UnsafeStateError("artifact body is writable")
+                LocalDurableLoop._check_readonly_artifact(before, label)
                 fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
                 try:
                     current = os.fstat(fd)
-                    check_stat(current, label, directory=False)
+                    LocalDurableLoop._check_readonly_artifact(current, label)
                     after = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
                     final = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
                     for info in (after, final):
-                        check_stat(info, label, directory=False)
+                        LocalDurableLoop._check_readonly_artifact(info, label)
                     identities = {(info.st_dev, info.st_ino) for info in (before, current, after, final)}
                     if expected_identity is not None:
                         identities.add(expected_identity)
@@ -437,7 +441,7 @@ class LocalDurableLoop:
     def migrate_artifact_metadata(self):
         migrated = already_indexed = 0
         affected = []
-        with mutation(self.home) as access:
+        with mutation(self.home, layout=("artifacts", "artifact-metadata")) as access:
             for name in self._artifact_record_names(access):
                 parts = name[:-5].split("--", 1)
                 fallback_ref = f"artifact:{parts[0]}:{parts[1]}" if len(parts) == 2 else name
@@ -484,7 +488,7 @@ class LocalDurableLoop:
             record = Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
             if Artifact.parse_ref(record.ref) != artifact or ArtifactMetadata(record.ref, record.turn_id, record.kind, record.bytes, record.sha256) != metadata:
                 raise UnsafeStateError("artifact body does not match authoritative metadata")
-        with mutation(self.home) as access:
+        with mutation(self.home, layout=("artifacts",)) as access:
             metadata = self.artifacts.stat(ref)
             record = Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
             if Artifact.parse_ref(record.ref) != artifact or ArtifactMetadata(record.ref, record.turn_id, record.kind, record.bytes, record.sha256) != metadata:
@@ -509,9 +513,7 @@ class LocalDurableLoop:
                         except FileExistsError:
                             fd = os.open(filename, flags, dir_fd=directory_fd)
                     info = os.fstat(fd)
-                    check_stat(info, path, directory=False)
-                    if info.st_mode & 0o222:
-                        raise UnsafeStateError("artifact materialization is writable")
+                    self._check_readonly_artifact(info, path)
                     os.lseek(fd, 0, os.SEEK_SET)
                     chunks = []
                     while True:
@@ -521,8 +523,11 @@ class LocalDurableLoop:
                         chunks.append(chunk)
                     actual = b"".join(chunks)
                     entry = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
-                    check_stat(entry, path, directory=False)
-                    if (entry.st_dev, entry.st_ino) != (info.st_dev, info.st_ino):
+                    final = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                    self._check_readonly_artifact(entry, path)
+                    self._check_readonly_artifact(final, path)
+                    identities = {(item.st_dev, item.st_ino) for item in (info, entry, final)}
+                    if len(identities) != 1:
                         raise UnsafeStateError("artifact path changed during verification")
                 except OSError as exc:
                     raise UnsafeStateError(f"cannot verify artifact path: {exc}") from exc

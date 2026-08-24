@@ -56,8 +56,8 @@ class StoreAccess:
         if not _same_inode(path_stat, fd_stat):
             raise UnsafeStateError(f"zxro home changed during operation: {self.home}")
 
-    def ensure_layout(self):
-        for name in MANAGED_DIRS:
+    def ensure_layout(self, directories=MANAGED_DIRS):
+        for name in directories:
             try:
                 os.mkdir(name, 0o700, dir_fd=self.home_fd)
             except FileExistsError:
@@ -106,7 +106,7 @@ def reading(home: Path):
 
 
 @contextmanager
-def mutation(home: Path):
+def mutation(home: Path, *, layout=MANAGED_DIRS):
     with StoreAccess(home, create=True) as access:
         flags = os.O_RDWR | os.O_CREAT | _NOFOLLOW
         try:
@@ -127,7 +127,7 @@ def mutation(home: Path):
                     raise UnsafeStateError("store lock changed while opening")
             fcntl.flock(fd, fcntl.LOCK_EX)
             _verify_lock(access, fd, lock_stat)
-            access.ensure_layout()
+            access.ensure_layout(layout)
             yield access
             _verify_lock(access, fd, lock_stat)
         except OSError as exc:

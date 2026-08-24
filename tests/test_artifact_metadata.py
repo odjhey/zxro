@@ -105,6 +105,39 @@ class ArtifactMetadataTests(unittest.TestCase):
         with self.assertRaises(UnsafeStateError):
             self.loop.stat(ref)
 
+    def _snapshot(self):
+        snapshot = {}
+        for path in sorted(self.home.rglob("*")):
+            relative = str(path.relative_to(self.home))
+            snapshot[relative] = ("dir", path.stat().st_mode) if path.is_dir() else ("file", path.read_bytes(), path.stat().st_mode)
+        return snapshot
+
+    def test_no_payload_legacy_mailbox_mutations_create_only_contracted_state(self):
+        turn = self.turns.create("job", "pi", "test", "/tmp")
+        _, event = self.loop.settle(turn.id, "test", "completed", "done", None)
+        metadata = self.home / "artifact-metadata"; metadata.rmdir()
+
+        before = self._snapshot()
+        self.loop.pending("main")
+        self.assertEqual(self._snapshot(), before)
+        self.assertFalse(metadata.exists())
+
+        self.loop.ack("main", 1)
+        after_ack = self._snapshot()
+        changed = {path for path in before if before[path] != after_ack[path]}
+        self.assertEqual(changed, {"inbox/main.json"})
+        self.assertEqual(set(before), set(after_ack))
+        self.assertFalse(metadata.exists())
+
+        before_handle = after_ack
+        self.loop.handle(event.event_id)
+        after_handle = self._snapshot()
+        common_changes = {path for path in before_handle if before_handle[path] != after_handle[path]}
+        added = set(after_handle) - set(before_handle)
+        self.assertEqual(common_changes, {"inbox/main.json"})
+        self.assertEqual(added, {f"inbox-handled/{event.event_id}.json"})
+        self.assertFalse(metadata.exists())
+
     def test_legacy_pending_failure_does_not_create_metadata_layout(self):
         turn, _ = self.settle()
         metadata = self.home / "artifact-metadata"
@@ -141,6 +174,44 @@ class ArtifactMetadataTests(unittest.TestCase):
         with mock.patch.object(durable.os, "stat", side_effect=replacing_stat):
             with self.assertRaisesRegex(UnsafeStateError, "changed during verification"):
                 self.loop.stat(ref)
+
+    def test_body_chmod_race_fails_closed(self):
+        turn, ref = self.settle()
+        body = self.home / "artifacts" / f"{turn.id}--stdin.json"
+        real_stat = durable.os.stat
+        artifact_directory = (self.home / "artifacts").stat()
+        target_calls = 0
+        def chmod_after_snapshot(path, *args, **kwargs):
+            nonlocal target_calls
+            result = real_stat(path, *args, **kwargs)
+            directory_fd = kwargs.get("dir_fd")
+            in_artifacts = directory_fd is not None and os.fstat(directory_fd).st_ino == artifact_directory.st_ino
+            if path == body.name and in_artifacts:
+                target_calls += 1
+                if target_calls == 2:
+                    os.chmod(body, 0o600)
+            return result
+        with mock.patch.object(durable.os, "stat", side_effect=chmod_after_snapshot):
+            with self.assertRaisesRegex(UnsafeStateError, "writable"):
+                self.loop.stat(ref)
+
+    def test_materialized_path_chmod_race_fails_closed(self):
+        turn, ref = self.settle()
+        self.loop.artifact_path(ref)
+        materialized = self.home / "artifacts" / f"{turn.id}--stdin.bin"
+        real_stat = durable.os.stat
+        target_calls = 0
+        def chmod_after_snapshot(path, *args, **kwargs):
+            nonlocal target_calls
+            result = real_stat(path, *args, **kwargs)
+            if path == materialized.name:
+                target_calls += 1
+                if target_calls == 1:
+                    os.chmod(materialized, 0o600)
+            return result
+        with mock.patch.object(durable.os, "stat", side_effect=chmod_after_snapshot):
+            with self.assertRaisesRegex(UnsafeStateError, "writable"):
+                self.loop.artifact_path(ref)
 
     def test_legacy_migration_preserves_body_and_is_idempotent(self):
         turn, ref = self.settle()
