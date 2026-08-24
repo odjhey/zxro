@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from zxro.errors import ConflictError, NotFoundError, UnsafeStateError
+from zxro.errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from zxro.localfs import m1_capabilities, providers
 import zxro.localfs.durable as durable_module
 
@@ -17,6 +17,7 @@ class BuiltinM1ProviderConformance(M1ProviderConformance, unittest.TestCase):
     unsafe_error = UnsafeStateError
     conflict_error = ConflictError
     not_found_error = NotFoundError
+    validation_error = ValidationError
     settlement_cost_limit = 10
 
     def setUp(self):
@@ -54,9 +55,9 @@ class BuiltinM1ProviderConformance(M1ProviderConformance, unittest.TestCase):
         path.write_text(json.dumps(value))
         return lambda: path.write_bytes(saved)
 
-    def corrupt_event_identity_lookup(self, event):
+    def corrupt_event_identity_lookup(self, event, invalid_generation):
         path = self.home / "inbox-index" / f"{event.event_id}.json"; saved = path.read_bytes()
-        value = json.loads(saved); value["generation"] += 1; path.write_text(json.dumps(value))
+        value = json.loads(saved); value["generation"] = invalid_generation; path.write_text(json.dumps(value))
         return lambda: path.write_bytes(saved)
 
     def remove_ack_generation(self, event):

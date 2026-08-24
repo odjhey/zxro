@@ -270,6 +270,25 @@ class DurableLoopCliTests(CliCase):
                     value["generation"] -= 1; index.write_text(json.dumps(value))
                 self.assertEqual(self.cli("ack", "--watchtower", "main", "--through", str(event["generation"])).returncode, 0)
 
+    def test_direct_index_generation_requires_strict_integer_for_all_consumers(self):
+        for invalid in (True, "1", 1.5):
+            with self.subTest(invalid=invalid):
+                turn = self.turn(); self.assertEqual(self.settle(turn).returncode, 0)
+                event = next(event for event in self.ok_json("inbox", "unread", "--watchtower", "main") if event["turn_id"] == turn)
+                index = self.home / "inbox-index" / f"{event['event_id']}.json"
+                value = json.loads(index.read_text()); original = value["generation"]; value["generation"] = invalid; index.write_text(json.dumps(value))
+                commands = (
+                    ("inbox", "unread", "--watchtower", "main"),
+                    ("inbox", "pending", "--watchtower", "main"),
+                    ("inbox", "handle", event["event_id"]),
+                    ("ack", "--watchtower", "main", "--through", str(event["generation"])),
+                )
+                for command in commands:
+                    self.assertEqual(self.cli(*command).returncode, 5, command)
+                value["generation"] = original; index.write_text(json.dumps(value))
+                self.assertEqual(self.cli("inbox", "handle", event["event_id"]).returncode, 0)
+                self.assertEqual(self.cli("ack", "--watchtower", "main", "--through", str(event["generation"])).returncode, 0)
+
     def test_ack_rejects_missing_terminal_and_intermediate_generations_without_advancing(self):
         first = self.turn(); self.assertEqual(self.settle(first).returncode, 0)
         generation_one = self.home / "inbox-events" / f"main--{1:020d}.json"

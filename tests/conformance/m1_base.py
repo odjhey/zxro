@@ -69,12 +69,24 @@ class M1ProviderConformance:
         with self.assertRaises(self.unsafe_error):
             self.m1.unread("main")
         restore()
-        restore = self.corrupt_event_identity_lookup(event)
-        with self.assertRaises(self.unsafe_error):
-            self.m1.unread("main")
-        with self.assertRaises(self.unsafe_error):
-            self.m1.ack("main", event.generation)
-        restore()
+        for invalid_generation in (True, "1", 1.5):
+            restore = self.corrupt_event_identity_lookup(event, invalid_generation)
+            for operation in (
+                lambda: self.m1.unread("main"),
+                lambda: self.m1.pending("main"),
+                lambda: self.m1.handle(event.event_id),
+                lambda: self.m1.ack("main", event.generation),
+            ):
+                with self.assertRaises(self.unsafe_error):
+                    operation()
+            restore()
+
+    def test_ack_api_rejects_non_integer_without_mutation(self):
+        event = self.m1.settle(self.create_turn().id, "test", "completed", "done", None)[1]
+        for invalid in (True, "1", 1.5):
+            with self.assertRaises(self.validation_error):
+                self.m1.ack("main", invalid)
+        self.assertEqual([item.event_id for item in self.m1.unread("main")], [event.event_id])
 
     def test_ack_integrity_failure_does_not_advance(self):
         events = [self.m1.settle(self.create_turn().id, "test", "completed", "done", None)[1] for _ in range(3)]
@@ -104,6 +116,8 @@ class M1ProviderConformance:
 
     def test_missing_objects_fail_without_creation(self):
         missing = self.missing_namespace()
+        with self.assertRaises(self.validation_error):
+            missing.ack("main", True)
         with self.assertRaises(self.not_found_error):
             missing.unread("main")
         with self.assertRaises(self.not_found_error):
@@ -120,6 +134,19 @@ class M1ProviderConformance:
         self.remove_artifact(turn.id, "stdin")
         with self.assertRaisesRegex(self.unsafe_error, "missing artifact"):
             self.m1.pending("main")
+
+    def test_marker_committed_crash_history_compacts_to_fixed_empty_pending_cost(self):
+        for count in (5, 35):
+            for _ in range(count):
+                event = self.m1.settle(self.create_turn().id, "test", "completed", "done", None)[1]
+                self.interrupt_handle_after_authoritative_commit(event)
+            self.assertEqual(self.m1.pending("main"), [])
+            first_empty_cost = self.operation_cost(lambda: self.m1.pending("main"))
+            self.assertEqual(self.operation_cost(lambda: self.m1.pending("main")), first_empty_cost)
+            if count == 5:
+                baseline = first_empty_cost
+            else:
+                self.assertEqual(first_empty_cost, baseline)
 
     def test_empty_views_and_new_settlement_ignore_handled_history(self):
         self.publish_and_handle(5)

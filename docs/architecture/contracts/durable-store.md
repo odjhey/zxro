@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-24T22:50:00+08:00
+updated_at: 2026-08-24T23:15:00+08:00
 ---
 
 # Durable store contract
@@ -357,7 +357,7 @@ A provider with message IDs, thread IDs, sequence numbers, or another native mod
 mail.unread(watchtower_id) -> events
 ```
 
-`unread` is the delivery delta. It returns events whose generation is strictly greater than the watchtower's durable read cursor. Before returning an event, the provider must resolve its direct event-ID lookup and require exact event identity, owner, and generation agreement.
+`unread` is the delivery delta. It returns events whose generation is strictly greater than the watchtower's durable read cursor. Before returning an event, the provider must resolve its direct event-ID lookup and require exact event identity, owner, and generation agreement. Generation values are integers, not booleans or numeric strings.
 
 If read ack is `40` and generations `41`, `42`, and `43` exist, `unread` returns only `41..43`.
 
@@ -389,6 +389,7 @@ Rules:
 - repeating the current ack is allowed;
 - ack never deletes inbox history;
 - ack does not mark any event handled;
+- the requested generation must be an integer, not a boolean, numeric string, or float, and validation occurs before provider state access;
 - before advancing, ack must resolve and validate every newly acknowledged generation; a missing or mismatched generation fails closed without changing the cursor.
 
 ### Handle
@@ -514,7 +515,7 @@ For a work item with hundreds of prior turns and large historical artifacts, one
 unread cost ~= new delivery
 ```
 
-`pending` may grow with the number of genuinely unresolved actionable events. It must not grow with the byte size of their reports, logs, or transcripts.
+`pending` may grow with the number of genuinely unresolved actionable events. It must not grow with the byte size of their reports, logs, or transcripts. If authoritative handled markers remain after an interrupted handle, a pending read compacts those stale unresolved IDs so later empty reads return to fixed cost without exact-handle retries.
 
 ```text
 pending cost ~= unresolved bounded events

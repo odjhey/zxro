@@ -47,12 +47,21 @@ class LocalDurableLoop:
         return event
 
     @staticmethod
-    def _event_by_id(access, event_id):
+    def _index(access, event_id):
         value = read_json(access, "inbox-index", f"{event_id}.json")
         if set(value) != {"event_id", "watchtower_id", "generation"} or value.get("event_id") != event_id or type(value.get("generation")) is not int:
             raise UnsafeStateError("invalid event index")
         try:
-            watchtower_id = validate_id(value["watchtower_id"], "watchtower id")
+            validate_id(value["watchtower_id"], "watchtower id")
+        except ValidationError as exc:
+            raise UnsafeStateError("invalid event index") from exc
+        return value
+
+    @staticmethod
+    def _event_by_id(access, event_id):
+        value = LocalDurableLoop._index(access, event_id)
+        try:
+            watchtower_id = value["watchtower_id"]
             event = LocalDurableLoop._event(access, watchtower_id, value["generation"])
         except ValidationError as exc:
             raise UnsafeStateError("invalid event index") from exc
@@ -65,7 +74,7 @@ class LocalDurableLoop:
     @staticmethod
     def _validate_index(access, event):
         try:
-            value = read_json(access, "inbox-index", f"{event.event_id}.json")
+            value = LocalDurableLoop._index(access, event.event_id)
         except NotFoundError as exc:
             raise UnsafeStateError("published event is missing its direct index") from exc
         expected = {"event_id": event.event_id, "watchtower_id": event.watchtower_id, "generation": event.generation}
@@ -208,32 +217,51 @@ class LocalDurableLoop:
         return self._events(watchtower_id, pending=False)
 
     def pending(self, watchtower_id):
-        return self._events(watchtower_id, pending=True)
+        watchtower_id = validate_id(watchtower_id, "watchtower id")
+        with reading(self.home) as access:
+            if self.registry is not None:
+                self.registry.get_from(access, watchtower_id)
+        with mutation(self.home) as access:
+            if self.registry is not None:
+                self.registry.get_from(access, watchtower_id)
+            box = self._mailbox(access, watchtower_id)
+            try:
+                events = [self._event_by_id(access, event_id) for event_id in box["unresolved"]]
+            except NotFoundError as exc:
+                raise UnsafeStateError("mailbox index references missing event") from exc
+            if any(event.watchtower_id != watchtower_id for event in events):
+                raise UnsafeStateError("mailbox index references another watchtower")
+            visible = []
+            compacted = []
+            for event in events:
+                self._validate_index(access, event)
+                self._validate_event(access, event)
+                if self._handled(access, event) is None:
+                    visible.append(event)
+                    compacted.append(event.event_id)
+            if compacted != box["unresolved"]:
+                box["unresolved"] = compacted
+                atomic_replace(access, "inbox", f"{watchtower_id}.json", box)
+            return visible
 
-    def _events(self, watchtower_id, pending):
+    def _events(self, watchtower_id, pending=False):
         watchtower_id = validate_id(watchtower_id, "watchtower id")
         with reading(self.home) as access:
             if self.registry is not None:
                 self.registry.get_from(access, watchtower_id)
             box = self._mailbox(access, watchtower_id)
             try:
-                if pending:
-                    events = [self._event_by_id(access, event_id) for event_id in box["unresolved"]]
-                else:
-                    events = [self._event(access, watchtower_id, generation) for generation in range(box["ack"] + 1, box["highest"] + 1)]
+                events = [self._event(access, watchtower_id, generation) for generation in range(box["ack"] + 1, box["highest"] + 1)]
             except NotFoundError as exc:
                 raise UnsafeStateError("mailbox index references missing event") from exc
-            if any(event.watchtower_id != watchtower_id for event in events):
-                raise UnsafeStateError("mailbox index references another watchtower")
-            visible = []
             for event in events:
                 self._validate_index(access, event)
                 self._validate_event(access, event)
-                if not pending or self._handled(access, event) is None:
-                    visible.append(event)
-            return visible
+            return events
 
     def ack(self, watchtower_id, through):
+        if type(through) is not int or through < 0:
+            raise ValidationError(f"invalid acknowledgement generation: {through!r}")
         watchtower_id = validate_id(watchtower_id, "watchtower id")
         with reading(self.home) as access:
             if self.registry is not None:
