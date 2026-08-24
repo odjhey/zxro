@@ -96,13 +96,14 @@ $ZXRO_HOME/
   turns/<turn-id>.json            # includes session binding and settlement fields
   artifacts/<turn-id>--<kind>.json            # durable artifact record
   artifacts/<turn-id>--<kind>.bin             # verified local materialization
-  inbox/<watchtower-id>.json                  # bounded read cursor
-  inbox-events/<watchtower>--<generation>--<event-id>.json
+  inbox/<watchtower-id>.json                  # ack, high-water, unresolved IDs
+  inbox-events/<watchtower>--<generation>.json
+  inbox-index/<event-id>.json                 # direct event lookup
   inbox-handled/<event-id>.json
   .lock                           # store lock
 ```
 
-This layout is a provider implementation detail. Tests and callers other than `test_localfs_invariants.py` must not depend on it. M1 uses one bounded record per immutable event and handled marker rather than one ever-growing JSONL record. The split prevents mailbox history from reaching the state-record size limit and blocking later publication or crash-gap repair.
+This layout is a provider implementation detail. Tests and callers other than `test_localfs_invariants.py` must not depend on it. M1 uses one bounded record per immutable event and handled marker rather than one ever-growing JSONL record. Per-watchtower high-water and unresolved indexes let `unread` read only generations after ack, let `pending` read only unresolved IDs, and let `handle` use direct event-ID lookup. Handled history and other watchtowers do not add reads to these operations.
 
 ### Concurrency
 

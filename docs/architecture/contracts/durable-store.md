@@ -432,7 +432,9 @@ zxro settles a turn in this order:
 
 The safety rule is asymmetric:
 
-> A watchtower must never receive a settlement event whose durable turn result cannot be resolved.
+> A watchtower must never receive a settlement event whose durable turn result and referenced artifact metadata cannot be resolved and matched to the event.
+
+`unread` and `pending` must fail closed if an event's terminal turn, ownership, settlement identity, outcome, summary, or artifact metadata is missing or disagrees. They must not return a partially validated envelope.
 
 A process may crash after step 2 and before step 3. That leaves a settled turn whose mailbox event has not yet been published. This state is recoverable. Retrying settlement or reconciliation must detect the committed settlement and idempotently publish the missing event.
 
@@ -519,6 +521,8 @@ pending cost ~= accumulated artifact history
 
 Increasing the byte size of an old artifact must not increase the output size of `unread` or `pending` when the event envelopes are unchanged.
 
+Providers must also bound reconciliation work by the requested view. `unread` reads generations after the watchtower's ack, `pending` reads unresolved events, and direct handling resolves one event ID. Empty views and one new settlement must not scan handled history or another watchtower's history.
+
 ## Isolation contract
 
 The active zxro home is one logical durable-state and trust boundary.
@@ -604,6 +608,9 @@ The conformance suite must cover at least:
 - idempotent event handling;
 - work close remaining independent from read ack and event handling;
 - crash recovery between terminal-state commit and mailbox publication;
+- fail-closed reads for missing or mismatched terminal turns and artifact metadata;
+- empty unread/pending and one new settlement remaining independent of handled history size;
+- missing-object reads leaving a nonexistent provider namespace uncreated;
 - namespace isolation;
 - progressive-disclosure and bounded-context invariants.
 

@@ -118,25 +118,15 @@ class DurableLoopCliTests(CliCase):
 
     def test_mailbox_ack_rejects_boolean_generation(self):
         self.assertEqual(self.settle(self.turn()).returncode, 0)
-        (self.home / "inbox" / "main.json").write_text(json.dumps({"watchtower_id": "main", "ack": True}))
+        (self.home / "inbox" / "main.json").write_text(json.dumps({"watchtower_id": "main", "ack": True, "highest": 1, "unresolved": []}))
         self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
 
-    def test_pending_rejects_invalid_handled_state(self):
-        self.assertEqual(self.settle(self.turn()).returncode, 0)
-        event_id = self.ok_json("inbox", "unread", "--watchtower", "main")[0]["event_id"]
-        self.assertEqual(self.cli("inbox", "handle", event_id).returncode, 0)
-        path = self.home / "inbox-handled" / f"{event_id}.json"
-        original = json.loads(path.read_text())
-        for change in ({"handled_at": "2025-01-01T00:00:00"}, {"watchtower_id": "../invalid"}):
-            path.write_text(json.dumps({**original, **change}))
-            self.assertEqual(self.cli("inbox", "pending", "--watchtower", "main").returncode, 5)
-
-    def test_handle_validates_all_event_paths(self):
+    def test_handle_rejects_mismatched_direct_index(self):
         self.assertEqual(self.settle(self.turn()).returncode, 0)
         event = self.ok_json("inbox", "unread", "--watchtower", "main")[0]
-        path = next((self.home / "inbox-events").iterdir())
-        path.rename(path.with_name(f"wrong--{event['event_id']}.json"))
-        self.assertEqual(self.cli("inbox", "handle", event["event_id"]).returncode, 5)
+        path = self.home / "inbox-index" / f"{event['event_id']}.json"
+        value = json.loads(path.read_text()); value["generation"] = 2; path.write_text(json.dumps(value))
+        self.assertEqual(self.cli("inbox", "handle", event["event_id"]).returncode, 3)
 
     def test_crash_gap_retry_preserves_event_identity(self):
         turn = self.turn()
@@ -154,12 +144,9 @@ class DurableLoopCliTests(CliCase):
         self.assertEqual(self.settle(turn, env={"ZXRO_FAULT_EXIT_AFTER": "turn-commit"}).returncode, 86)
         event_id = self.ok_json("turn", "show", turn)["settlement"]["event_id"]
         self.assertEqual(self.settle(self.turn()).returncode, 0)
-        path = next((self.home / "inbox-events").iterdir())
-        event = json.loads(path.read_text())
-        event["event_id"] = event_id
-        replacement = path.with_name(path.name.rsplit("--", 1)[0] + f"--{event_id}.json")
-        path.rename(replacement)
-        replacement.write_text(json.dumps(event))
+        index = next((self.home / "inbox-index").iterdir())
+        value = json.loads(index.read_text()); value["event_id"] = event_id
+        (self.home / "inbox-index" / f"{event_id}.json").write_text(json.dumps(value))
         self.assertEqual(self.settle(turn).returncode, 5)
 
     def test_mailbox_events_validate_all_envelope_fields(self):
@@ -192,12 +179,26 @@ class DurableLoopCliTests(CliCase):
         path = next((self.home / "inbox-events").iterdir())
         event = json.loads(path.read_text())
         event["generation"] = 3
-        replacement = path.with_name(f"main--{3:020d}--{event['event_id']}.json")
+        replacement = path.with_name(f"main--{3:020d}.json")
         path.rename(replacement)
         replacement.write_text(json.dumps(event))
+        box = self.home / "inbox" / "main.json"
+        state = json.loads(box.read_text()); state["highest"] = 3; box.write_text(json.dumps(state))
         turn = self.turn()
         self.assertEqual(self.settle(turn).returncode, 5)
         self.assertEqual(self.ok_json("turn", "show", turn)["state"], "running")
+
+    def test_inbox_fails_closed_for_missing_terminal_turn_or_artifact(self):
+        turn = self.turn()
+        self.assertEqual(self.settle(turn, "--stdin", input="evidence").returncode, 0)
+        turn_path = self.home / "turns" / f"{turn}.json"
+        saved = turn_path.read_bytes(); turn_path.unlink()
+        for command in (("inbox", "unread"), ("inbox", "pending")):
+            self.assertEqual(self.cli(*command, "--watchtower", "main").returncode, 5)
+        turn_path.write_bytes(saved)
+        (self.home / "artifacts" / f"{turn}--stdin.json").unlink()
+        for command in (("inbox", "unread"), ("inbox", "pending")):
+            self.assertEqual(self.cli(*command, "--watchtower", "main").returncode, 5)
 
     def test_concurrent_settlements_have_unique_ordered_generations(self):
         turns = [self.turn() for _ in range(12)]
@@ -208,3 +209,20 @@ class DurableLoopCliTests(CliCase):
         self.assertEqual([e["generation"] for e in events], list(range(1, 13)))
         self.assertEqual(len({e["event_id"] for e in events}), 12)
         self.assertEqual({e["turn_id"] for e in events}, set(turns))
+
+
+class MissingM1ObjectsHaveNoSideEffects(CliCase):
+    def test_missing_commands_do_not_create_home(self):
+        commands = (
+            ("inbox", "unread", "--watchtower", "main"),
+            ("inbox", "pending", "--watchtower", "main"),
+            ("ack", "--watchtower", "main", "--through", "1"),
+            ("inbox", "handle", "evt-" + "0" * 32),
+            ("artifact", "path", "artifact:00000000-0000-4000-8000-000000000000:stdin"),
+            ("turn", "settle", "00000000-0000-4000-8000-000000000000", "--source", "x", "--status", "completed", "--message", "done"),
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.cli(*command)
+                self.assertEqual(result.returncode, 3, result.stderr)
+                self.assertFalse(self.home.exists())
