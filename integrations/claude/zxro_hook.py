@@ -14,7 +14,7 @@ import unicodedata
 MAX_HOOK_BYTES = 8 * 1024 * 1024 - 4096
 FAILURE_TYPES = {
     "rate_limit", "overloaded", "authentication_failed", "oauth_org_not_allowed",
-    "billing_error", "invalid_request", "model_not_found", "server_error",
+    "account_on_hold", "billing_error", "invalid_request", "model_not_found", "server_error",
     "max_output_tokens", "unknown",
 }
 
@@ -41,10 +41,10 @@ def classify(payload: object) -> tuple[str, str]:
             raise HookError("Stop.stop_hook_active must be a boolean")
         if not isinstance(payload.get("last_assistant_message"), str):
             raise HookError("Stop.last_assistant_message must be a string")
-        background = payload.get("background_tasks")
-        crons = payload.get("session_crons")
+        background = payload.get("background_tasks", [])
+        crons = payload.get("session_crons", [])
         if not isinstance(background, list) or not isinstance(crons, list):
-            raise HookError("Stop task registry fields are missing or malformed")
+            raise HookError("Stop task registry fields must be arrays when present")
         if background or crons:
             raise HookError("Stop is not terminal while background tasks or session crons remain")
         return "completed", "Claude turn completed"
@@ -54,12 +54,6 @@ def classify(payload: object) -> tuple[str, str]:
         if error not in FAILURE_TYPES:
             raise HookError("StopFailure.error is not documented by this adapter")
         return "failed", f"Claude turn failed: {error}"
-
-    if event == "SessionEnd":
-        reason = text(payload.get("reason"), "SessionEnd.reason")
-        if reason != "prompt_input_exit":
-            raise HookError(f"SessionEnd reason {reason!r} is not a cancellation")
-        return "cancelled", "Claude turn cancelled: prompt input exit"
 
     raise HookError(f"unsupported or nonterminal Claude hook event: {event}")
 

@@ -1,0 +1,9 @@
+{
+  "session_id": "official-failure-session",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "/tmp/target",
+  "hook_event_name": "StopFailure",
+  "error": "account_on_hold",
+  "error_details": "The account cannot make API requests.",
+  "last_assistant_message": "Your account is on hold."
+}

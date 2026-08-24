@@ -9,16 +9,17 @@ transcripts or zxro storage.
 The adapter targets Claude Code 2.1.241 and its documented command hook schema.
 It accepts these terminal meanings:
 
-- `Stop` becomes `completed` only when `background_tasks` and `session_crons`
-  are present and empty.
+- `Stop` becomes `completed`. When the optional `background_tasks` or
+  `session_crons` fields are present, each must be an empty array.
 - `StopFailure` becomes `failed` when `error` is one of the documented error
-  types.
-- `SessionEnd` with `reason: prompt_input_exit` becomes `cancelled`. Other
-  session-end reasons do not describe cancellation and fail closed.
+  types, including `account_on_hold` in Claude Code 2.1.241.
 
-Claude Code does not fire `Stop` for a user interrupt. It also does not define a
-terminal cancellation event for every interrupt path. Do not broaden the
-`SessionEnd` matcher or infer cancellation from transcript text.
+Claude Code does not fire `Stop` for a user interrupt. `SessionEnd` with
+`reason: prompt_input_exit` can follow a completed `Stop`, so it does not prove
+that the delegated turn was cancelled. This adapter rejects all `SessionEnd`
+events instead of risking a second, contradictory settlement. It does not infer
+cancellation from transcript text. A dispatcher with a separate documented
+cancellation signal should call `zxro turn settle --status cancelled` itself.
 
 The hook requires inherited `ZXRO_TURN_ID` and `ZXRO_HOME`. The dispatcher must
 create the turn and export both values before starting Claude. The payload's
@@ -32,20 +33,20 @@ The example uses Claude Code's documented exec form and
 `${CLAUDE_PROJECT_DIR}` placeholder, so hook fields never enter a shell command.
 
 The default configuration does not retain the raw hook payload. To retain it as
-an zxro artifact, add `"--retain-payload"` to each hook's `args` array. The
+a zxro artifact, add `"--retain-payload"` to each hook's `args` array. The
 mailbox contains only its bounded settlement message and artifact reference.
 
-Hook errors go to stderr and return nonzero. `StopFailure` ignores command hook
-exit status by design, but Claude Code still runs the command and zxro records a
-successful settlement. Check Claude debug output and zxro state when diagnosing
-that event.
+Hook errors go to stderr and return nonzero. Claude Code ignores a
+`StopFailure` hook's exit status, so the hook cannot make Claude report its zxro
+failure. Operators must check Claude debug output and zxro state. The adapter
+never reports a failed zxro call as successful.
 
 ## Tests
 
-Run the hermetic adapter suite:
+Run the hermetic adapter suite from the repository root:
 
 ```sh
-python3 -m unittest discover -s integrations/claude/tests -v
+python3 -m unittest discover -s integrations/claude -p 'test_*.py' -v
 ```
 
 The suite uses a fake executable for argv, timeout, signal, and malformed-input

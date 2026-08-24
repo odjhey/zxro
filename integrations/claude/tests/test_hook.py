@@ -8,6 +8,7 @@ import unittest
 
 HERE = Path(__file__).resolve().parents[1]
 HOOK = HERE / "zxro_hook.py"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 ROOT = HERE.parents[1]
 REAL_ZXRO = ROOT / "bin" / "zxro"
 
@@ -60,6 +61,9 @@ if mode == 'signal': os.kill(os.getpid(), 15)
         value.update(changes)
         return value
 
+    def fixture(self, name):
+        return json.loads((FIXTURES / name).read_text())
+
     def run_hook(self, payload, *args, env=None, raw=None):
         data = raw if raw is not None else json.dumps(payload, ensure_ascii=False).encode()
         return subprocess.run([str(HOOK), *args], input=data, capture_output=True, env={**self.env, **(env or {})})
@@ -69,7 +73,7 @@ if mode == 'signal': os.kill(os.getpid(), 15)
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
     def test_official_terminal_events_map_to_one_argv_call(self):
-        cases = [("Stop", "completed"), ("StopFailure", "failed"), ("SessionEnd", "cancelled")]
+        cases = [("Stop", "completed"), ("StopFailure", "failed")]
         for event, status in cases:
             with self.subTest(event=event):
                 before = len(self.calls())
@@ -81,6 +85,22 @@ if mode == 'signal': os.kill(os.getpid(), 15)
                 self.assertLessEqual(len(call["argv"][8]), 1000)
                 self.assertEqual(call["stdin_hex"], "")
                 self.assertFalse((self.root / "nope").exists())
+
+    def test_official_optional_stop_fields_and_account_on_hold_fixture(self):
+        stop = self.run_hook(self.fixture("stop-minimal.json"))
+        held = self.run_hook(self.fixture("stop-failure-account-on-hold.json"))
+        self.assertEqual((stop.returncode, held.returncode), (0, 0), (stop.stderr, held.stderr))
+        calls = self.calls()
+        self.assertEqual(calls[0]["argv"][6:9], ["completed", "--message", "Claude turn completed"])
+        self.assertEqual(calls[1]["argv"][6:9], ["failed", "--message", "Claude turn failed: account_on_hold"])
+
+    def test_session_end_cannot_contradict_prior_stop(self):
+        completed = self.run_hook(self.fixture("stop-minimal.json"))
+        ended = self.run_hook(self.fixture("session-end-prompt-input-exit.json"))
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertNotEqual(ended.returncode, 0)
+        self.assertIn(b"unsupported or nonterminal", ended.stderr)
+        self.assertEqual(len(self.calls()), 1)
 
     def test_payload_retention_is_explicit_and_exact(self):
         raw = json.dumps(self.payload(), ensure_ascii=False).encode()
@@ -97,6 +117,7 @@ if mode == 'signal': os.kill(os.getpid(), 15)
             self.payload(background_tasks=[{"id": "running"}]),
             self.payload(session_crons=[{"id": "cron"}]),
             self.payload("SessionEnd", reason="other"),
+            self.fixture("session-end-prompt-input-exit.json"),
             self.payload("StopFailure", error="made_up"),
             [],
         ]
@@ -122,6 +143,13 @@ if mode == 'signal': os.kill(os.getpid(), 15)
                 result = self.run_hook(self.payload(), *args, env={"FAKE_MODE": mode})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(b"zxro Claude hook failed", result.stderr)
+
+    def test_optional_stop_fields_fail_closed_when_present_but_invalid(self):
+        for changes in ({"background_tasks": None}, {"session_crons": "none"}, {"background_tasks": [{"id": "running"}]}):
+            with self.subTest(changes=changes):
+                result = self.run_hook(self.payload(**changes))
+                self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls(), [])
 
     def test_size_limit_rejects_before_cli(self):
         result = self.run_hook(None, raw=b" " * (8 * 1024 * 1024))
