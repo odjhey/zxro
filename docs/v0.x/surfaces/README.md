@@ -6,14 +6,16 @@ tags: [v0.x, surfaces]
 status: current
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T15:33:00+08:00
+updated_at: 2026-08-24T15:54:00+08:00
 ---
 
 # v0.x surfaces
 
-The CLI is the first v0.x interface. Harness integrations must reduce to the same CLI operations rather than adding a second persistence API.
+The CLI is the first product interface. It must be useful by hand before Pi or Claude integrations automate the same commands.
 
-- [v0.x CLI](./cli.md) — command contract for watchtower, work, turn, inbox, ack, inspection, and metadata helpers.
-- [Surface template](./surface-template.md) — template for later interfaces.
+- [v0.x CLI](./cli.md) — durable artifact CRUD, settlement, delta inbox, ack, progressive context disclosure, artifact resolution, inspection, and metadata helpers.
+- [Surface template](./surface-template.md) — starting point for a later interface spec.
+
+Routine CLI reads return bounded summaries, metadata, and references. They do not inline accumulated reports or logs.
 
 [Back to v0.x](../README.md)
