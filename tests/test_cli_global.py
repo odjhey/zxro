@@ -1,10 +1,8 @@
 import json
-import os
 import stat
-import tempfile
 from pathlib import Path
 
-from tests.helpers import CliCase, BIN, run_cli
+from tests.helpers import CliCase, BIN
 
 
 class GlobalCliTests(CliCase):

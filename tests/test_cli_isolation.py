@@ -1,4 +1,3 @@
-import tempfile
 from pathlib import Path
 from tests.helpers import CliCase, run_cli
 
