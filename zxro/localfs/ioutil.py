@@ -27,6 +27,18 @@ def _same_inode(left, right):
     return left.st_dev == right.st_dev and left.st_ino == right.st_ino
 
 
+def _close_descriptors(fds):
+    first_error = None
+    for fd in fds:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError as exc:
+                if first_error is None:
+                    first_error = exc
+    return first_error
+
+
 class StoreAccess:
     def __init__(self, home: Path, *, create: bool = False):
         self.home = home
@@ -223,15 +235,13 @@ def _sample_chain(access, directory: str, filename: str, *, readonly: bool, mode
         record_fd = _open_record(directory_fd, filename, label, readonly=readonly, mode=mode)
         return home_fd, directory_fd, record_fd
     except BaseException as exc:
-        for fd in (record_fd, directory_fd, home_fd):
-            if fd is not None:
-                os.close(fd)
+        _close_descriptors((record_fd, directory_fd, home_fd))
         if isinstance(exc, NotFoundError):
             raise
-        if isinstance(exc, (UnsafeStateError, OSError)):
-            if isinstance(exc, UnsafeStateError):
-                raise
-            raise UnsafeStateError(f"cannot sample state record {label}: {exc}") from exc
+        if isinstance(exc, UnsafeStateError):
+            raise
+        if isinstance(exc, OSError):
+            raise _InternalUnsafeStateError(f"cannot sample state record {label}: {exc}", exc) from exc
         raise
 
 
@@ -285,6 +295,7 @@ class PinnedRecord:
             )
         except NotFoundError:
             raise UnsafeStateError(f"state record changed during operation: {self._label}") from None
+        primary_error = None
         try:
             _, sampled_directory_fd, sampled_record_fd = sample
             if not _same_inode(os.fstat(sampled_directory_fd), os.fstat(self.directory_fd)):
@@ -297,9 +308,15 @@ class PinnedRecord:
             after = _check_record_fd(sampled_record_fd, self._label, readonly=self._readonly, mode=self._mode)
             if not _same_inode(before, after):
                 raise UnsafeStateError(f"state record changed during operation: {self._label}")
+        except BaseException as exc:
+            primary_error = exc
+            raise
         finally:
-            for fd in reversed(sample):
-                os.close(fd)
+            close_error = _close_descriptors(reversed(sample))
+            if primary_error is None and close_error is not None:
+                raise _InternalUnsafeStateError(
+                    f"cannot close state record sample {self._label}: {close_error}", close_error
+                ) from close_error
 
 
 class PinnedRecordSet:
@@ -366,7 +383,9 @@ def _remove_temp(directory_fd: int, temporary: str) -> None:
     except FileNotFoundError:
         pass
     except OSError as exc:
-        raise UnsafeStateError(f"cannot remove temporary publication path {temporary}: {exc}") from exc
+        raise _InternalUnsafeStateError(
+            f"cannot remove temporary publication path {temporary}: {exc}", exc
+        ) from exc
 
 
 def _temp_name_is_current(directory_fd: int, temporary: str, temp_fd: int, label: Path, *, mode: int) -> bool:
@@ -377,8 +396,11 @@ def _temp_name_is_current(directory_fd: int, temporary: str, temp_fd: int, label
     except (NotFoundError, UnsafeStateError, OSError):
         return False
     finally:
-        if sample_fd is not None:
-            os.close(sample_fd)
+        close_error = _close_descriptors((sample_fd,))
+        if close_error is not None:
+            raise _InternalUnsafeStateError(
+                f"cannot close temporary publication sample {label}: {close_error}", close_error
+            ) from close_error
 
 
 class _PublishedIndeterminate(UnsafeStateError):

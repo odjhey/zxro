@@ -960,6 +960,100 @@ class PinnedRecordTests(unittest.TestCase):
         self.assertIs(caught.exception.__cause__, marker)
         self.assertEqual(json.loads(target.read_text()), {"id": "job"})
 
+    def test_sample_chain_and_temp_unlink_low_level_origins_are_tagged(self):
+        target = self.home / "work" / "job.json"
+        prefix = f"state record may have been published: {target}"
+        real_open = os.open
+        real_unlink = os.unlink
+        real_link = os.link
+        for case in ("sample", "unlink"):
+            with self.subTest(case=case):
+                if target.exists():
+                    target.chmod(0o600)
+                    target.unlink()
+                marker = OSError(f"{case} origin marker")
+                linked = False
+                fired = False
+
+                def link(*args, **kwargs):
+                    nonlocal linked
+                    result = real_link(*args, **kwargs)
+                    linked = True
+                    return result
+
+                def opened(name, flags, *args, **kwargs):
+                    nonlocal fired
+                    if case == "sample" and linked and name == self.home and not fired:
+                        fired = True
+                        raise marker
+                    return real_open(name, flags, *args, **kwargs)
+
+                def unlink(name, *args, **kwargs):
+                    nonlocal fired
+                    if case == "unlink" and linked and isinstance(name, str) and name.startswith(".zxro-tmp-") and not fired:
+                        fired = True
+                        raise marker
+                    return real_unlink(name, *args, **kwargs)
+
+                with mutation(self.home) as access, mock.patch("zxro.localfs.ioutil.os.link", side_effect=link), mock.patch(
+                    "zxro.localfs.ioutil.os.open", side_effect=opened
+                ), mock.patch("zxro.localfs.ioutil.os.unlink", side_effect=unlink):
+                    with self.assertRaises(UnsafeStateError) as caught:
+                        with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                            pass
+                self.assertTrue(fired)
+                self.assertEqual(str(caught.exception), prefix)
+                self.assertIs(caught.exception.__cause__, marker)
+                self.assertEqual(json.loads(target.read_text()), {"id": "job"})
+
+    def test_sample_cleanup_attempts_every_close_after_first_failure(self):
+        target = self.home / "work" / "job.json"
+        prefix = f"state record may have been published: {target}"
+        real_open = os.open
+        real_close = os.close
+        real_link = os.link
+        linked = armed = raised = False
+        attempted = []
+        marker = OSError("sample close marker")
+
+        def link(*args, **kwargs):
+            nonlocal linked
+            result = real_link(*args, **kwargs)
+            linked = True
+            return result
+
+        def opened(name, flags, *args, **kwargs):
+            nonlocal armed
+            fd = real_open(name, flags, *args, **kwargs)
+            if linked and name == "job.json":
+                armed = True
+            return fd
+
+        def close(fd):
+            nonlocal raised
+            if armed:
+                attempted.append(fd)
+                real_close(fd)
+                if not raised:
+                    raised = True
+                    raise marker
+                return None
+            return real_close(fd)
+
+        with mutation(self.home) as access, mock.patch("zxro.localfs.ioutil.os.link", side_effect=link), mock.patch(
+            "zxro.localfs.ioutil.os.open", side_effect=opened
+        ), mock.patch("zxro.localfs.ioutil.os.close", side_effect=close):
+            with self.assertRaises(UnsafeStateError) as caught:
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    pass
+        self.assertTrue(raised)
+        self.assertGreaterEqual(len(attempted), 4)
+        self.assertEqual(str(caught.exception), prefix)
+        self.assertIs(caught.exception.__cause__, marker)
+        for fd in set(attempted):
+            with self.assertRaises(OSError):
+                os.fstat(fd)
+
     def test_post_link_metadata_identity_and_initial_checkpoint_are_enclosed(self):
         import zxro.localfs.ioutil as ioutil
 
