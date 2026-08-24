@@ -153,27 +153,43 @@ class LocalDurableLoop:
         artifact = Artifact.parse_ref(ref)
         with mutation(self.home) as access:
             record = Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
-        path = self.home / "artifacts" / f"{record.turn_id}--{record.kind}.bin"
-        content = bytes.fromhex(record.content_hex)
-        if not path.exists():
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-            try:
-                fd = os.open(path, flags, 0o600)
+            filename = f"{record.turn_id}--{record.kind}.bin"
+            path = self.home / "artifacts" / filename
+            content = bytes.fromhex(record.content_hex)
+            with access.directory("artifacts") as directory_fd:
+                flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+                fd = None
                 try:
-                    view = memoryview(content)
-                    while view:
-                        view = view[os.write(fd, view):]
-                    os.fsync(fd)
+                    try:
+                        fd = os.open(filename, flags, dir_fd=directory_fd)
+                    except FileNotFoundError:
+                        try:
+                            fd = os.open(filename, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory_fd)
+                            view = memoryview(content)
+                            while view:
+                                view = view[os.write(fd, view):]
+                            os.fsync(fd)
+                        except FileExistsError:
+                            fd = os.open(filename, flags, dir_fd=directory_fd)
+                    info = os.fstat(fd)
+                    check_stat(info, path, directory=False)
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    chunks = []
+                    while True:
+                        chunk = os.read(fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                    actual = b"".join(chunks)
+                    entry = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                    check_stat(entry, path, directory=False)
+                    if (entry.st_dev, entry.st_ino) != (info.st_dev, info.st_ino):
+                        raise UnsafeStateError("artifact path changed during verification")
+                except OSError as exc:
+                    raise UnsafeStateError(f"cannot verify artifact path: {exc}") from exc
                 finally:
-                    os.close(fd)
-            except FileExistsError:
-                pass
-        try:
-            info = path.lstat()
-            check_stat(info, path, directory=False)
-            actual = path.read_bytes()
-        except OSError as exc:
-            raise UnsafeStateError(f"cannot verify artifact path: {exc}") from exc
-        if path.resolve().parent != (self.home / "artifacts").resolve() or len(actual) != record.bytes or hashlib.sha256(actual).hexdigest() != record.sha256:
-            raise UnsafeStateError("artifact path does not match durable content")
-        return {"ref": ref, "path": str(path), "bytes": record.bytes}
+                    if fd is not None:
+                        os.close(fd)
+                if len(actual) != record.bytes or hashlib.sha256(actual).hexdigest() != record.sha256:
+                    raise UnsafeStateError("artifact path does not match durable content")
+            return {"ref": ref, "path": str(path), "bytes": record.bytes}

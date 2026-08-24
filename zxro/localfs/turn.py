@@ -1,9 +1,10 @@
 import uuid
+from datetime import datetime
 from pathlib import Path
 
-from zxro.contract import Settlement, Turn
+from zxro.contract import Artifact, Settlement, Turn
 from zxro.errors import NotFoundError, UnsafeStateError, ValidationError
-from zxro.ids import lexical_absolute, safe_string, validate_id, validate_turn_id
+from zxro.ids import lexical_absolute, safe_string, validate_event_id, validate_id, validate_turn_id
 from .ioutil import atomic_create, list_records, mutation, read_json, reading
 
 
@@ -83,8 +84,29 @@ class LocalTurnStore:
             if not {"outcome", "summary", "settlement"} <= set(data) or not isinstance(data.get("artifact_refs", []), list) or not isinstance(data["settlement"], dict):
                 raise UnsafeStateError("settled turn lacks settlement fields")
             try:
-                data["settlement"] = Settlement(**data["settlement"])
-                data["artifact_refs"] = tuple(data.get("artifact_refs", []))
-            except TypeError as exc:
+                settlement = Settlement(**data["settlement"])
+                safe_string(settlement.source, "source")
+                if settlement.outcome not in {"completed", "failed", "cancelled"}:
+                    raise ValueError("invalid outcome")
+                safe_string(settlement.summary, "summary")
+                if len(settlement.summary) > 1000:
+                    raise ValueError("summary too long")
+                validate_event_id(settlement.event_id)
+                datetime.fromisoformat(settlement.settled_at)
+                if settlement.payload_sha256 is not None:
+                    if not isinstance(settlement.payload_sha256, str) or len(settlement.payload_sha256) != 64:
+                        raise ValueError("invalid payload digest")
+                    bytes.fromhex(settlement.payload_sha256)
+                artifact_refs = tuple(data.get("artifact_refs", []))
+                parsed_refs = [Artifact.parse_ref(ref) for ref in artifact_refs]
+                if any(turn_id != data["id"] for turn_id, _ in parsed_refs) or len(set(artifact_refs)) != len(artifact_refs):
+                    raise ValueError("invalid artifact references")
+                if data["outcome"] != settlement.outcome or data["summary"] != settlement.summary:
+                    raise ValueError("settlement fields disagree")
+                if bool(artifact_refs) != (settlement.payload_sha256 is not None):
+                    raise ValueError("settlement payload fields disagree")
+                data["settlement"] = settlement
+                data["artifact_refs"] = artifact_refs
+            except Exception as exc:
                 raise UnsafeStateError("invalid settlement record") from exc
         return Turn(**data)
