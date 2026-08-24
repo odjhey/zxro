@@ -596,6 +596,85 @@ class PinnedRecordTests(unittest.TestCase):
         self.assertEqual(outside.read_text(), "untouched")
         entries[0].unlink()
 
+    def test_generic_link_failure_preserves_replaced_temp_name(self):
+        target = self.home / "work" / "job.json"
+        outside = Path(self.temp.name) / "outside-link-failure"
+        outside.write_text("untouched")
+        fired = False
+
+        def replace_then_fail(source, destination, **kwargs):
+            nonlocal fired
+            fired = True
+            os.unlink(source, dir_fd=kwargs["src_dir_fd"])
+            os.symlink(outside, source, dir_fd=kwargs["src_dir_fd"])
+            raise OSError("injected generic link failure")
+
+        with mutation(self.home) as access, mock.patch(
+            "zxro.localfs.ioutil.os.link", side_effect=replace_then_fail
+        ):
+            with self.assertRaisesRegex(UnsafeStateError, "cannot publish"):
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    pass
+        self.assertTrue(fired)
+        self.assertFalse(target.exists())
+        entries = list(target.parent.glob(".zxro-tmp-*"))
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(entries[0].is_symlink())
+        self.assertEqual(outside.read_text(), "untouched")
+        entries[0].unlink()
+
+    def test_generic_link_failure_cleans_freshly_resampled_operation_temp(self):
+        target = self.home / "work" / "job.json"
+        fired = False
+
+        def fail_link(*args, **kwargs):
+            nonlocal fired
+            fired = True
+            raise OSError("injected generic link failure")
+
+        with mutation(self.home) as access, mock.patch(
+            "zxro.localfs.ioutil.os.link", side_effect=fail_link
+        ):
+            with self.assertRaisesRegex(UnsafeStateError, "cannot publish"):
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    pass
+        self.assertTrue(fired)
+        self.assertFalse(target.exists())
+        self.assertEqual(list(target.parent.glob(".zxro-tmp-*")), [])
+
+    def test_success_and_eexist_cleanup_samples_fire(self):
+        target = self.home / "work" / "job.json"
+        real_link = os.link
+        success_fired = False
+
+        def successful_link(*args, **kwargs):
+            nonlocal success_fired
+            success_fired = True
+            return real_link(*args, **kwargs)
+
+        with mutation(self.home) as access, mock.patch(
+            "zxro.localfs.ioutil.os.link", side_effect=successful_link
+        ):
+            with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                pass
+        self.assertTrue(success_fired)
+        self.assertEqual(list(target.parent.glob(".zxro-tmp-*")), [])
+
+        eexist_fired = False
+
+        def existing_link(*args, **kwargs):
+            nonlocal eexist_fired
+            eexist_fired = True
+            raise FileExistsError("injected existing winner")
+
+        with mutation(self.home) as access, mock.patch(
+            "zxro.localfs.ioutil.os.link", side_effect=existing_link
+        ):
+            with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                pass
+        self.assertTrue(eexist_fired)
+        self.assertEqual(list(target.parent.glob(".zxro-tmp-*")), [])
+
     def test_post_link_open_failure_cleans_confirmed_operation_temp(self):
         target = self.home / "work" / "job.json"
         real_open = os.open

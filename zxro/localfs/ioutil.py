@@ -408,11 +408,10 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                 raise UnsafeStateError(f"temporary state record changed during publication: {label}")
             os.close(sample_fd)
             sample_fd = None
-            cleanup_temp = True
+            cleanup_temp = False
             try:
                 os.link(temporary, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd, follow_symlinks=False)
                 destination_created = True
-                cleanup_temp = _temp_name_is_current(directory_fd, temporary, temp_fd, label, mode=mode)
             except FileExistsError:
                 cleanup_temp = _temp_name_is_current(directory_fd, temporary, temp_fd, label, mode=mode)
                 if cleanup_temp:
@@ -422,7 +421,11 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                     record_fd = _open_record(directory_fd, filename, label, readonly=readonly, mode=mode)
                 except NotFoundError:
                     raise UnsafeStateError(f"state record changed during publication: {label}") from None
+            except BaseException:
+                cleanup_temp = _temp_name_is_current(directory_fd, temporary, temp_fd, label, mode=mode)
+                raise
             else:
+                cleanup_temp = _temp_name_is_current(directory_fd, temporary, temp_fd, label, mode=mode)
                 try:
                     record_fd = _open_record(directory_fd, filename, label, readonly=readonly, mode=mode)
                     if not _same_inode(os.fstat(record_fd), os.fstat(temp_fd)):
@@ -465,8 +468,8 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                 if fd is not None:
                     os.close(fd)
             if cleanup_temp:
-                # The last sample authorized cleanup. The direct unlink still has
-                # the documented unavoidable same-UID pathname replacement window.
+                # This outcome's fresh matching sample authorized cleanup. Direct
+                # unlink still has the unavoidable same-UID replacement window.
                 try:
                     _remove_temp(directory_fd, temporary)
                 except UnsafeStateError:
