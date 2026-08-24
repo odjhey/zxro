@@ -41,12 +41,22 @@ class DurableLoopCliTests(CliCase):
         self.assertEqual(self.settle(turn, "--stdin", input="evidence").returncode, 0)
         ref = self.ok_json("turn", "show", turn)["artifact_refs"][0]
         path = __import__("pathlib").Path(self.cli("artifact", "path", ref).stdout.strip())
-        path.write_text("tampered")
+        path.chmod(0o600); path.write_text("tampered")
         self.assertEqual(self.cli("artifact", "path", ref).returncode, 5)
         path.unlink()
         record = self.home / "artifacts" / f"{turn}--stdin.json"
         data = json.loads(record.read_text()); data["content_hex"] = "zz"; record.write_text(json.dumps(data))
         self.assertEqual(self.cli("artifact", "path", ref).returncode, 5)
+
+    def test_artifact_record_must_match_requested_reference(self):
+        first, second = self.turn(), self.turn()
+        self.assertEqual(self.settle(first, "--stdin", input="one").returncode, 0)
+        self.assertEqual(self.settle(second, "--stdin", input="two").returncode, 0)
+        source = self.home / "artifacts" / f"{second}--stdin.json"
+        target = self.home / "artifacts" / f"{first}--stdin.json"
+        target.write_bytes(source.read_bytes())
+        result = self.cli("artifact", "path", f"artifact:{first}:stdin")
+        self.assertEqual(result.returncode, 5, result.stderr)
 
     def test_oversized_artifact_is_rejected_before_settlement(self):
         turn = self.turn()

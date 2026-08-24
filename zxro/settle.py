@@ -153,26 +153,31 @@ class LocalDurableLoop:
         artifact = Artifact.parse_ref(ref)
         with mutation(self.home) as access:
             record = Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
+            if Artifact.parse_ref(record.ref) != artifact:
+                raise UnsafeStateError("artifact record does not match requested reference")
             filename = f"{record.turn_id}--{record.kind}.bin"
             path = self.home / "artifacts" / filename
             content = bytes.fromhex(record.content_hex)
             with access.directory("artifacts") as directory_fd:
-                flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
                 fd = None
                 try:
                     try:
                         fd = os.open(filename, flags, dir_fd=directory_fd)
                     except FileNotFoundError:
                         try:
-                            fd = os.open(filename, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory_fd)
+                            fd = os.open(filename, os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory_fd)
                             view = memoryview(content)
                             while view:
                                 view = view[os.write(fd, view):]
                             os.fsync(fd)
+                            os.fchmod(fd, 0o400)
                         except FileExistsError:
                             fd = os.open(filename, flags, dir_fd=directory_fd)
                     info = os.fstat(fd)
                     check_stat(info, path, directory=False)
+                    if info.st_mode & 0o222:
+                        raise UnsafeStateError("artifact materialization is writable")
                     os.lseek(fd, 0, os.SEEK_SET)
                     chunks = []
                     while True:
