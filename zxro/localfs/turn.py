@@ -66,8 +66,9 @@ class LocalTurnStore:
                 safe_string(data[key], key)
             if "native_session_id" in data:
                 safe_string(data["native_session_id"], "native session id")
+            cwd_is_lexical_absolute = lexical_absolute(data["cwd"]) == data["cwd"]
         except Exception as exc:
             raise UnsafeStateError(f"invalid turn record: {exc}") from exc
-        if data["runtime"] != "acpx" or data["state"] != "running" or lexical_absolute(data["cwd"]) != data["cwd"]:
+        if data["runtime"] != "acpx" or data["state"] != "running" or not cwd_is_lexical_absolute:
             raise UnsafeStateError("invalid turn invariant")
         return Turn(**data)
