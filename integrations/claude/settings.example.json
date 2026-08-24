@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "Stop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "${CLAUDE_PROJECT_DIR}/integrations/claude/zxro_hook.py",
+        "args": [],
+        "timeout": 30
+      }]
+    }],
+    "StopFailure": [{
+      "hooks": [{
+        "type": "command",
+        "command": "${CLAUDE_PROJECT_DIR}/integrations/claude/zxro_hook.py",
+        "args": [],
+        "timeout": 30
+      }]
+    }],
+    "SessionEnd": [{
+      "matcher": "prompt_input_exit",
+      "hooks": [{
+        "type": "command",
+        "command": "${CLAUDE_PROJECT_DIR}/integrations/claude/zxro_hook.py",
+        "args": [],
+        "timeout": 30
+      }]
+    }]
+  }
+}
