@@ -6,7 +6,7 @@ tags: [v0.x, engineering, testing, agents]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T16:31:00+08:00
+updated_at: 2026-08-24T20:50:00+08:00
 ---
 
 # v0.x testing and agent workflow
@@ -128,10 +128,10 @@ Provider composition may split terminal turn state and mailbox publication acros
 A fixture should:
 
 1. persist artifacts;
-2. commit the terminal turn using a known settlement key;
+2. commit the terminal turn with its allocated event ID;
 3. simulate interruption before mailbox publication;
 4. retry the settlement/reconciliation path;
-5. verify exactly one mailbox event exists for that settlement;
+5. verify exactly one mailbox event exists with that event ID;
 6. retry again and verify event ID and generation do not change;
 7. verify the newly published event begins unhandled.
 

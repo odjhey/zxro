@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-24T20:05:00+08:00
+updated_at: 2026-08-24T20:50:00+08:00
 ---
 
 # Durable store contract
@@ -172,11 +172,13 @@ A mailbox event is immutable, bounded routing context for one watchtower.
   "watchtower_id": "main",
   "work_id": "auth-fix",
   "turn_id": "550e8400-e29b-41d4-a716-446655440000",
+  "agent": "claude",
   "outcome": "completed",
   "summary": "Implementation complete; four focused tests pass.",
   "artifact_refs": [
     "artifact:550e8400-e29b-41d4-a716-446655440000:report"
-  ]
+  ],
+  "created_at": "2026-08-24T16:31:00+08:00"
 }
 ```
 
@@ -204,6 +206,7 @@ Actionable events have independent handled state keyed by `event_id`:
 ```json
 {
   "event_id": "evt-7a63...",
+  "watchtower_id": "main",
   "handled_at": "2026-08-24T16:31:00+08:00"
 }
 ```
@@ -550,7 +553,7 @@ After a mutating operation reports success, its state must survive immediate cal
 
 Providers must fail closed on malformed, conflicting, or unsafe state. They must not guess through corruption.
 
-Retries after uncertain process termination must be safe for operations that carry an idempotency key, especially settlement and mailbox publication.
+Retries after uncertain process termination must be safe for operations that carry a stable identity. Settlement and mailbox publication use the committed event ID defined above.
 
 Read ack and handled state are separate durable mutations. A crash after ack but before handling is safe because the event remains visible in `pending`.
 

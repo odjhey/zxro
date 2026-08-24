@@ -6,7 +6,7 @@ tags: [v0.x, execution]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T16:31:00+08:00
+updated_at: 2026-08-24T20:50:00+08:00
 ---
 
 # v0.x implementation plan
@@ -103,8 +103,8 @@ The CLI-level settlement operation must preserve this sequence even when capabil
 
 ```text
 persist artifacts
-  -> commit terminal turn state with idempotency key
-  -> publish one unhandled mailbox event idempotently
+  -> commit terminal turn state with its allocated event ID
+  -> publish one unhandled mailbox event with that event ID
   -> report success
 ```
 
@@ -140,7 +140,7 @@ Provider adapters and harness integrations must not invent provider-specific dur
 |---|---|---|---|
 | Built-in file layout becomes accidental public API | Provider swaps become migrations of every caller | Test commands and durable semantics, not private paths; keep provider contract authoritative | Agent instructions start depending on internal paths |
 | Read position is confused with completed attention | Lower-priority events disappear when a later generation is acknowledged | Keep read ack and per-event handled state separate | Ack past an unhandled event removes it from pending |
-| Split providers create a crash gap | Settled work never reaches the watchtower or an event points to missing state | Commit result first, publish with idempotency key second, repair missing publication on retry | Process dies during settlement |
+| Split providers create a crash gap | Settled work never reaches the watchtower or an event points to missing state | Commit result and event ID first, publish that identity second, repair missing publication on retry | Process dies during settlement |
 | Candidate provider requires hidden runtime machinery | Lightweight zxro becomes operationally heavy | Keep adapters optional and record daemon/server/dependency requirements during evaluation | Candidate passes semantics but adds mandatory infrastructure |
 | Concurrent hook writers corrupt or lose work | Missed routing events | Conformance tests assume 10 to 12 near-simultaneous completions; adapter serialization is acceptable | Duplicate generation, lost write, or malformed state |
 | Native completion semantics differ | False completion or missed work | Normalize Pi and Claude only at the CLI boundary; keep ACP completion as a validation signal | Hook fires while meaningful work is still pending |
