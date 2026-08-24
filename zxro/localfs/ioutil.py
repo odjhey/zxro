@@ -4,6 +4,7 @@ import os
 import secrets
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Callable, Iterator
 
 from zxro.errors import ConflictError, NotFoundError, UnsafeStateError
 from .home import MANAGED_DIRS, check_stat, prepare_home
@@ -150,62 +151,208 @@ def _verify_lock(access, fd, expected):
         raise UnsafeStateError("store lock changed during operation")
 
 
-def _record_stat(fd, directory_fd, filename, label):
+def _record_stat(fd, directory_fd, filename, label, *, readonly=False):
     try:
         path_stat = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
         fd_stat = os.fstat(fd)
+    except FileNotFoundError:
+        raise NotFoundError(f"record not found: {Path(filename).stem}") from None
     except OSError as exc:
         raise UnsafeStateError(f"cannot verify state record {label}: {exc}") from exc
     check_stat(path_stat, label, directory=False)
     check_stat(fd_stat, label, directory=False)
+    if readonly and (path_stat.st_mode & 0o222 or fd_stat.st_mode & 0o222):
+        raise UnsafeStateError(f"state record is writable: {label}")
     if not _same_inode(path_stat, fd_stat):
         raise UnsafeStateError(f"state record changed during operation: {label}")
 
 
-def read_json(access: StoreAccess, directory: str, filename: str) -> dict:
-    label = access.home / directory / filename
-    with access.directory(directory) as directory_fd:
-        try:
-            fd = os.open(filename, os.O_RDONLY | _NOFOLLOW, dir_fd=directory_fd)
-        except FileNotFoundError:
-            raise NotFoundError(f"record not found: {Path(filename).stem}") from None
-        except OSError as exc:
-            raise UnsafeStateError(f"cannot open state record {label}: {exc}") from exc
-        try:
-            _record_stat(fd, directory_fd, filename, label)
-            try:
-                chunks = []
-                size = 0
-                while True:
-                    chunk = os.read(fd, min(64 * 1024, MAX_RECORD_BYTES + 1 - size))
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                    size += len(chunk)
-                    if size > MAX_RECORD_BYTES:
-                        raise UnsafeStateError(f"state record is too large: {label}")
-                value = json.loads(b"".join(chunks).decode("utf-8"))
-            except (UnicodeError, json.JSONDecodeError) as exc:
-                raise UnsafeStateError(f"malformed state record {label}: {exc}") from exc
-            _record_stat(fd, directory_fd, filename, label)
-            access.verify_directory(directory, directory_fd)
-        finally:
-            os.close(fd)
+def _read_bounded(fd: int, max_bytes: int, label: Path) -> bytes:
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        chunks = []
+        size = 0
+        while True:
+            chunk = os.read(fd, min(64 * 1024, max_bytes + 1 - size))
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > max_bytes:
+                raise UnsafeStateError(f"state record is too large: {label}")
+    except UnsafeStateError:
+        raise
+    except OSError as exc:
+        raise UnsafeStateError(f"cannot read state record {label}: {exc}") from exc
+
+
+def _parse_object(raw: bytes, label: Path) -> dict:
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise UnsafeStateError(f"malformed state record {label}: {exc}") from exc
     if not isinstance(value, dict):
         raise UnsafeStateError(f"state record is not an object: {label}")
+    return value
+
+
+class PinnedRecord:
+    def __init__(self, access, directory, filename, directory_fd, record_fd, value, raw, readonly, max_bytes):
+        self.value = value
+        self.raw = raw
+        self.directory_fd = directory_fd
+        self.record_fd = record_fd
+        self._access = access
+        self._directory = directory
+        self._filename = filename
+        self._label = access.home / directory / filename
+        self._readonly = readonly
+        self._max_bytes = max_bytes
+
+    def verify_current(self) -> None:
+        self._access.verify_directory(self._directory, self.directory_fd)
+        _record_stat(self.record_fd, self.directory_fd, self._filename, self._label, readonly=self._readonly)
+        if _read_bounded(self.record_fd, self._max_bytes, self._label) != self.raw:
+            raise UnsafeStateError(f"state record contents changed during operation: {self._label}")
+        _record_stat(self.record_fd, self.directory_fd, self._filename, self._label, readonly=self._readonly)
+        self._access.verify_directory(self._directory, self.directory_fd)
+
+
+class PinnedRecordSet:
+    def __init__(self):
+        self._pins = []
+
+    def add(self, pin: PinnedRecord) -> None:
+        self._pins.append(pin)
+
+    def verify_current(self) -> None:
+        for pin in self._pins:
+            pin.verify_current()
+
+
+def _check_record_identity(value: dict, filename: str, label: Path) -> dict:
     if filename.endswith(".json") and isinstance(value.get("id"), str) and value["id"] != Path(filename).stem:
         raise UnsafeStateError(f"record identity does not match its path: {label}")
     return value
 
 
+@contextmanager
+def open_json_pinned(access: StoreAccess, directory: str, filename: str, *, readonly: bool = False, max_bytes: int = MAX_RECORD_BYTES) -> Iterator[PinnedRecord]:
+    label = access.home / directory / filename
+    with access.directory(directory) as directory_fd:
+        try:
+            record_fd = os.open(filename, os.O_RDONLY | _NOFOLLOW, dir_fd=directory_fd)
+        except FileNotFoundError:
+            raise NotFoundError(f"record not found: {Path(filename).stem}") from None
+        except OSError as exc:
+            raise UnsafeStateError(f"cannot open state record {label}: {exc}") from exc
+        try:
+            _record_stat(record_fd, directory_fd, filename, label, readonly=readonly)
+            raw = _read_bounded(record_fd, max_bytes, label)
+            value = _check_record_identity(_parse_object(raw, label), filename, label)
+            pin = PinnedRecord(access, directory, filename, directory_fd, record_fd, value, raw, readonly, max_bytes)
+            pin.verify_current()
+            yield pin
+            pin.verify_current()
+        finally:
+            os.close(record_fd)
+
+
+@contextmanager
+def read_json_pinned(access: StoreAccess, directory: str, filename: str, *, readonly: bool = False, max_bytes: int = MAX_RECORD_BYTES):
+    with open_json_pinned(access, directory, filename, readonly=readonly, max_bytes=max_bytes) as pin:
+        yield pin.value
+
+
+def read_json(access: StoreAccess, directory: str, filename: str) -> dict:
+    with open_json_pinned(access, directory, filename) as pin:
+        return pin.value
+
+
+def _encoded(value: dict, label: Path) -> bytes:
+    payload = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(payload) > MAX_RECORD_BYTES:
+        raise UnsafeStateError(f"state record is too large: {label}")
+    return payload
+
+
+@contextmanager
+def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str, expected: dict, *, validate: Callable[[dict], dict], mode: int = 0o400, _accept_existing: bool = True) -> Iterator[PinnedRecord]:
+    label = access.home / directory / filename
+    normalized = validate(expected)
+    payload = _encoded(expected, label)
+    readonly = not bool(mode & 0o222)
+    with access.directory(directory) as directory_fd:
+        temporary = f".zxro-tmp-{secrets.token_hex(16)}"
+        temp_fd = None
+        record_fd = None
+        published = False
+        try:
+            temp_fd = os.open(temporary, os.O_RDWR | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600, dir_fd=directory_fd)
+            os.fchmod(temp_fd, mode)
+            view = memoryview(payload)
+            while view:
+                written = os.write(temp_fd, view)
+                if written <= 0:
+                    raise UnsafeStateError(f"cannot write state record {label}")
+                view = view[written:]
+            os.fsync(temp_fd)
+            access.verify_directory(directory, directory_fd)
+            try:
+                os.link(temporary, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd, follow_symlinks=False)
+                record_fd = temp_fd
+                temp_fd = None
+                published = True
+            except FileExistsError:
+                if not _accept_existing:
+                    raise ConflictError(f"record already exists: {Path(filename).stem}") from None
+                os.close(temp_fd)
+                temp_fd = None
+                os.unlink(temporary, dir_fd=directory_fd)
+                temporary = None
+                try:
+                    record_fd = os.open(filename, os.O_RDONLY | _NOFOLLOW, dir_fd=directory_fd)
+                except FileNotFoundError:
+                    raise UnsafeStateError(f"state record changed during publication: {label}") from None
+                except OSError as exc:
+                    raise UnsafeStateError(f"cannot open existing state record {label}: {exc}") from exc
+            if temporary is not None:
+                os.unlink(temporary, dir_fd=directory_fd)
+                temporary = None
+            os.fsync(directory_fd)
+            _record_stat(record_fd, directory_fd, filename, label, readonly=readonly)
+            raw = _read_bounded(record_fd, MAX_RECORD_BYTES, label)
+            value = _parse_object(raw, label)
+            if validate(value) != normalized:
+                raise ConflictError(f"record already exists: {Path(filename).stem}")
+            pin = PinnedRecord(access, directory, filename, directory_fd, record_fd, value, raw, readonly, MAX_RECORD_BYTES)
+            pin.verify_current()
+            yield pin
+            pin.verify_current()
+        except (NotFoundError, UnsafeStateError, ConflictError):
+            raise
+        except OSError as exc:
+            raise UnsafeStateError(f"cannot publish state record {label}: {exc}") from exc
+        finally:
+            if temp_fd is not None:
+                os.close(temp_fd)
+            if record_fd is not None:
+                os.close(record_fd)
+            if temporary is not None:
+                try:
+                    os.unlink(temporary, dir_fd=directory_fd)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+
+
 def atomic_create(access: StoreAccess, directory: str, filename: str, value: dict) -> None:
-    try:
-        read_json(access, directory, filename)
-    except NotFoundError:
+    with publish_json_exact_pinned(
+        access, directory, filename, value, validate=lambda candidate: candidate,
+        mode=0o600, _accept_existing=False,
+    ):
         pass
-    else:
-        raise ConflictError(f"record already exists: {Path(filename).stem}")
-    atomic_replace(access, directory, filename, value)
 
 
 def atomic_replace(access: StoreAccess, directory: str, filename: str, value: dict) -> None:
@@ -216,9 +363,7 @@ def atomic_replace(access: StoreAccess, directory: str, filename: str, value: di
         try:
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600, dir_fd=directory_fd)
             os.fchmod(fd, 0o600)
-            payload = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-            if len(payload) > MAX_RECORD_BYTES:
-                raise UnsafeStateError(f"state record is too large: {label}")
+            payload = _encoded(value, label)
             view = memoryview(payload)
             while view:
                 written = os.write(fd, view)

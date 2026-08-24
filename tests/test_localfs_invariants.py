@@ -18,11 +18,11 @@ class LocalFsInvariantTests(CliCase):
         for path in self.home.glob("*/*.json"): self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         self.assertEqual(self.ok_json("turn", "show", turn_id)["session"], "s")
 
-    def test_atomic_write_uses_fsync_replace_and_directory_fsync(self):
+    def test_atomic_create_uses_no_clobber_link_and_fsyncs(self):
         registry, _, _ = providers(self.home)
-        with mock.patch("zxro.localfs.ioutil.os.fsync", wraps=os.fsync) as fsync, mock.patch("zxro.localfs.ioutil.os.replace", wraps=os.replace) as replace:
+        with mock.patch("zxro.localfs.ioutil.os.fsync", wraps=os.fsync) as fsync, mock.patch("zxro.localfs.ioutil.os.link", wraps=os.link) as link:
             registry.create("main", "/wt")
-        self.assertEqual(replace.call_count, 1); self.assertGreaterEqual(fsync.call_count, 2)
+        self.assertEqual(link.call_count, 1); self.assertGreaterEqual(fsync.call_count, 2)
         self.assertEqual(json.loads((self.home / "watchtowers" / "main.json").read_text())["id"], "main")
 
     def test_every_mutation_takes_global_lock(self):
