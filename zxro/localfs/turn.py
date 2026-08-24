@@ -92,7 +92,9 @@ class LocalTurnStore:
                 if len(settlement.summary) > 1000:
                     raise ValueError("summary too long")
                 validate_event_id(settlement.event_id)
-                datetime.fromisoformat(settlement.settled_at)
+                settled_at = datetime.fromisoformat(settlement.settled_at)
+                if settled_at.utcoffset() is None:
+                    raise ValueError("settlement timestamp lacks UTC offset")
                 if settlement.payload_sha256 is not None:
                     if not isinstance(settlement.payload_sha256, str) or len(settlement.payload_sha256) != 64:
                         raise ValueError("invalid payload digest")

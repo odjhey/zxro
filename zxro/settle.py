@@ -38,11 +38,22 @@ class LocalDurableLoop:
         return value
 
     @staticmethod
-    def _mailbox_events(access, watchtower_id):
-        prefix = f"{watchtower_id}--"
-        events = [MailboxEvent.from_dict(read_json(access, "inbox-events", name)) for name in list_names(access, "inbox-events") if name.startswith(prefix)]
-        events.sort(key=lambda event: event.generation)
-        if any(event.watchtower_id != watchtower_id or event.generation != index for index, event in enumerate(events, 1)) or len({event.event_id for event in events}) != len(events):
+    def _all_events(access):
+        events = []
+        for name in list_names(access, "inbox-events"):
+            event = MailboxEvent.from_dict(read_json(access, "inbox-events", name))
+            expected = f"{event.watchtower_id}--{event.generation:020d}--{event.event_id}.json"
+            if name != expected:
+                raise UnsafeStateError("mailbox event does not match its path")
+            events.append(event)
+        if len({event.event_id for event in events}) != len(events):
+            raise UnsafeStateError("duplicate global event identity")
+        return events
+
+    @classmethod
+    def _mailbox_events(cls, access, watchtower_id):
+        events = sorted((event for event in cls._all_events(access) if event.watchtower_id == watchtower_id), key=lambda event: event.generation)
+        if any(event.generation != index for index, event in enumerate(events, 1)):
             raise UnsafeStateError("invalid mailbox event ordering")
         return events
 
@@ -87,8 +98,9 @@ class LocalDurableLoop:
                 payload_conflicts = payload is not None and existing.payload_sha256 != digest
                 if existing.outcome != outcome or existing.summary != message or payload_conflicts:
                     raise ConflictError("turn already has a different settlement")
-            events = self._mailbox_events(access, turn.watchtower_id)
-            matches = [event for event in events if event.event_id == turn.settlement.event_id]
+            all_events = self._all_events(access)
+            events = [event for event in all_events if event.watchtower_id == turn.watchtower_id]
+            matches = [event for event in all_events if event.event_id == turn.settlement.event_id]
             if len(matches) > 1:
                 raise UnsafeStateError("duplicate settlement event")
             generation = matches[0].generation if matches else len(events) + 1
