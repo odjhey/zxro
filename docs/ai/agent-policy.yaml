@@ -1,0 +1,15 @@
+name: agent_policy
+status: draft
+version: 0
+sources_of_truth: []
+required_workflow:
+  - inspect_context
+  - make_smallest_coherent_change
+  - update_affected_docs
+  - run_checks
+  - report_results
+human_gates: []
+safety_boundaries:
+  secrets: "TODO"
+  destructive_operations: "require explicit approval"
+  external_side_effects: "TODO"
