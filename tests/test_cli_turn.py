@@ -8,7 +8,7 @@ class TurnCliTests(CliCase):
 
     def create(self, session="coder", work="job", cwd="/crew", native=None):
         args = ["turn", "create", "--work", work, "--agent", "claude", "--session", session, "--cwd", cwd]
-        if native: args += ["--native-session-id", native]
+        if native is not None: args += ["--native-session-id", native]
         return self.cli(*args)
 
     def test_create_prints_uuid_and_show_round_trips_distinct_identity(self):
@@ -30,6 +30,17 @@ class TurnCliTests(CliCase):
     def test_unknown_work_creates_no_turn(self):
         result = self.create(work="missing")
         self.assertEqual(result.returncode, 3); self.assertEqual(list((self.home / "turns").glob("*.json")), [])
+
+    def test_empty_native_session_id_is_usage_error_without_turn(self):
+        before = list((self.home / "turns").glob("*.json"))
+        result = self.create(native="")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(list((self.home / "turns").glob("*.json")), before)
+
+    def test_empty_required_agent_and_session_are_usage_errors(self):
+        for flag in ("--agent", "--session"):
+            args = ["turn", "create", "--work", "job", "--agent", "ok", "--session", "ok", "--cwd", "/x", flag, ""]
+            self.assertEqual(self.cli(*args).returncode, 2)
 
     def test_control_characters_are_rejected(self):
         for flag, value in (("--agent", "bad\nagent"), ("--session", "bad\tsession"), ("--native-session-id", "bad\x7f")):

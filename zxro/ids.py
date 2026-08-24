@@ -27,7 +27,7 @@ def safe_string(value: str | None, label: str, *, required: bool = True) -> str 
         if required:
             raise ValidationError(f"{label} is required")
         return None
-    if not isinstance(value, str) or (required and not value) or any(ord(char) < 32 or ord(char) == 127 for char in value):
+    if not isinstance(value, str) or not value or any(ord(char) < 32 or ord(char) == 127 for char in value):
         raise ValidationError(f"invalid {label}")
     return value
 

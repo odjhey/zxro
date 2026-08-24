@@ -33,6 +33,14 @@ class GlobalCliTests(CliCase):
         self.assertEqual(result.returncode, 0)
         self.assertTrue((self.home / "watchtowers" / "main.json").exists())
 
+    def test_unknown_parents_on_fresh_home_have_zero_physical_side_effects(self):
+        work = self.cli("work", "create", "orphan", "--watchtower", "missing")
+        self.assertEqual(work.returncode, 3)
+        self.assertFalse(self.home.exists())
+        turn = self.cli("turn", "create", "--work", "missing", "--agent", "pi", "--session", "s", "--cwd", "/crew")
+        self.assertEqual(turn.returncode, 3)
+        self.assertFalse(self.home.exists())
+
     def test_errors_have_stable_codes_stderr_and_no_json_stdout(self):
         invalid = self.cli("--json", "watchtower", "show", "../bad")
         missing = self.cli("--json", "watchtower", "show", "missing")

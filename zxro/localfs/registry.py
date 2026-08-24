@@ -1,10 +1,9 @@
 from pathlib import Path
 
 from zxro.contract import Watchtower
-from zxro.errors import UnsafeStateError
+from zxro.errors import NotFoundError, UnsafeStateError
 from zxro.ids import lexical_absolute, safe_string, validate_id
-from .home import check_owned_mode
-from .ioutil import atomic_create, list_records, mutation, read_json
+from .ioutil import atomic_create, list_records, mutation, read_json, reading
 
 
 class LocalRegistry:
@@ -14,21 +13,25 @@ class LocalRegistry:
     def create(self, id, cwd, agent=None, session=None):
         id = validate_id(id, "watchtower id")
         record = Watchtower(id, lexical_absolute(cwd), safe_string(agent, "agent", required=False), safe_string(session, "session", required=False))
-        with mutation(self.home):
-            atomic_create(self.home / "watchtowers" / f"{id}.json", record.to_dict())
+        with mutation(self.home) as access:
+            atomic_create(access, "watchtowers", f"{id}.json", record.to_dict())
         return record
 
     def get(self, id):
         id = validate_id(id, "watchtower id")
-        return self._decode(read_json(self.home / "watchtowers" / f"{id}.json"))
+        with reading(self.home) as access:
+            return self.get_from(access, id)
+
+    def get_from(self, access, id):
+        return self._decode(read_json(access, "watchtowers", f"{id}.json"))
 
     def list(self):
-        directory = self.home / "watchtowers"
-        if self.home.exists() or self.home.is_symlink():
-            check_owned_mode(self.home, directory=True)
-        if not directory.exists() and not directory.is_symlink():
+        try:
+            with reading(self.home) as access:
+                records = list_records(access, "watchtowers")
+        except NotFoundError:
             return []
-        return sorted((self._decode(item) for item in list_records(directory)), key=lambda item: item.id)
+        return sorted((self._decode(item) for item in records), key=lambda item: item.id)
 
     @staticmethod
     def _decode(data):

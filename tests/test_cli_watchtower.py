@@ -17,6 +17,13 @@ class WatchtowerCliTests(CliCase):
         self.assertEqual(result.returncode, 4)
         self.assertEqual(self.ok_json("watchtower", "show", "main"), first)
 
+    def test_supplied_empty_optional_fields_are_usage_errors_without_records(self):
+        for flag in ("--agent", "--session"):
+            with self.subTest(flag=flag):
+                result = self.cli("watchtower", "create", "main", "--cwd", "/x", flag, "")
+                self.assertEqual(result.returncode, 2)
+                self.assertFalse((self.home / "watchtowers" / "main.json").exists())
+
     def test_unknown_show_is_missing(self):
         self.assertEqual(self.cli("watchtower", "show", "none").returncode, 3)
 
