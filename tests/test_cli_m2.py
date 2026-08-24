@@ -338,6 +338,52 @@ class InspectCliTests(CliCase):
             durable_module.LocalDurableLoop._ARTIFACT_CACHE_LIMIT,
         )
 
+    def test_artifact_structural_delimiters_fail_closed_for_legacy_and_m2_records(self):
+        cases = (("zero", ""), ("small", "x"), ("large", "x" * (64 * 1024)))
+        for label, payload in cases:
+            with self.subTest(payload=label):
+                turn_id = self.create_turn(label)
+                self.assertEqual(self.settle(turn_id, payload).returncode, 0)
+                artifact = self.home / "artifacts" / f"{turn_id}--stdin.json"
+                original = artifact.read_bytes()
+                if label == "large":
+                    (self.home / "artifact-metadata" / f"{turn_id}--stdin.json").unlink()
+
+                content_key = b'"content_hex"'
+                content_key_start = original.index(content_key)
+                content_open = content_key_start + len(content_key) + original[content_key_start + len(content_key):].index(b'"')
+                content_close = content_open + 1 + (len(payload.encode()) * 2)
+                self.assertEqual(original[content_close:content_close + 1], b'"')
+                boundaries = {
+                    "opening-brace": 0,
+                    "bytes-colon": original.index(b':', original.index(b'"bytes"')),
+                    "bytes-comma": original.index(b',', original.index(b'"bytes"')),
+                    "content-colon": original.index(b':', content_key_start),
+                    "content-open": content_open,
+                    "content-close": content_close,
+                    "content-comma": content_close + 1,
+                    "kind-colon": original.index(b':', original.index(b'"kind"')),
+                    "kind-comma": original.index(b',', original.index(b'"kind"')),
+                    "ref-colon": original.index(b':', original.index(b'"ref"')),
+                    "ref-comma": original.index(b',', original.index(b'"ref"')),
+                    "sha-colon": original.index(b':', original.index(b'"sha256"')),
+                    "sha-comma": original.index(b',', original.index(b'"sha256"')),
+                    "turn-colon": original.index(b':', original.index(b'"turn_id"')),
+                    "closing-brace": original.rstrip(b' \t\r\n').rindex(b'}'),
+                }
+                for delimiter, offset in boundaries.items():
+                    for invalid in (b"X", b"\xff"):
+                        with self.subTest(delimiter=delimiter, invalid=invalid):
+                            malformed = bytearray(original)
+                            malformed[offset] = invalid[0]
+                            artifact.write_bytes(malformed)
+                            for command in (("inspect", "job"), ("inbox", "unread", "--watchtower", "main")):
+                                result = self.cli(*command)
+                                self.assertEqual(result.returncode, 5, result.stderr)
+                                self.assertEqual(result.stdout, "")
+                                self.assertNotIn("Traceback", result.stderr)
+                artifact.write_bytes(original)
+
     def test_sidecar_and_body_metadata_mismatches_fail_closed(self):
         turn_id = self.create_turn()
         self.assertEqual(self.settle(turn_id, "payload").returncode, 0)

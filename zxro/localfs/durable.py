@@ -151,9 +151,10 @@ class LocalDurableLoop:
                             body_bytes = int(bytes_match.group(1))
                         except ValueError as exc:
                             raise UnsafeStateError("invalid artifact record metadata") from exc
-                        metadata_start = content_start + (body_bytes * 2) + 1
-                        if metadata_start > info.st_size:
-                            raise UnsafeStateError("invalid artifact record metadata")
+                        content_close = content_start + (body_bytes * 2)
+                        if content_close >= info.st_size or os.pread(fd, 1, content_close) != b'"':
+                            raise UnsafeStateError("invalid artifact record envelope")
+                        metadata_start = content_close + 1
                         tail = os.pread(fd, min(info.st_size - metadata_start, 1024), metadata_start)
                         cache_key = (
                             str(access.home), filename, *LocalDurableLoop._artifact_identity(info)
