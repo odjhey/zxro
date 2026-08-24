@@ -3,6 +3,7 @@ import json
 import os
 import secrets
 import stat
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
@@ -59,9 +60,8 @@ class StoreAccess:
             self.verify_home()
             return self
         except BaseException as exc:
-            if self.home_fd is not None:
-                os.close(self.home_fd)
-                self.home_fd = None
+            _close_descriptors((self.home_fd,))
+            self.home_fd = None
             if isinstance(exc, FileNotFoundError):
                 raise NotFoundError("zxro home does not exist") from None
             if isinstance(exc, UnsafeStateError):
@@ -70,9 +70,10 @@ class StoreAccess:
                 raise UnsafeStateError(f"cannot open zxro home {self.home}: {exc}") from exc
             raise
 
-    def __exit__(self, *_):
-        if self.home_fd is not None:
-            os.close(self.home_fd)
+    def __exit__(self, exc_type, *_):
+        close_error = _close_descriptors((self.home_fd,))
+        if exc_type is None and close_error is not None:
+            raise close_error
 
     def verify_home(self):
         try:
@@ -107,12 +108,10 @@ class StoreAccess:
             if not _same_inode(before, current):
                 raise UnsafeStateError(f"managed directory changed while opening: {self.home / name}")
         except FileNotFoundError:
-            if fd is not None:
-                os.close(fd)
+            _close_descriptors((fd,))
             raise NotFoundError(f"managed directory does not exist: {name}") from None
         except BaseException as exc:
-            if fd is not None:
-                os.close(fd)
+            _close_descriptors((fd,))
             if isinstance(exc, UnsafeStateError):
                 raise
             if isinstance(exc, OSError):
@@ -122,7 +121,11 @@ class StoreAccess:
             yield fd
             self.verify_directory(name, fd)
         finally:
-            os.close(fd)
+            close_error = _close_descriptors((fd,))
+            if sys.exception() is None and close_error is not None:
+                raise _InternalUnsafeStateError(
+                    f"cannot close managed directory {self.home / name}: {close_error}", close_error
+                ) from close_error
 
     def verify_directory(self, name, fd):
         self.verify_home()
@@ -171,8 +174,9 @@ def mutation(home: Path):
         except OSError as exc:
             raise UnsafeStateError(f"cannot use store lock: {exc}") from exc
         finally:
-            if "fd" in locals():
-                os.close(fd)
+            close_error = _close_descriptors((fd,)) if "fd" in locals() else None
+            if sys.exception() is None and close_error is not None:
+                raise close_error
 
 
 def _verify_lock(access, fd, expected):
@@ -208,8 +212,7 @@ def _open_record(directory_fd: int, filename: str, label: Path, *, readonly: boo
         _check_record_fd(fd, label, readonly=readonly, mode=mode)
         return fd
     except BaseException as exc:
-        if fd is not None:
-            os.close(fd)
+        _close_descriptors((fd,))
         if isinstance(exc, FileNotFoundError):
             raise NotFoundError(f"record not found: {Path(filename).stem}") from None
         if isinstance(exc, UnsafeStateError):
@@ -351,7 +354,11 @@ def open_json_pinned(access: StoreAccess, directory: str, filename: str, *, read
             yield pin
             pin.verify_current()
         finally:
-            os.close(record_fd)
+            close_error = _close_descriptors((record_fd,))
+            if sys.exception() is None and close_error is not None:
+                raise _InternalUnsafeStateError(
+                    f"cannot close state record {label}: {close_error}", close_error
+                ) from close_error
 
 
 @contextmanager
@@ -397,7 +404,7 @@ def _temp_name_is_current(directory_fd: int, temporary: str, temp_fd: int, label
         return False
     finally:
         close_error = _close_descriptors((sample_fd,))
-        if close_error is not None:
+        if sys.exception() is None and close_error is not None:
             raise _InternalUnsafeStateError(
                 f"cannot close temporary publication sample {label}: {close_error}", close_error
             ) from close_error
@@ -446,8 +453,12 @@ def _publish_json_exact_pinned(access: StoreAccess, directory: str, filename: st
             sample_fd = _open_record(directory_fd, temporary, label, readonly=readonly, mode=mode)
             if not _same_inode(os.fstat(sample_fd), before):
                 raise UnsafeStateError(f"temporary state record changed during publication: {label}")
-            os.close(sample_fd)
+            close_error = _close_descriptors((sample_fd,))
             sample_fd = None
+            if close_error is not None:
+                raise _InternalUnsafeStateError(
+                    f"cannot close temporary publication sample {label}: {close_error}", close_error
+                ) from close_error
             cleanup_temp = False
             try:
                 os.link(temporary, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd, follow_symlinks=False)
@@ -524,7 +535,7 @@ def _publish_json_exact_pinned(access: StoreAccess, directory: str, filename: st
                     _remove_temp(directory_fd, temporary)
                 except UnsafeStateError:
                     pass
-            if close_error is not None:
+            if sys.exception() is None and close_error is not None:
                 raise close_error
 
 @contextmanager

@@ -960,6 +960,92 @@ class PinnedRecordTests(unittest.TestCase):
         self.assertIs(caught.exception.__cause__, marker)
         self.assertEqual(json.loads(target.read_text()), {"id": "job"})
 
+    def test_open_record_primary_failure_survives_close_failure(self):
+        import zxro.localfs.ioutil as ioutil
+
+        label = self.home / "work" / "job.json"
+        self.write_record("job.json", {"id": "job"})
+        primary = OSError("record validation primary")
+        close_error = OSError("record close secondary")
+        real_open = os.open
+        real_close = os.close
+        opened = []
+        closed = []
+        close_raised = False
+
+        def opened_record(*args, **kwargs):
+            fd = real_open(*args, **kwargs)
+            opened.append(fd)
+            return fd
+
+        def close(fd):
+            nonlocal close_raised
+            closed.append(fd)
+            real_close(fd)
+            if not close_raised:
+                close_raised = True
+                raise close_error
+
+        with StoreAccess(self.home) as access, access.directory("work") as directory_fd, mock.patch(
+            "zxro.localfs.ioutil.os.open", side_effect=opened_record
+        ), mock.patch("zxro.localfs.ioutil._check_record_fd", side_effect=ioutil._InternalUnsafeStateError("validation", primary)), mock.patch(
+            "zxro.localfs.ioutil.os.close", side_effect=close
+        ):
+            with self.assertRaises(ioutil._InternalUnsafeStateError) as caught:
+                ioutil._open_record(directory_fd, "job.json", label)
+        self.assertIs(caught.exception.origin, primary)
+        self.assertEqual(opened, closed)
+
+    def test_prelink_and_postlink_primary_failures_survive_close_failures(self):
+        import zxro.localfs.ioutil as ioutil
+
+        target = self.home / "work" / "job.json"
+        prefix = f"state record may have been published: {target}"
+        real_fsync = os.fsync
+        real_close = os.close
+        for phase in ("prelink", "body"):
+            with self.subTest(phase=phase):
+                if target.exists():
+                    target.chmod(0o600)
+                    target.unlink()
+                primary = OSError(f"{phase} primary")
+                secondary = OSError(f"{phase} close secondary")
+                armed = phase == "prelink"
+                close_fired = False
+
+                def fsync(fd):
+                    if phase == "prelink" and not stat.S_ISDIR(os.fstat(fd).st_mode):
+                        raise primary
+                    return real_fsync(fd)
+
+                def close(fd):
+                    nonlocal close_fired
+                    real_close(fd)
+                    if armed and not close_fired:
+                        close_fired = True
+                        raise secondary
+
+                with mutation(self.home) as access, mock.patch(
+                    "zxro.localfs.ioutil.os.fsync", side_effect=fsync
+                ), mock.patch("zxro.localfs.ioutil.os.close", side_effect=close):
+                    if phase == "prelink":
+                        with self.assertRaises(UnsafeStateError) as caught:
+                            with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                                pass
+                    else:
+                        with self.assertRaises(UnsafeStateError) as caught:
+                            with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                                armed = True
+                                raise primary
+                self.assertTrue(close_fired)
+                if phase == "prelink":
+                    self.assertNotIn("may have been published", str(caught.exception))
+                    self.assertIs(caught.exception.__cause__, primary)
+                else:
+                    self.assertEqual(str(caught.exception), prefix)
+                    self.assertIs(caught.exception.__cause__, primary)
+                    self.assertEqual(json.loads(target.read_text()), {"id": "job"})
+
     def test_sample_chain_and_temp_unlink_low_level_origins_are_tagged(self):
         target = self.home / "work" / "job.json"
         prefix = f"state record may have been published: {target}"
