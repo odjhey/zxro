@@ -1,7 +1,7 @@
 import uuid
 from pathlib import Path
 
-from zxro.contract import Turn
+from zxro.contract import Settlement, Turn
 from zxro.errors import NotFoundError, UnsafeStateError, ValidationError
 from zxro.ids import lexical_absolute, safe_string, validate_id, validate_turn_id
 from .ioutil import atomic_create, list_records, mutation, read_json, reading
@@ -41,7 +41,7 @@ class LocalTurnStore:
     def list(self, work_id=None, state=None):
         if work_id is not None:
             validate_id(work_id, "work id")
-        if state is not None and state != "running":
+        if state is not None and state not in {"running", "settled"}:
             raise ValidationError(f"invalid turn state: {state!r}")
         try:
             with reading(self.home) as access:
@@ -60,8 +60,9 @@ class LocalTurnStore:
     @staticmethod
     def _decode(data):
         required = {"id", "work_id", "watchtower_id", "runtime", "agent", "session", "cwd", "state"}
-        optional = {"native_session_id"}
-        if set(data) - required - optional or not required <= set(data) or any(not isinstance(data.get(key), str) for key in required | (optional & set(data))):
+        optional = {"native_session_id", "outcome", "summary", "artifact_refs", "settlement"}
+        string_fields = required | ({"native_session_id", "outcome", "summary"} & set(data))
+        if set(data) - required - optional or not required <= set(data) or any(not isinstance(data.get(key), str) for key in string_fields):
             raise UnsafeStateError("invalid turn record schema")
         try:
             validate_turn_id(data["id"])
@@ -74,6 +75,16 @@ class LocalTurnStore:
             normalized_cwd = lexical_absolute(data["cwd"])
         except Exception as exc:
             raise UnsafeStateError(f"invalid turn record: {exc}") from exc
-        if data["runtime"] != "acpx" or data["state"] != "running" or normalized_cwd != data["cwd"]:
+        if data["runtime"] != "acpx" or data["state"] not in {"running", "settled"} or normalized_cwd != data["cwd"]:
             raise UnsafeStateError("invalid turn invariant")
+        if data["state"] == "running" and set(data) & {"outcome", "summary", "artifact_refs", "settlement"}:
+            raise UnsafeStateError("running turn has settlement fields")
+        if data["state"] == "settled":
+            if not {"outcome", "summary", "settlement"} <= set(data) or not isinstance(data.get("artifact_refs", []), list) or not isinstance(data["settlement"], dict):
+                raise UnsafeStateError("settled turn lacks settlement fields")
+            try:
+                data["settlement"] = Settlement(**data["settlement"])
+                data["artifact_refs"] = tuple(data.get("artifact_refs", []))
+            except TypeError as exc:
+                raise UnsafeStateError("invalid settlement record") from exc
         return Turn(**data)

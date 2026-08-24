@@ -3,7 +3,7 @@ import json
 import sys
 
 from .errors import ZxroError
-from .localfs import providers, resolve_home
+from .localfs import LocalDurableLoop, providers, resolve_home
 
 
 def parser():
@@ -27,14 +27,25 @@ def parser():
     create = turn.add_parser("create"); create.add_argument("--work", required=True); create.add_argument("--agent", required=True); create.add_argument("--session", required=True); create.add_argument("--cwd", required=True); create.add_argument("--native-session-id")
     show = turn.add_parser("show"); show.add_argument("id")
     listing = turn.add_parser("list"); listing.add_argument("--work"); listing.add_argument("--state")
+    settle = turn.add_parser("settle"); settle.add_argument("id"); settle.add_argument("--source", required=True); settle.add_argument("--status", required=True, choices=("completed", "failed", "cancelled")); settle.add_argument("--message", required=True); settle.add_argument("--stdin", action="store_true")
+
+    inbox = commands.add_parser("inbox").add_subparsers(dest="action", required=True)
+    unread = inbox.add_parser("unread"); unread.add_argument("--watchtower", required=True)
+    pending = inbox.add_parser("pending"); pending.add_argument("--watchtower", required=True)
+    handle = inbox.add_parser("handle"); handle.add_argument("event_id"); handle.add_argument("--watchtower")
+    ack = commands.add_parser("ack"); ack.add_argument("--watchtower", required=True); ack.add_argument("--through", required=True, type=int)
+    artifact = commands.add_parser("artifact").add_subparsers(dest="action", required=True)
+    path = artifact.add_parser("path"); path.add_argument("ref")
     return root
 
 
-def render(value, machine, *, turn_id_only=False):
+def render(value, machine, *, turn_id_only=False, path_only=False):
     if machine:
         print(json.dumps(value, sort_keys=True, separators=(",", ":")))
     elif turn_id_only:
         print(value["id"])
+    elif path_only:
+        print(value["path"])
     elif isinstance(value, list):
         for item in value:
             print(" ".join(f"{key}={item[key]}" for key in item))
@@ -43,7 +54,10 @@ def render(value, machine, *, turn_id_only=False):
 
 
 def run(args):
-    registry, work, turn = providers(resolve_home(args.home))
+    home = resolve_home(args.home)
+    registry, work, turn = providers(home)
+    loop = LocalDurableLoop(home, turn, registry)
+    path_only = False
     if args.command == "watchtower":
         if args.action == "create": value = registry.create(args.id, args.cwd, args.agent, args.session)
         elif args.action == "show": value = registry.get(args.id)
@@ -53,12 +67,23 @@ def run(args):
         elif args.action == "show": value = work.get(args.id)
         elif args.action == "close": value = work.close(args.id)
         else: value = work.list(args.watchtower, args.state)
-    else:
+    elif args.command == "turn":
         if args.action == "create": value = turn.create(args.work, args.agent, args.session, args.cwd, args.native_session_id)
         elif args.action == "show": value = turn.get(args.id)
-        else: value = turn.list(args.work, args.state)
-    records = [item.to_dict() for item in value] if isinstance(value, list) else value.to_dict()
-    render(records, args.json_output, turn_id_only=args.command == "turn" and args.action == "create")
+        elif args.action == "list": value = turn.list(args.work, args.state)
+        else:
+            payload = sys.stdin.buffer.read() if args.stdin else None
+            value, _ = loop.settle(args.id, args.source, args.status, args.message, payload)
+    elif args.command == "inbox":
+        if args.action == "unread": value = loop.unread(args.watchtower)
+        elif args.action == "pending": value = loop.pending(args.watchtower)
+        else: value = loop.handle(args.event_id, args.watchtower)
+    elif args.command == "ack": value = loop.ack(args.watchtower, args.through)
+    else: value, path_only = loop.artifact_path(args.ref), True
+    if hasattr(value, "to_dict"): records = value.to_dict()
+    elif isinstance(value, list): records = [item.to_dict() if hasattr(item, "to_dict") else item for item in value]
+    else: records = value
+    render(records, args.json_output, turn_id_only=args.command == "turn" and args.action == "create", path_only=path_only)
 
 
 def main(argv=None):

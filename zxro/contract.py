@@ -24,6 +24,86 @@ class Work:
 
 
 @dataclass(frozen=True)
+class Settlement:
+    source: str
+    outcome: str
+    summary: str
+    payload_sha256: str | None
+    event_id: str
+    settled_at: str
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class Artifact:
+    ref: str
+    turn_id: str
+    kind: str
+    bytes: int
+    sha256: str
+    content_hex: str
+
+    def to_dict(self):
+        return asdict(self)
+
+    @staticmethod
+    def parse_ref(ref):
+        parts = ref.split(":") if isinstance(ref, str) else []
+        if len(parts) != 3 or parts[0] != "artifact":
+            from .errors import ValidationError
+            raise ValidationError(f"invalid artifact reference: {ref!r}")
+        from .ids import validate_id, validate_turn_id
+        return validate_turn_id(parts[1]), validate_id(parts[2], "artifact kind")
+
+    @classmethod
+    def from_dict(cls, value):
+        if set(value) != {"ref", "turn_id", "kind", "bytes", "sha256", "content_hex"}:
+            from .errors import UnsafeStateError
+            raise UnsafeStateError("invalid artifact record schema")
+        record = cls(**value)
+        if cls.parse_ref(record.ref) != (record.turn_id, record.kind) or record.bytes != len(bytes.fromhex(record.content_hex)):
+            from .errors import UnsafeStateError
+            raise UnsafeStateError("invalid artifact record")
+        return record
+
+
+@dataclass(frozen=True)
+class MailboxEvent:
+    event_id: str
+    generation: int
+    type: str
+    watchtower_id: str
+    work_id: str
+    turn_id: str
+    agent: str
+    outcome: str
+    summary: str
+    artifact_refs: tuple[str, ...]
+    created_at: str
+
+    def to_dict(self):
+        value = asdict(self); value["artifact_refs"] = list(self.artifact_refs); return value
+
+    @classmethod
+    def from_dict(cls, value):
+        required = set(cls.__dataclass_fields__)
+        if set(value) != required or not isinstance(value.get("artifact_refs"), list):
+            from .errors import UnsafeStateError
+            raise UnsafeStateError("invalid mailbox event schema")
+        from .ids import validate_event_id, validate_id, validate_turn_id
+        try:
+            validate_event_id(value["event_id"]); validate_id(value["watchtower_id"]); validate_id(value["work_id"]); validate_turn_id(value["turn_id"])
+            if not isinstance(value["generation"], int) or value["generation"] < 1 or value["type"] != "turn_settled" or value["outcome"] not in {"completed", "failed", "cancelled"}:
+                raise ValueError
+        except Exception as exc:
+            from .errors import UnsafeStateError
+            raise UnsafeStateError("invalid mailbox event") from exc
+        return cls(**{**value, "artifact_refs": tuple(value["artifact_refs"])})
+
+
+@dataclass(frozen=True)
 class Turn:
     id: str
     work_id: str
@@ -34,9 +114,15 @@ class Turn:
     cwd: str
     state: str
     native_session_id: str | None = None
+    outcome: str | None = None
+    summary: str | None = None
+    artifact_refs: tuple[str, ...] = ()
+    settlement: Settlement | None = None
 
     def to_dict(self):
-        return {key: value for key, value in asdict(self).items() if value is not None}
+        value = asdict(self)
+        value["artifact_refs"] = list(self.artifact_refs)
+        return {key: item for key, item in value.items() if item is not None and not (key == "artifact_refs" and not item)}
 
 
 class Registry(Protocol):

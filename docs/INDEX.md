@@ -68,6 +68,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [CLI-first delivery plan](./v0.x/execution/cli-first-delivery-plan.md) | plan | Three stacked PRs with parallel test/docs tracks, repository layout, locked implementation decisions, and test-to-contract mapping for M0–M2 |
 | [Human decision gates](./v0.x/execution/human-decision-gates.md) | guide | Decisions requiring human approval |
 | [Task cards](./v0.x/execution/task-cards/README.md) | index | Task-card index and usage |
+| [M1 durable settlement](./v0.x/execution/task-cards/m1-durable-settlement.md) | checklist | M1 scope, compatibility decisions, and executable acceptance evidence |
 | [Task-card template](./v0.x/execution/task-cards/task-card-template.md) | plan | Copyable implementation task card |
 | [Surfaces](./v0.x/surfaces/README.md) | index | Product-interface index |
 | [v0.x CLI](./v0.x/surfaces/cli.md) | spec | Durable CRUD, settlement, unread delivery, pending attention, handling, bounded summaries, inspection, artifact resolution, and metadata helpers |

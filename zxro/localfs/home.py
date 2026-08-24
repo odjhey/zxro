@@ -4,7 +4,7 @@ from pathlib import Path
 
 from zxro.errors import UnsafeStateError
 
-MANAGED_DIRS = ("watchtowers", "work", "turns")
+MANAGED_DIRS = ("watchtowers", "work", "turns", "artifacts", "inbox")
 
 
 def resolve_home(cli_home: str | None = None) -> Path:
