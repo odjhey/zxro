@@ -107,6 +107,28 @@ class DurableLoopCliTests(CliCase):
         result = self.cli("inbox", "handle", event_id)
         self.assertEqual(result.returncode, 5, result.stderr)
 
+    def test_mailbox_ack_rejects_boolean_generation(self):
+        self.assertEqual(self.settle(self.turn()).returncode, 0)
+        (self.home / "inbox" / "main.json").write_text(json.dumps({"watchtower_id": "main", "ack": True}))
+        self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
+
+    def test_pending_rejects_invalid_handled_state(self):
+        self.assertEqual(self.settle(self.turn()).returncode, 0)
+        event_id = self.ok_json("inbox", "unread", "--watchtower", "main")[0]["event_id"]
+        self.assertEqual(self.cli("inbox", "handle", event_id).returncode, 0)
+        path = self.home / "inbox-handled" / f"{event_id}.json"
+        original = json.loads(path.read_text())
+        for change in ({"handled_at": "2025-01-01T00:00:00"}, {"watchtower_id": "../invalid"}):
+            path.write_text(json.dumps({**original, **change}))
+            self.assertEqual(self.cli("inbox", "pending", "--watchtower", "main").returncode, 5)
+
+    def test_handle_validates_all_event_paths(self):
+        self.assertEqual(self.settle(self.turn()).returncode, 0)
+        event = self.ok_json("inbox", "unread", "--watchtower", "main")[0]
+        path = next((self.home / "inbox-events").iterdir())
+        path.rename(path.with_name(f"wrong--{event['event_id']}.json"))
+        self.assertEqual(self.cli("inbox", "handle", event["event_id"]).returncode, 5)
+
     def test_crash_gap_retry_preserves_event_identity(self):
         turn = self.turn()
         crashed = self.settle(turn, env={"ZXRO_FAULT_EXIT_AFTER": "turn-commit"})

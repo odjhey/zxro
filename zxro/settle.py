@@ -33,7 +33,7 @@ class LocalDurableLoop:
             value = read_json(access, "inbox", f"{watchtower_id}.json")
         except NotFoundError:
             return {"watchtower_id": watchtower_id, "ack": 0}
-        if set(value) != {"watchtower_id", "ack"} or value["watchtower_id"] != watchtower_id or not isinstance(value["ack"], int) or value["ack"] < 0:
+        if set(value) != {"watchtower_id", "ack"} or value["watchtower_id"] != watchtower_id or type(value["ack"]) is not int or value["ack"] < 0:
             raise UnsafeStateError("invalid mailbox record schema")
         return value
 
@@ -65,6 +65,13 @@ class LocalDurableLoop:
             return None
         if set(value) != {"event_id", "watchtower_id", "handled_at"} or value["event_id"] != event_id or not all(isinstance(item, str) for item in value.values()):
             raise UnsafeStateError("invalid handled state")
+        try:
+            validate_id(value["watchtower_id"], "watchtower id")
+            handled_at = datetime.fromisoformat(value["handled_at"])
+            if handled_at.utcoffset() is None:
+                raise ValueError
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise UnsafeStateError("invalid handled state") from exc
         return value
 
     def settle(self, turn_id, source, outcome, message, payload):
@@ -148,9 +155,10 @@ class LocalDurableLoop:
     def handle(self, event_id, watchtower_id=None):
         event_id = validate_event_id(event_id)
         with mutation(self.home) as access:
-            matches = [MailboxEvent.from_dict(read_json(access, "inbox-events", name)) for name in list_names(access, "inbox-events") if name.endswith(f"--{event_id}.json")]
+            events = self._all_events(access)
+            matches = [event for event in events if event.event_id == event_id]
             if watchtower_id is not None:
-                validate_id(watchtower_id, "watchtower id")
+                watchtower_id = validate_id(watchtower_id, "watchtower id")
                 matches = [event for event in matches if event.watchtower_id == watchtower_id]
             if not matches:
                 raise NotFoundError(f"event not found: {event_id}")
