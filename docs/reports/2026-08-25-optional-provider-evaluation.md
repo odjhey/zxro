@@ -5,8 +5,8 @@ type: report
 tags: [reports, providers, storage, mailbox, v0.x]
 status: draft
 created_at: "2026-08-25T07:30:00+08:00"
-updated_at: "2026-08-25T10:15:00+08:00"
-generated: "OpenAI Codex, ADP-EVAL attempt 2, 2026-08-25"
+updated_at: "2026-08-25T12:00:00+08:00"
+generated: "OpenAI Codex, ADP-EVAL attempt 3, 2026-08-25"
 sources:
   - ref: ../architecture/contracts/durable-store.md
     credibility: primary
@@ -27,7 +27,7 @@ Do not add either candidate as a zxro provider now.
 
 | Candidate | Capability | Decision | Gate |
 |---|---|---|---|
-| Beads | Work store | Defer | An owner must provide and approve a pinned Beads executable. It must pass the M0 work-store conformance subset and the applicable M1 composition tests in disposable namespaces, including 12 concurrent settlements and cleanup. |
+| Beads | Work store | Defer | An owner must provide and approve a pinned Beads executable. It must pass every applicable M0 and M1 reusable conformance case in disposable namespaces, including composition safety, fault injection, 12 concurrent settlements, and cleanup. |
 | Beads | Mailbox | Reject as evaluated | Beads was named only as a work-store candidate. No Beads mailbox executable or behavior was available. Reconsider only if a specific version documents immutable events plus independent delivery and attention state. |
 | BSD `mailx` | Mailbox | Reject | Do not implement an adapter for this binary. A different local mailbox tool needs deterministic machine output, explicit namespace selection, stable identity, independent read and handled state, and safe concurrent publication before evaluation. |
 | BSD `mailx` | Work store | Reject as not applicable | `mailx` has no watchtower, work, or turn record model. |
@@ -68,12 +68,13 @@ Observed output:
 ```text
 mailx   /usr/bin/mailx
 /usr/bin/mailx: illegal option -- V
-Usage: mailx ...
-/usr/bin/mailx: Mach-O universal binary with 2 architectures ...
+Usage: mailx [-dEiInv] [-s subject] [-c cc-addr] [-b bcc-addr] [-F] to-addr ...
+/usr/bin/mailx: Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64e:Mach-O 64-bit executable arm64e]
+PROGRAM:mail  PROJECT:mail_cmds-38.0.1
 PROGRAM:mail  PROJECT:mail_cmds-38.0.1
 ```
 
-No `bd` or `beads` path was printed. The absence is reproducible for this environment but says nothing about other installations.
+The usage line above is the first usage line; the command prints two more receive-mode forms. No `bd` or `beads` path was printed. The absence is reproducible for this environment but says nothing about other installations.
 
 ## Beads evaluation
 
@@ -85,10 +86,16 @@ Neither `bd` nor `beads` was on `PATH`. No process, repository, daemon, database
 |---|---|---|---|
 | Explicit namespace selection and two-home isolation | No executable; no store initialized. | Every call must name a disposable store equivalent to `$ZXRO_HOME`. Missing-object reads must not create it or search parent repositories. | Not observed, gated |
 | Watchtower create, show, list, stable ID, and duplicate rejection | No executable. | Adapter must preserve zxro IDs and return deterministic conflicts without overwrite. | Not observed, gated |
+| Work duplicate creation | No executable. | A second create with the same zxro work ID must fail deterministically and leave the first record byte-for-byte authoritative. | Not observed, gated |
 | Work create, show, list, filters, close, and history retention | No executable. | Machine output must support watchtower/state filtering. Close must preserve turns and history. | Not observed, gated |
+| Work update validation and atomicity | No executable. | Valid field updates must persist together. Unknown, conflicting, malformed, or invalid updates must fail without a partial record change. | Not observed, gated |
 | Bounded work reads after long turn history | No executable. | Projection may translate native records, but output and read cost must not grow with artifact bodies or handled history. | Not observed, gated |
 | Turn create, show, list, lifecycle, and identity separation | No executable. | Adapter must keep work, turn, runtime session, native session, and cwd distinct and round-trip external references. | Not observed, gated |
 | Missing watchtower, work, turn, and namespace behavior | No executable. | Unknown reads and parents must fail without creating files, records, repositories, or databases. | Not observed, gated |
+| Malformed records and impossible relationships | No executable. | Reads and writes must fail closed on malformed schema, filename/record identity disagreement, or impossible watchtower/work/turn ownership. They must not guess or repair silently. | Not observed, gated |
+| Path and permission safety | No executable. | Namespace, record, and artifact paths must reject traversal, symlink substitution, and unsafe active-store permissions without changing an external target. | Not observed, gated |
+| Locking and 12-writer serialization | No executable. | Every mutation must share a namespace lock or prove equivalent exclusion. Lock acquisition and conflict failures must leave complete prior state. | Not observed, gated |
+| Atomic durable state | No executable. | Successful writes must survive caller exit. Interrupted write, replace, file sync, or directory sync must leave a complete old or new record, never a partial success. | Not observed, gated |
 | Deterministic machine output and errors | No executable. | Require structured output, stderr diagnostics, stable nonzero exits, and non-interactive operation from a pinned version. | Not observed, gated |
 
 ### M1 settlement, artifact, and mailbox semantics
@@ -97,18 +104,25 @@ Beads remains only a possible work store. A composed provider must still satisfy
 
 | Required semantic or safety case | Native evidence | Adapter or composition mapping | Result |
 |---|---|---|---|
-| Terminal outcomes `completed`, `failed`, `cancelled` and conflicting status rejection | No executable. | Turn provider must accept only supported outcomes, normalize the summary, and reject a conflicting terminal result deterministically. | Not observed, gated |
-| Settlement idempotency and stable event identity | No executable. | Retry of equal outcome, summary, and payload digest must return the original settlement and event ID without another generation. | Not observed, gated |
+| Terminal outcomes `completed`, `failed`, `cancelled` and conflicting status rejection | No executable. | Turn provider must accept only supported outcomes and reject a conflicting terminal result deterministically. | Not observed, gated |
+| Summary normalization and 1,000-character bound | No executable. | Provider boundary must normalize summaries to NFC, enforce the post-normalization 1,000-Unicode-character limit, and reject invalid control content before mutation. | Not observed, gated |
+| Settlement idempotency and stable event identity | No executable. | Retry of equal outcome, normalized summary, and payload digest must return the original settlement and event ID without another generation. | Not observed, gated |
+| Retry without payload | No executable. | A matching retry may omit the original payload and must return the same settlement. A settlement created without payload cannot gain one later. | Not observed, gated |
+| Oversize payload rejection before settlement | No executable. | Artifact input over the configured bound must fail before terminal state, artifact metadata, event identity, or mailbox state is committed. | Not observed, gated |
 | Immutable event, exact event-ID lookup, and owner/generation agreement | No mailbox candidate behavior. | A separate mailbox provider must own immutable envelopes and a direct exact index. A Beads work status cannot stand in for this index. | Adapter required for composition |
 | Monotonic integer generation and burst delivery | No mailbox candidate behavior. | Mailbox provider must assign unique per-watchtower generations and return only generations after durable ack. | Adapter required for composition |
 | Read ack integrity | No mailbox candidate behavior. | Ack must reject booleans, strings, floats, missing generations, mismatched indexes, backwards movement, and values above high-water before mutation. | Adapter required for composition |
 | Read ack separate from handled attention | No mailbox candidate behavior. | A separate cursor and per-event handled state must keep acknowledged but unhandled events pending. | Adapter required for composition |
 | Out-of-order and idempotent handling | No mailbox candidate behavior. | Exact handling must support later events first, preserve immutable history, and make duplicate handle calls converge. | Adapter required for composition |
+| Work close independence | No executable. | Closing work must not ack delivery, handle an event, delete attention, or remove turn, artifact, and event history. | Not observed, gated |
 | Handle crash recovery | No mailbox candidate behavior. | Authoritative handled state must commit before unresolved-index removal. Faults around both writes must leave pending or durably handled state. | Adapter required for composition |
+| Handled-marker history compaction | No mailbox candidate behavior. | Pending must compact stale unresolved IDs after marker-committed crashes so repeated empty reads return to fixed cost without exact-handle retries. | Adapter required for composition |
 | Artifact put, metadata, explicit resolve, and traversal safety | No executable. | Artifact provider must keep payload bytes out of work, turn, unread, and pending output; references need byte/digest metadata and namespace-safe resolution. | Not observed, gated |
 | Fail-closed cross-record reads | No executable. | Unread and pending must reject missing or mismatched terminal turns, ownership, settlement identity, outcome, summary, direct index, and artifact metadata. | Not observed, gated |
 | Crash gap after terminal commit | No executable. | Composition must allocate event ID before terminal commit, resume publication with that ID, and never expose an event before its turn and artifact metadata. | Not observed, gated |
 | Idempotent publication and partial-publication repair | No executable. | Retries must reconcile event, direct index, high-water, and unresolved state without overwrite or duplicate generation. | Not observed, gated |
+| Malformed next publication | No executable. | A malformed immutable event or direct index at the next generation must fail closed and leave the requested turn running. | Not observed, gated |
+| Strict publication preflight | No executable. | Before touching the requested turn or assigning a generation, settlement must validate exact direct indexes for the current high-water boundary and its predecessor, including strict integer generation types. | Not observed, gated |
 | Missing-object behavior | No executable. | Missing artifact, event, generation, ack target, and handle target must fail without unrelated mutation or namespace creation. | Not observed, gated |
 | Bounded history and progressive disclosure | No executable. | Empty unread/pending and one new settlement must not scan handled history; pending scales with unresolved bounded envelopes, not artifact bytes. | Not observed, gated |
 | Twelve concurrent settlements | No executable. | Native locking or adapter serialization must preserve every successful write, unique ordered generations, stable IDs, and deterministic conflicts. | Not observed, gated |
@@ -159,21 +173,23 @@ find "$TMP" -maxdepth 2 -type f -print | sort
 
 Material output from the evaluation run:
 
+`$TMP` below denotes the exact directory printed by `mktemp`; its random suffix changes on each run. The evaluation run used `/tmp/zxro-mailx-eval.sN6V9i`.
+
 ```text
 Mail version 8.1 6/6/93.  Type ? for help.
-"/tmp/zxro-mailx-eval.../a.mbox": 2 messages 2 new
+"$TMP/a.mbox": 2 messages 2 new
 >N  1 sender@example.test   Tue Aug 25 00:00   9/193   "first"
  N  2 sender@example.test   Tue Aug 25 00:00   8/193   "second"
 >N  1 sender@example.test   Tue Aug 25 00:00   9/193   "first"
  N  2 sender@example.test   Tue Aug 25 00:00   8/193   "second"
-"/tmp/zxro-mailx-eval.../a.mbox" complete
-f35a1666...  .../a.mbox
-7b81c7d5...  .../b.mbox
-.../a.mbox
-.../b.mbox
+"$TMP/a.mbox" complete
+f35a166639701c1b939f941607c81ffde4aa92403c812946d1852e268ad66c18  $TMP/a.mbox
+7b81c7d5bb3de8486a4d9ba3ed920bb5bf31904823534dfd450d927df5ab7170  $TMP/b.mbox
+$TMP/a.mbox
+$TMP/b.mbox
 ```
 
-The differing hashes show that the scripted receive session rewrote the selected mailbox while its untouched copy retained the fixture bytes. The output is terminal-oriented prose. It exposes mutable message numbers, not a stable machine event identity.
+Only the path prefix was replaced with the literal placeholder `$TMP`; message rows and hashes are exact. The differing hashes show that the scripted receive session rewrote the selected mailbox while its untouched copy retained the fixture bytes. The output is terminal-oriented prose. It exposes mutable message numbers, not a stable machine event identity.
 
 ## BSD mailx semantic matrix
 
@@ -187,12 +203,12 @@ The differing hashes show that the scripted receive session rewrote the selected
 | Exact event lookup | No non-interactive machine command returned one message by event ID with owner and generation agreement. | Requires a separate direct index and validation. | Specific failure |
 | Monotonic integer generation | Displayed numbers represent current mbox positions and may change after mailbox rewrite. | Requires adapter-owned sequence allocation and locking. | Specific failure |
 | Idempotent publication | Receive mode cannot publish to the selected mbox. Send mode delegates delivery to system mail facilities and has no idempotency key. | Requires separate append/delivery and idempotency storage. | Specific failure |
-| Settlement/status/idempotency | `mailx` has no turn terminal-state operation or supported zxro outcome model. | Turn provider must own status validation, terminal conflict, digest equality, and stable settlement identity. | Adapter required for composition |
-| Crash-gap and partial-publication repair | No transaction relates a turn commit to mbox delivery, direct index, high-water, or unresolved state. | Requires the full M1 publication state machine outside `mailx`. | Specific failure |
+| Settlement/status/idempotency | `mailx` has no turn terminal-state operation or supported zxro outcome model. | Turn provider must own outcome validation, NFC and 1,000-character summary checks, terminal conflict, equal retry with or without payload, payload digest equality, oversize-before-mutation rejection, and stable settlement identity. | Adapter required for composition |
+| Crash-gap and partial-publication repair | No transaction relates a turn commit to mbox delivery, direct index, high-water, or unresolved state. There is no malformed-next-event guard or strict boundary-index preflight. | Requires the full M1 publication state machine outside `mailx`. | Specific failure |
 | Ack integrity | Message flags are not an integer read cursor. No operation validates every generation before monotonic cursor advance. | Requires adapter-owned cursor, exact generation validation, and fail-before-mutation behavior. | Specific failure |
 | Ack separate from handled attention | No independent cursor plus durable per-event handled marker exists. The receive session can rewrite message state on quit. | Requires two adapter-owned state models. | Specific failure |
 | Out-of-order idempotent handle | Message mutation/deletion does not preserve an immutable event with independent handled state. | Requires exact adapter markers and unresolved index. | Specific failure |
-| Handle recovery | No authoritative handled-marker-first protocol or retry repair operation exists. | Requires fault-safe state outside `mailx`. | Specific failure |
+| Handle recovery | No authoritative handled-marker-first protocol, marker-history compaction, or retry repair operation exists. | Requires fault-safe state outside `mailx`. | Specific failure |
 | Artifact handling | Bodies can be fetched separately in an interactive session, but there is no opaque artifact reference, metadata record, digest check, or namespace-safe resolve operation. | Requires a separate artifact provider. | Specific failure |
 | Fail-closed cross-record reads | No linked turn, settlement, direct index, artifact metadata, or owner records exist to validate. | Requires the complete cross-record validation layer. | Specific failure |
 | Missing-object behavior | Missing alternate files and message numbers use mail-oriented errors, not provider-neutral errors; safe no-create behavior was not established for every operation. | Requires stable errors and tests proving no namespace or unrelated mutation. | Not demonstrated |
@@ -234,7 +250,8 @@ A Beads work-store revisit requires:
 3. documented daemon, server, database, binary, repository, authentication, startup, health, cleanup, and rollback requirements;
 4. deterministic structured output, stable IDs, and stable nonzero errors;
 5. every M0 work-store row above passing reusable conformance tests;
-6. composed M1 settlement, artifact, fail-closed, isolation, bounded-history, and 12-concurrent-settlement tests passing.
+6. every applicable reusable M1 conformance case passing in the final composition, including settlement normalization and retry variants, artifact bounds, publication preflight and repair, fail-closed relationships, ack integrity, handle recovery and compaction, work-close independence, missing objects, isolation, bounded history, and 12 concurrent settlements;
+7. provider-specific fault hooks proving atomic state and malformed-record behavior where the reusable cases require them.
 
 A mailbox revisit requires a different concrete candidate. Before adapter work, it must demonstrate native stable message identity, non-interactive machine output, and explicit local namespace selection. The complete M1 suite must then prove status and retry equality, artifacts, exact lookup, ack integrity, independent handling, handle recovery, missing-object behavior, bounded history, burst delivery, crash repair, out-of-order handling, isolation, and 12 concurrent settlements.
 
