@@ -2,11 +2,11 @@
 
 Run date: 2026-08-25
 
-This run used acpx 0.13.1, Pi 0.84.3, and PR #16 code head `73791acf6309b9d52883fedb0c46b3d121a76533`. The machine already had working Pi credentials.
+The immutable recorded run below tested code commit `73791acf6309b9d52883fedb0c46b3d121a76533` with acpx 0.13.1 and Pi 0.84.3. This file was committed later, so that code commit is not the commit containing this report. The report makes no exact-containing-head claim. The canonical task handoff records later exact-head reruns outside Git, where recording a result cannot change the tested commit. The machine already had working Pi credentials.
 
 ## Commands
 
-These commands run from any normal checkout of PR #16. They do not depend on a named worktree. The first checks ensure the checkout is the current PR head and the installed tools have the tested versions.
+These commands run from any normal checkout of PR #16. They do not depend on a named worktree. At runtime, the first checks require the checkout to equal the current PR head and require the tested tool versions. They do not claim that the historical output below came from the commit containing this file.
 
 ```sh
 set -euo pipefail
@@ -23,6 +23,9 @@ HOME_DIR=$SMOKE/home
 ZXRO=$ROOT/bin/zxro
 mkdir -p "$TARGET/.pi/extensions/zxro" "$HOME_DIR"
 cp integrations/pi/{index.ts,adapter.ts} "$TARGET/.pi/extensions/zxro/"
+cmp integrations/pi/index.ts "$TARGET/.pi/extensions/zxro/index.ts"
+cmp integrations/pi/adapter.ts "$TARGET/.pi/extensions/zxro/adapter.ts"
+test "$(find "$TARGET/.pi/extensions" -type f | wc -l | tr -d ' ')" = 2
 grep -Fq 'pi.on("agent_settled"' "$TARGET/.pi/extensions/zxro/index.ts"
 
 ZXRO_HOME=$HOME_DIR "$ZXRO" watchtower create smoke-wt --cwd "$TARGET"
@@ -64,11 +67,11 @@ rm -rf "$SMOKE"
 test ! -e "$SMOKE"
 ```
 
-The copied project extension was the only file in the disposable project's `.pi/extensions` directory. The exact `agent_settled` registration check ran before acpx. After acpx returned, the zxro turn had source `pi` and its stdin artifact contained the adapter's exact semantic payload. Those checks prove project extension discovery even though the pi-acp startup banner listed only global extensions.
+The two copied files were byte-for-byte equal to the checkout and were the only files in the disposable project's `.pi/extensions` directory. The exact `agent_settled` registration check ran before acpx. After acpx returned, the inherited turn changed from running to settled with source `pi`, and its artifact resolved to the adapter's exact semantic payload. No global extension emits that zxro source, summary, and payload combination. These checks prove that Pi discovered and ran the project extension even though the pi-acp startup banner listed only global extensions.
 
 ## Observed result
 
-The head and version assertions passed. acpx exited 0, printed `smoke complete`, and wrote zero stderr bytes.
+For the recorded code commit named above, the version assertions passed. acpx exited 0, printed `smoke complete`, and wrote zero stderr bytes.
 
 Pi settlement:
 
@@ -98,4 +101,4 @@ Both turns had the same outcome, source, bounded summary, payload digest, and ar
 
 ## Limits
 
-This smoke covers normal completion. Hermetic tests cover failure and cancellation classification, duplicate delivery, UUID v4 validation, early exit, EPIPE, bounded stderr, TERM and KILL timeout outcomes, clean-exit timeout races, stress, signals, and POSIX descendant cleanup. Windows does not have the POSIX process-group cleanup check. Credentials were already configured, so this run does not test credential setup. `npx` may need network access if acpx 0.13.1 is not cached.
+This smoke covers normal completion. Hermetic tests cover failure and cancellation classification, duplicate delivery, UUID v4 validation, early exit, EPIPE, bounded stderr, TERM and KILL timeout outcomes, clean-exit timeout races, stress, signals, and POSIX descendant cleanup. The adapter rejects Windows before spawning zxro because reliable descendant cleanup requires POSIX process groups. CI runs the integration suite on Linux and macOS. Credentials were already configured, so this run does not test credential setup. `npx` may need network access if acpx 0.13.1 is not cached.
