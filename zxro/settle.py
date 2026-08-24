@@ -85,6 +85,10 @@ class LocalDurableLoop:
         digest = hashlib.sha256(payload).hexdigest() if payload is not None else None
         with mutation(self.home) as access:
             turn = self.turns.get_from(access, turn_id)
+            all_events = self._all_events(access)
+            events = sorted((event for event in all_events if event.watchtower_id == turn.watchtower_id), key=lambda event: event.generation)
+            if any(event.generation != index for index, event in enumerate(events, 1)):
+                raise UnsafeStateError("invalid mailbox event ordering")
             if turn.state == "running":
                 event_id = "evt-" + uuid.uuid4().hex
                 artifact_refs = ()
@@ -107,8 +111,6 @@ class LocalDurableLoop:
                 payload_conflicts = payload is not None and existing.payload_sha256 != digest
                 if existing.outcome != outcome or existing.summary != message or payload_conflicts:
                     raise ConflictError("turn already has a different settlement")
-            all_events = self._all_events(access)
-            events = [event for event in all_events if event.watchtower_id == turn.watchtower_id]
             matches = [event for event in all_events if event.event_id == turn.settlement.event_id]
             if len(matches) > 1:
                 raise UnsafeStateError("duplicate settlement event")

@@ -58,6 +58,15 @@ class DurableLoopCliTests(CliCase):
         result = self.cli("artifact", "path", f"artifact:{first}:stdin")
         self.assertEqual(result.returncode, 5, result.stderr)
 
+    def test_artifact_record_rejects_boolean_byte_count(self):
+        turn = self.turn()
+        self.assertEqual(self.settle(turn, "--stdin", input="").returncode, 0)
+        record = self.home / "artifacts" / f"{turn}--stdin.json"
+        data = json.loads(record.read_text())
+        data["bytes"] = False
+        record.write_text(json.dumps(data))
+        self.assertEqual(self.cli("artifact", "path", f"artifact:{turn}:stdin").returncode, 5)
+
     def test_oversized_artifact_is_rejected_before_settlement(self):
         turn = self.turn()
         result = self.settle(turn, "--stdin", input="x" * (9 * 1024 * 1024))
@@ -168,6 +177,27 @@ class DurableLoopCliTests(CliCase):
         for change in changes:
             path.write_text(json.dumps({**original, **change}))
             self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
+
+    def test_settled_turn_rejects_non_normalized_summary(self):
+        turn = self.turn()
+        self.assertEqual(self.settle(turn).returncode, 0)
+        path = self.home / "turns" / f"{turn}.json"
+        data = json.loads(path.read_text())
+        data["summary"] = data["settlement"]["summary"] = "e\u0301"
+        path.write_text(json.dumps(data))
+        self.assertEqual(self.cli("turn", "show", turn).returncode, 5)
+
+    def test_settlement_rejects_invalid_mailbox_order_before_commit(self):
+        self.assertEqual(self.settle(self.turn()).returncode, 0)
+        path = next((self.home / "inbox-events").iterdir())
+        event = json.loads(path.read_text())
+        event["generation"] = 3
+        replacement = path.with_name(f"main--{3:020d}--{event['event_id']}.json")
+        path.rename(replacement)
+        replacement.write_text(json.dumps(event))
+        turn = self.turn()
+        self.assertEqual(self.settle(turn).returncode, 5)
+        self.assertEqual(self.ok_json("turn", "show", turn)["state"], "running")
 
     def test_concurrent_settlements_have_unique_ordered_generations(self):
         turns = [self.turn() for _ in range(12)]

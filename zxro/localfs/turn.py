@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+import unicodedata
 from pathlib import Path
 
 from zxro.contract import Artifact, Settlement, Turn
@@ -89,8 +90,8 @@ class LocalTurnStore:
                 if settlement.outcome not in {"completed", "failed", "cancelled"}:
                     raise ValueError("invalid outcome")
                 safe_string(settlement.summary, "summary")
-                if len(settlement.summary) > 1000:
-                    raise ValueError("summary too long")
+                if len(settlement.summary) > 1000 or unicodedata.normalize("NFC", settlement.summary) != settlement.summary:
+                    raise ValueError("invalid summary normalization or length")
                 validate_event_id(settlement.event_id)
                 settled_at = datetime.fromisoformat(settlement.settled_at)
                 if settled_at.utcoffset() is None:

@@ -69,7 +69,7 @@ class Artifact:
             record = cls(**value)
             content = bytes.fromhex(record.content_hex)
             valid = cls.parse_ref(record.ref) == (record.turn_id, record.kind)
-            valid = valid and record.bytes == len(content)
+            valid = valid and type(record.bytes) is int and record.bytes >= 0 and record.bytes == len(content)
             valid = valid and __import__("hashlib").sha256(content).hexdigest() == record.sha256
         except (TypeError, ValueError, ValidationError) as exc:
             from .errors import UnsafeStateError
