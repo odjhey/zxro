@@ -753,6 +753,94 @@ class PinnedRecordTests(unittest.TestCase):
         self.assertEqual(json.loads(target.read_text()), {"id": "job"})
         self.assertEqual(list(target.parent.glob(".zxro-tmp-*")), [])
 
+    def test_callback_unsafe_state_objects_remain_direct_causes(self):
+        target = self.home / "work" / "job.json"
+        prefix = f"state record may have been published: {target}"
+        for case in ("validator", "body"):
+            with self.subTest(case=case):
+                if target.exists():
+                    target.chmod(0o600)
+                    target.unlink()
+                nested = OSError(f"{case} nested")
+                callback_error = UnsafeStateError(f"{case} callback")
+                callback_error.__cause__ = nested
+                calls = 0
+
+                def validator(value):
+                    nonlocal calls
+                    calls += 1
+                    if case == "validator" and calls == 2:
+                        raise callback_error
+                    return value
+
+                with mutation(self.home) as access:
+                    with self.assertRaises(UnsafeStateError) as caught:
+                        with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=validator):
+                            if case == "body":
+                                raise callback_error
+                self.assertEqual(str(caught.exception), prefix)
+                self.assertIs(caught.exception.__cause__, callback_error)
+                self.assertIs(callback_error.__cause__, nested)
+
+    def test_operation_created_exit_checkpoint_error_is_direct_cause(self):
+        import zxro.localfs.ioutil as ioutil
+
+        target = self.home / "work" / "job.json"
+        prefix = f"state record may have been published: {target}"
+        nested = OSError("exit checkpoint nested")
+        checkpoint_error = UnsafeStateError("exit checkpoint marker")
+        checkpoint_error.__cause__ = nested
+        calls = 0
+        real_verify = ioutil.PinnedRecord.verify_current
+
+        def fail_exit(pin):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise checkpoint_error
+            return real_verify(pin)
+
+        with mutation(self.home) as access, mock.patch.object(
+            ioutil.PinnedRecord, "verify_current", side_effect=fail_exit, autospec=True
+        ):
+            with self.assertRaises(UnsafeStateError) as caught:
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    pass
+        self.assertEqual(calls, 2)
+        self.assertEqual(str(caught.exception), prefix)
+        self.assertIs(caught.exception.__cause__, checkpoint_error)
+
+    def test_eexist_oserror_body_and_exit_are_preserved(self):
+        import zxro.localfs.ioutil as ioutil
+
+        target = self.write_record("job.json", {"id": "job"})
+        body_error = OSError("existing OSError body")
+        with mutation(self.home) as access:
+            with self.assertRaises(OSError) as caught:
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    raise body_error
+        self.assertIs(caught.exception, body_error)
+
+        exit_error = OSError("existing OSError exit")
+        calls = 0
+        real_verify = ioutil.PinnedRecord.verify_current
+
+        def fail_exit(pin):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise exit_error
+            return real_verify(pin)
+
+        with mutation(self.home) as access, mock.patch.object(
+            ioutil.PinnedRecord, "verify_current", side_effect=fail_exit, autospec=True
+        ):
+            with self.assertRaises(OSError) as caught:
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    pass
+        self.assertEqual(calls, 2)
+        self.assertIs(caught.exception, exit_error)
+
     def test_operation_created_body_and_common_reread_use_one_stable_boundary(self):
         import zxro.localfs.ioutil as ioutil
 
@@ -861,7 +949,7 @@ class PinnedRecordTests(unittest.TestCase):
             def fail_directory_exit(*args, **kwargs):
                 nonlocal fired
                 fired = True
-                raise UnsafeStateError("directory exit normalized") from marker
+                raise ioutil._InternalUnsafeStateError("directory exit normalized", marker) from marker
 
             with mock.patch.object(access, "verify_directory", side_effect=fail_directory_exit):
                 with self.assertRaises(UnsafeStateError) as caught:
@@ -977,6 +1065,47 @@ class PinnedRecordTests(unittest.TestCase):
                 with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
                     target.chmod(0o444)
         self.assertNotIn("may have been published", str(caught.exception))
+
+    def test_publication_teardown_attempts_all_descriptor_closes(self):
+        target = self.home / "work" / "job.json"
+        prefix = f"state record may have been published: {target}"
+        real_close = os.close
+        linked = False
+        raised = False
+        attempted = []
+        marker = OSError("close marker")
+        real_link = os.link
+
+        def link(*args, **kwargs):
+            nonlocal linked
+            result = real_link(*args, **kwargs)
+            linked = True
+            return result
+
+        def close(fd):
+            nonlocal raised
+            if linked:
+                attempted.append(fd)
+                real_close(fd)
+                if not raised:
+                    raised = True
+                    raise marker
+                return None
+            return real_close(fd)
+
+        with mutation(self.home) as access, mock.patch(
+            "zxro.localfs.ioutil.os.link", side_effect=link
+        ), mock.patch("zxro.localfs.ioutil.os.close", side_effect=close):
+            with self.assertRaises(UnsafeStateError) as caught:
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    pass
+        self.assertTrue(raised)
+        self.assertGreaterEqual(len(attempted), 2)
+        self.assertEqual(str(caught.exception), prefix)
+        self.assertIs(caught.exception.__cause__, marker)
+        for fd in set(attempted):
+            with self.assertRaises(OSError):
+                os.fstat(fd)
 
     @unittest.skipUnless(Path("/proc/self/fd").exists(), "requires procfs")
     def test_closed_pin_loop_does_not_leak_descriptors(self):

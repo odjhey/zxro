@@ -17,6 +17,12 @@ _RECORD_FLAGS = os.O_RDONLY | _NOFOLLOW | _NONBLOCK
 MAX_RECORD_BYTES = 16 * 1024 * 1024
 
 
+class _InternalUnsafeStateError(UnsafeStateError):
+    def __init__(self, message, origin):
+        super().__init__(message)
+        self.origin = origin
+
+
 def _same_inode(left, right):
     return left.st_dev == right.st_dev and left.st_ino == right.st_ino
 
@@ -112,7 +118,7 @@ class StoreAccess:
             path_stat = os.stat(name, dir_fd=self.home_fd, follow_symlinks=False)
             fd_stat = os.fstat(fd)
         except OSError as exc:
-            raise UnsafeStateError(f"cannot verify managed directory {self.home / name}: {exc}") from exc
+            raise _InternalUnsafeStateError(f"cannot verify managed directory {self.home / name}: {exc}", exc) from exc
         check_stat(path_stat, self.home / name, directory=True)
         check_stat(fd_stat, self.home / name, directory=True)
         if not _same_inode(path_stat, fd_stat):
@@ -174,7 +180,7 @@ def _check_record_fd(fd: int, label: Path, *, readonly: bool = False, mode: int 
     try:
         current = os.fstat(fd)
     except OSError as exc:
-        raise UnsafeStateError(f"cannot inspect state record {label}: {exc}") from exc
+        raise _InternalUnsafeStateError(f"cannot inspect state record {label}: {exc}", exc) from exc
     check_stat(current, label, directory=False)
     if readonly and current.st_mode & 0o222:
         raise UnsafeStateError(f"state record is writable: {label}")
@@ -197,7 +203,7 @@ def _open_record(directory_fd: int, filename: str, label: Path, *, readonly: boo
         if isinstance(exc, UnsafeStateError):
             raise
         if isinstance(exc, OSError):
-            raise UnsafeStateError(f"cannot open state record {label}: {exc}") from exc
+            raise _InternalUnsafeStateError(f"cannot open state record {label}: {exc}", exc) from exc
         raise
 
 
@@ -245,7 +251,7 @@ def _read_bounded(fd: int, max_bytes: int, label: Path) -> bytes:
     except UnsafeStateError:
         raise
     except OSError as exc:
-        raise UnsafeStateError(f"cannot read state record {label}: {exc}") from exc
+        raise _InternalUnsafeStateError(f"cannot read state record {label}: {exc}", exc) from exc
 
 
 def _parse_object(raw: bytes, label: Path) -> dict:
@@ -382,9 +388,7 @@ class _PublishedIndeterminate(UnsafeStateError):
 def _raise_indeterminate(label: Path, exc: BaseException):
     if isinstance(exc, _PublishedIndeterminate):
         raise exc
-    origin = exc
-    while isinstance(origin, UnsafeStateError) and origin.__cause__ is not None:
-        origin = origin.__cause__
+    origin = exc.origin if isinstance(exc, _InternalUnsafeStateError) else exc
     raise _PublishedIndeterminate(f"state record may have been published: {label}") from origin
 
 
@@ -398,6 +402,7 @@ def _publish_json_exact_pinned(access: StoreAccess, directory: str, filename: st
         temporary = f".zxro-tmp-{secrets.token_hex(16)}"
         temp_fd = sample_fd = record_fd = None
         destination_created = False
+        existing_winner = False
         cleanup_temp = False
         try:
             temp_fd = os.open(temporary, os.O_RDWR | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600, dir_fd=directory_fd)
@@ -433,6 +438,7 @@ def _publish_json_exact_pinned(access: StoreAccess, directory: str, filename: st
                     cleanup_temp = False
                 try:
                     record_fd = _open_record(directory_fd, filename, label, readonly=readonly, mode=mode)
+                    existing_winner = True
                 except NotFoundError:
                     raise UnsafeStateError(f"state record changed during publication: {label}") from None
             except BaseException:
@@ -477,6 +483,8 @@ def _publish_json_exact_pinned(access: StoreAccess, directory: str, filename: st
         except (NotFoundError, UnsafeStateError, ConflictError):
             raise
         except OSError as exc:
+            if existing_winner:
+                raise
             raise UnsafeStateError(f"cannot publish state record {label}: {exc}") from exc
         finally:
             close_error = None
