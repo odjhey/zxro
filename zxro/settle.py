@@ -58,7 +58,7 @@ class LocalDurableLoop:
         return events
 
     @staticmethod
-    def _handled(access, event_id):
+    def _handled(access, event_id, watchtower_id):
         try:
             value = read_json(access, "inbox-handled", f"{event_id}.json")
         except NotFoundError:
@@ -67,6 +67,8 @@ class LocalDurableLoop:
             raise UnsafeStateError("invalid handled state")
         try:
             validate_id(value["watchtower_id"], "watchtower id")
+            if value["watchtower_id"] != watchtower_id:
+                raise ValueError("handled state owner mismatch")
             handled_at = datetime.fromisoformat(value["handled_at"])
             if handled_at.utcoffset() is None:
                 raise ValueError
@@ -137,7 +139,7 @@ class LocalDurableLoop:
             events = self._mailbox_events(access, watchtower_id)
             if box["ack"] > len(events):
                 raise UnsafeStateError("ack exceeds mailbox history")
-            return [event for event in events if self._handled(access, event.event_id) is None] if pending else [event for event in events if event.generation > box["ack"]]
+            return [event for event in events if self._handled(access, event.event_id, event.watchtower_id) is None] if pending else [event for event in events if event.generation > box["ack"]]
 
     def ack(self, watchtower_id, through):
         watchtower_id = validate_id(watchtower_id, "watchtower id")
@@ -165,7 +167,7 @@ class LocalDurableLoop:
             if len(matches) != 1:
                 raise UnsafeStateError("event identity is not unique")
             event = matches[0]
-            handled = self._handled(access, event_id)
+            handled = self._handled(access, event_id, event.watchtower_id)
             if handled is None:
                 handled = {"event_id": event_id, "watchtower_id": event.watchtower_id, "handled_at": timestamp()}
                 atomic_replace(access, "inbox-handled", f"{event_id}.json", handled)

@@ -1,5 +1,6 @@
 from dataclasses import asdict, dataclass
 from datetime import datetime
+import unicodedata
 from typing import Protocol
 
 
@@ -111,6 +112,8 @@ class MailboxEvent:
             turn_id = validate_turn_id(value["turn_id"])
             safe_string(value["agent"], "agent")
             safe_string(value["summary"], "summary")
+            if len(value["summary"]) > 1000 or unicodedata.normalize("NFC", value["summary"]) != value["summary"]:
+                raise ValueError("invalid summary normalization or length")
             created_at = datetime.fromisoformat(value["created_at"])
             if created_at.utcoffset() is None:
                 raise ValueError
