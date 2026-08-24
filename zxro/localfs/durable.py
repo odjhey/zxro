@@ -9,7 +9,7 @@ from ..errors import ConflictError, NotFoundError, UnsafeStateError, ValidationE
 from ..ids import safe_string, validate_event_id, validate_id, validate_turn_id
 from .home import check_stat
 from ..settle import MAX_STDIN_BYTES, normalize_summary
-from .ioutil import MAX_RECORD_BYTES, atomic_create, atomic_replace, mutation, read_json, reading
+from .ioutil import MAX_RECORD_BYTES, atomic_create, atomic_replace, mutation, read_json, read_json_pinned, reading
 
 
 def timestamp():
@@ -176,9 +176,9 @@ class LocalDurableLoop:
                     encoded_size = len((json.dumps(artifact, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
                     if encoded_size > MAX_RECORD_BYTES:
                         raise ValidationError(f"stdin payload too large to store as a durable artifact: {len(payload)} bytes")
-                    atomic_replace(access, "artifacts", f"{turn_id}--stdin.json", artifact, mode=0o400)
+                    self._publish_exact(access, "artifacts", f"{turn_id}--stdin.json", artifact, artifact=True)
                     metadata = ArtifactMetadata(ref, turn_id, "stdin", len(payload), digest).to_dict()
-                    atomic_replace(access, "artifact-metadata", f"{turn_id}--stdin.json", metadata, mode=0o400)
+                    self._publish_exact(access, "artifact-metadata", f"{turn_id}--stdin.json", metadata, artifact=False)
                     artifact_refs = (ref,)
                 settled_at = timestamp()
                 settlement = Settlement(source, outcome, message, digest, event_id, settled_at)
@@ -321,6 +321,21 @@ class LocalDurableLoop:
             return handled
 
     @staticmethod
+    def _publish_exact(access, directory, filename, value, *, artifact):
+        try:
+            atomic_create(access, directory, filename, value, mode=0o400)
+            return
+        except ConflictError:
+            pass
+        with read_json_pinned(access, directory, filename, readonly=True) as existing:
+            if artifact:
+                existing = Artifact.from_dict(existing).to_dict()
+            else:
+                existing = ArtifactMetadata.from_dict(existing).to_dict()
+            if existing != value:
+                raise UnsafeStateError(f"conflicting pre-existing artifact record: {filename[:-5]}")
+
+    @staticmethod
     def _artifact_entry_identity(access, turn_id, kind):
         filename = f"{turn_id}--{kind}.json"
         label = access.home / "artifacts" / filename
@@ -412,15 +427,14 @@ class LocalDurableLoop:
         turn_id, kind = Artifact.parse_ref(ref)
         body_identity = cls._artifact_entry_identity(access, turn_id, kind)
         try:
-            cls._verify_metadata_entry(access, turn_id, kind)
-            metadata = ArtifactMetadata.from_dict(read_json(access, "artifact-metadata", f"{turn_id}--{kind}.json"))
-            cls._verify_metadata_entry(access, turn_id, kind)
+            with read_json_pinned(access, "artifact-metadata", f"{turn_id}--{kind}.json", readonly=True) as value:
+                metadata = ArtifactMetadata.from_dict(value)
+                if metadata.ref != ref:
+                    raise UnsafeStateError("artifact metadata does not match requested reference")
+                cls._verify_artifact_entry(access, turn_id, kind, body_identity)
+                return metadata
         except NotFoundError as exc:
             raise UnsafeStateError("artifact metadata migration required; run 'zxro migrate artifact-metadata'") from exc
-        if metadata.ref != ref:
-            raise UnsafeStateError("artifact metadata does not match requested reference")
-        cls._verify_artifact_entry(access, turn_id, kind, body_identity)
-        return metadata
 
     def stat(self, ref):
         with reading(self.home) as access:

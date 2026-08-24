@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -43,8 +44,13 @@ class BuiltinM1ProviderConformance(M1ProviderConformance, unittest.TestCase):
 
     def assert_stat_cost_bounded(self, ref):
         calls = []
-        original = durable_module.read_json
-        with mock.patch.object(durable_module, "read_json", side_effect=lambda access, directory, filename: (calls.append(directory), original(access, directory, filename))[1]):
+        original = durable_module.read_json_pinned
+        @contextmanager
+        def observed(access, directory, filename, **kwargs):
+            calls.append(directory)
+            with original(access, directory, filename, **kwargs) as value:
+                yield value
+        with mock.patch.object(durable_module, "read_json_pinned", side_effect=observed):
             self.m1.stat(ref)
         self.assertEqual(calls, ["artifact-metadata"])
 

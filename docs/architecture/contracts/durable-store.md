@@ -434,8 +434,8 @@ Provider composition must not require a distributed transaction.
 zxro settles a turn in this order:
 
 ```text
-1. persist referenced artifact bodies
-2. persist matching authoritative artifact metadata
+1. publish referenced artifact bodies without clobbering an existing path
+2. publish matching authoritative artifact metadata without clobbering an existing path
 3. commit terminal turn state with its allocated event ID
 4. create the immutable generation event without overwriting
 5. create the direct event-ID index without overwriting
@@ -443,7 +443,7 @@ zxro settles a turn in this order:
 7. return success
 ```
 
-Steps 4 through 6 form a resumable publication state machine. Before mutating the requested turn or assigning a generation, settlement must resolve and validate the direct index of the mailbox's already-published boundary events at generations `highest` and `highest - 1`; a missing or mismatched boundary index fails closed without touching the requested turn or mailbox. Retry or another settlement then reconciles and validates an immutable event at `highest + 1` before proceeding. A committed direct index above high-water must advance mailbox state before success. Interruption before or after any publication write must not overwrite an event or lose visibility. If handling succeeds between index and mailbox commits, repair must preserve handled state and must not add the event to unresolved attention.
+If either artifact path already exists, settlement pins and fully validates that record and accepts only exact equality. It rejects malformed, unsafe, symlinked, or valid-but-different records before terminal commit. Steps 4 through 6 form a resumable publication state machine. Before mutating the requested turn or assigning a generation, settlement must resolve and validate the direct index of the mailbox's already-published boundary events at generations `highest` and `highest - 1`; a missing or mismatched boundary index fails closed without touching the requested turn or mailbox. Retry or another settlement then reconciles and validates an immutable event at `highest + 1` before proceeding. A committed direct index above high-water must advance mailbox state before success. Interruption before or after any publication write must not overwrite an event or lose visibility. If handling succeeds between index and mailbox commits, repair must preserve handled state and must not add the event to unresolved attention.
 
 The safety rule is asymmetric:
 

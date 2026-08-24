@@ -2,7 +2,7 @@ import argparse
 import json
 import sys
 
-from .errors import ValidationError, ZxroError
+from .errors import UnsafeStateError, ValidationError, ZxroError
 from .localfs import artifact_migration_capability, m1_capabilities, providers, resolve_home
 from .settle import MAX_STDIN_BYTES
 
@@ -59,9 +59,19 @@ def render(value, machine, *, turn_id_only=False, path_only=False):
 def run(args, *, core_factory=providers, m1_factory=m1_capabilities, migration_factory=artifact_migration_capability):
     home = resolve_home(args.home)
     registry, work, turn = core_factory(home)
-    loop = m1_factory(home, registry, turn)
     path_only = False
-    if args.command == "watchtower":
+    if args.command == "migrate":
+        try:
+            migration = migration_factory(home, registry, turn) if migration_factory is not None else None
+            operation = migration.migrate_artifact_metadata
+        except (AttributeError, NotImplementedError) as exc:
+            raise UnsafeStateError("artifact metadata migration is unsupported by provider") from exc
+        value = operation()
+    else:
+        loop = m1_factory(home, registry, turn)
+    if args.command == "migrate":
+        pass
+    elif args.command == "watchtower":
         if args.action == "create": value = registry.create(args.id, args.cwd, args.agent, args.session)
         elif args.action == "show": value = registry.get(args.id)
         else: value = registry.list()
@@ -84,7 +94,6 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities, migration_f
         elif args.action == "pending": value = loop.pending(args.watchtower)
         else: value = loop.handle(args.event_id, args.watchtower)
     elif args.command == "ack": value = loop.ack(args.watchtower, args.through)
-    elif args.command == "migrate": value = migration_factory(home, registry, turn).migrate_artifact_metadata()
     else: value, path_only = loop.artifact_path(args.ref), True
     if hasattr(value, "to_dict"): records = value.to_dict()
     elif isinstance(value, list): records = [item.to_dict() if hasattr(item, "to_dict") else item for item in value]

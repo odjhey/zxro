@@ -162,7 +162,8 @@ def _record_stat(fd, directory_fd, filename, label):
         raise UnsafeStateError(f"state record changed during operation: {label}")
 
 
-def read_json(access: StoreAccess, directory: str, filename: str) -> dict:
+@contextmanager
+def read_json_pinned(access: StoreAccess, directory: str, filename: str, *, readonly: bool = False):
     label = access.home / directory / filename
     with access.directory(directory) as directory_fd:
         try:
@@ -173,6 +174,8 @@ def read_json(access: StoreAccess, directory: str, filename: str) -> dict:
             raise UnsafeStateError(f"cannot open state record {label}: {exc}") from exc
         try:
             _record_stat(fd, directory_fd, filename, label)
+            if readonly and os.fstat(fd).st_mode & 0o222:
+                raise UnsafeStateError(f"state record is writable: {label}")
             try:
                 chunks = []
                 size = 0
@@ -188,14 +191,22 @@ def read_json(access: StoreAccess, directory: str, filename: str) -> dict:
             except (UnicodeError, json.JSONDecodeError) as exc:
                 raise UnsafeStateError(f"malformed state record {label}: {exc}") from exc
             _record_stat(fd, directory_fd, filename, label)
+            if not isinstance(value, dict):
+                raise UnsafeStateError(f"state record is not an object: {label}")
+            if filename.endswith(".json") and isinstance(value.get("id"), str) and value["id"] != Path(filename).stem:
+                raise UnsafeStateError(f"record identity does not match its path: {label}")
+            yield value
+            _record_stat(fd, directory_fd, filename, label)
+            if readonly and os.fstat(fd).st_mode & 0o222:
+                raise UnsafeStateError(f"state record is writable: {label}")
             access.verify_directory(directory, directory_fd)
         finally:
             os.close(fd)
-    if not isinstance(value, dict):
-        raise UnsafeStateError(f"state record is not an object: {label}")
-    if filename.endswith(".json") and isinstance(value.get("id"), str) and value["id"] != Path(filename).stem:
-        raise UnsafeStateError(f"record identity does not match its path: {label}")
-    return value
+
+
+def read_json(access: StoreAccess, directory: str, filename: str) -> dict:
+    with read_json_pinned(access, directory, filename) as value:
+        return value
 
 
 def atomic_create(access: StoreAccess, directory: str, filename: str, value: dict, *, mode: int = 0o600) -> None:

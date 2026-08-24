@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 
 from helpers import run_cli
@@ -12,6 +12,7 @@ from zxro.cli import parser, run
 from zxro.errors import UnsafeStateError
 from zxro.localfs import m1_capabilities, providers
 import zxro.localfs.durable as durable
+import zxro.localfs.ioutil as ioutil
 
 
 class ArtifactMetadataTests(unittest.TestCase):
@@ -36,13 +37,15 @@ class ArtifactMetadataTests(unittest.TestCase):
     def test_stat_is_typed_and_does_not_read_artifact_body(self):
         turn, ref = self.settle(b"x" * 1_000_000)
         calls = []
-        original = durable.read_json
+        original = durable.read_json_pinned
 
-        def observed(access, directory, filename):
+        @contextmanager
+        def observed(access, directory, filename, **kwargs):
             calls.append(directory)
-            return original(access, directory, filename)
+            with original(access, directory, filename, **kwargs) as value:
+                yield value
 
-        with mock.patch.object(durable, "read_json", side_effect=observed):
+        with mock.patch.object(durable, "read_json_pinned", side_effect=observed):
             metadata = self.loop.stat(ref)
         self.assertEqual(metadata.turn_id, turn.id)
         self.assertEqual(metadata.bytes, 1_000_000)
@@ -69,6 +72,78 @@ class ArtifactMetadataTests(unittest.TestCase):
         loop.settle(next_turn.id, "test", "completed", "done", b"next")
         self.assertGreaterEqual(calls.count(ref), 6)
         self.assertIn(f"artifact:{next_turn.id}:stdin", calls)
+
+    def test_settlement_never_clobbers_preexisting_artifact_records(self):
+        scenarios = ("body", "metadata")
+        for target in scenarios:
+            with self.subTest(target=target):
+                turn = self.turns.create("job", "pi", "test", "/tmp")
+                directory = "artifacts" if target == "body" else "artifact-metadata"
+                path = self.home / directory / f"{turn.id}--stdin.json"
+                original = b'{"conflict":true}\n'; path.write_bytes(original); path.chmod(0o400)
+                with self.assertRaises(UnsafeStateError):
+                    self.loop.settle(turn.id, "test", "completed", "done", b"abc")
+                self.assertEqual(path.read_bytes(), original)
+                self.assertEqual(self.turns.get(turn.id).state, "running")
+
+        turn = self.turns.create("job", "pi", "test", "/tmp")
+        target = self.home / "turns" / f"{turn.id}.json"
+        body = self.home / "artifacts" / f"{turn.id}--stdin.json"; body.symlink_to(target)
+        with self.assertRaises(UnsafeStateError):
+            self.loop.settle(turn.id, "test", "completed", "done", b"abc")
+        self.assertTrue(body.is_symlink())
+        self.assertEqual(self.turns.get(turn.id).state, "running")
+
+    def test_settlement_accepts_exact_orphan_pair_and_rejects_valid_different(self):
+        turn = self.turns.create("job", "pi", "test", "/tmp")
+        original_publish = self.loop._publish_exact
+        def stop_after_pair(access, directory, filename, value, **kwargs):
+            original_publish(access, directory, filename, value, **kwargs)
+            if directory == "artifact-metadata":
+                raise RuntimeError("stop")
+        with mock.patch.object(self.loop, "_publish_exact", side_effect=stop_after_pair):
+            with self.assertRaises(RuntimeError):
+                self.loop.settle(turn.id, "test", "completed", "done", b"abc")
+        self.assertEqual(self.turns.get(turn.id).state, "running")
+        settled, _ = self.loop.settle(turn.id, "test", "completed", "done", b"abc")
+        self.assertEqual(settled.state, "settled")
+
+        other = self.turns.create("job", "pi", "test", "/tmp")
+        payload = b"different"
+        record = {"ref": f"artifact:{other.id}:stdin", "turn_id": other.id, "kind": "stdin", "bytes": len(payload), "sha256": __import__("hashlib").sha256(payload).hexdigest(), "content_hex": payload.hex()}
+        path = self.home / "artifacts" / f"{other.id}--stdin.json"
+        path.write_text(json.dumps(record)); path.chmod(0o400)
+        with self.assertRaisesRegex(UnsafeStateError, "conflicting"):
+            self.loop.settle(other.id, "test", "completed", "done", b"abc")
+        self.assertEqual(self.turns.get(other.id).state, "running")
+
+    def test_metadata_read_window_races_fail_closed(self):
+        actions = ("replace", "delete", "symlink", "chmod", "directory-swap")
+        for action in actions:
+            with self.subTest(action=action):
+                turn, ref = self.settle()
+                metadata = self.home / "artifact-metadata" / f"{turn.id}--stdin.json"
+                directory = metadata.parent
+                original_check = ioutil._record_stat
+                calls = 0
+                def racing_check(fd, directory_fd, filename, label):
+                    nonlocal calls
+                    result = original_check(fd, directory_fd, filename, label)
+                    if label == metadata:
+                        calls += 1
+                        if calls == 2:
+                            if action == "replace":
+                                replacement = directory / "replacement.json"; replacement.write_bytes(metadata.read_bytes()); replacement.chmod(0o400); os.replace(replacement, metadata)
+                            elif action == "delete": metadata.unlink()
+                            elif action == "symlink":
+                                metadata.unlink(); metadata.symlink_to(self.home / "turns" / f"{turn.id}.json")
+                            elif action == "chmod": metadata.chmod(0o600)
+                            else:
+                                moved = self.home / "old-artifact-metadata"; directory.rename(moved); directory.mkdir(mode=0o700)
+                    return result
+                with mock.patch.object(ioutil, "_record_stat", side_effect=racing_check):
+                    with self.assertRaises(UnsafeStateError):
+                        self.loop.stat(ref)
 
     def test_same_length_body_corruption_passes_stat_but_path_rejects_it(self):
         turn, ref = self.settle(b"evidence")
@@ -270,8 +345,10 @@ class ArtifactMetadataTests(unittest.TestCase):
         args = parser().parse_args(["--home", str(self.home), "--json", "migrate", "artifact-metadata"])
         output = StringIO()
         with redirect_stdout(output):
-            run(args, core_factory=lambda home: (self.registry, object(), self.turns), m1_factory=lambda *args: M1Only(), migration_factory=lambda *args: Migration())
+            run(args, core_factory=lambda home: (self.registry, object(), self.turns), m1_factory=lambda *args: (_ for _ in ()).throw(RuntimeError("M1 unsupported")), migration_factory=lambda *args: Migration())
         self.assertEqual(json.loads(output.getvalue()), {"migrated": 0, "already_indexed": 0, "failed": 0})
+        with self.assertRaisesRegex(UnsafeStateError, "unsupported"):
+            run(args, core_factory=lambda home: (self.registry, object(), self.turns), m1_factory=lambda *args: M1Only(), migration_factory=None)
 
     def test_migration_interruption_converges(self):
         first, _ = self.settle(b"one")
