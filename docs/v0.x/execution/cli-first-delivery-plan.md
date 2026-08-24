@@ -6,7 +6,7 @@ tags: [v0.x, execution, delivery, cli]
 status: draft
 generated: "Claude Fable 5, 2026-08-24"
 created_at: "2026-08-24T17:06:13+08:00"
-updated_at: "2026-08-24T17:06:13+08:00"
+updated_at: "2026-08-24T21:40:00+08:00"
 ---
 
 # CLI-first delivery plan
@@ -56,7 +56,7 @@ zxro/
   settle.py               # settlement orchestration across capabilities (PR2)
   localfs/                # built-in provider; private behind contract.py
     home.py               # $ZXRO_HOME resolution, layout, path and symlink safety
-    ioutil.py             # flock, atomic write (tmp + fsync + os.replace), fail-closed JSON/JSONL
+    ioutil.py             # flock, atomic write (tmp + fsync + os.replace), fail-closed indexed JSON
     registry.py  work.py  turn.py  artifact.py  mailbox.py
 tests/
   helpers.py              # run_cli() subprocess helper, temporary-home fixture
@@ -94,22 +94,24 @@ $ZXRO_HOME/
   watchtowers/<id>.json
   work/<id>.json
   turns/<turn-id>.json            # includes session binding and settlement fields
-  artifacts/<turn-id>/<kind>      # artifact bytes, e.g. settle --stdin payload
-  inbox/<watchtower-id>/events.jsonl
-  inbox/<watchtower-id>/ack.json
-  inbox/<watchtower-id>/handled/<event-id>.json
+  artifacts/<turn-id>--<kind>.json            # durable artifact record
+  artifacts/<turn-id>--<kind>.bin             # verified local materialization
+  inbox/<watchtower-id>.json                  # ack, high-water, unresolved IDs
+  inbox-events/<watchtower>--<generation>.json
+  inbox-index/<event-id>.json                 # direct event lookup
+  inbox-handled/<event-id>.json
   .lock                           # store lock
 ```
 
-This layout is a provider implementation detail. Tests and callers other than `test_localfs_invariants.py` must not depend on it.
+This layout is a provider implementation detail. Tests and callers other than `test_localfs_invariants.py` must not depend on it. M1 uses one bounded record per immutable event and handled marker rather than one ever-growing event-stream record. Per-watchtower high-water and unresolved indexes let `unread` read only generations after ack, let `pending` read only unresolved IDs, and let `handle` use direct event-ID lookup. Handled history and other watchtowers do not add reads to these operations.
 
 ### Concurrency
 
-One exclusive `fcntl.flock` on `$ZXRO_HOME/.lock` serializes all mutations. The contract permits safe serialization, and the target load is 10 to 12 near-simultaneous settlements. Every record write uses temp file, `fsync`, then `os.replace`. JSONL appends happen under the same lock. Finer-grained locking is a later optimization, not a v0.x requirement.
+One exclusive `fcntl.flock` on `$ZXRO_HOME/.lock` serializes all mutations. The contract permits safe serialization, and the target load is 10 to 12 near-simultaneous settlements. Every record write uses temp file, `fsync`, then `os.replace`. Immutable mailbox event records are created under the same lock. Finer-grained locking is a later optimization, not a v0.x requirement.
 
 ### Settlement
 
-`turn settle` must follow the documented order: persist the `--stdin` payload as an artifact when present, commit terminal turn state with `settlement_key = "<turn_id>:settled"`, publish one unhandled mailbox event carrying that key, then report success. Idempotency: a retry with identical outcome and normalized summary returns the existing settlement and republishes a missing event; a differing outcome or summary exits 4. Event IDs are `evt-` plus `uuid4().hex`; generation is the previous mailbox generation plus one, assigned under the store lock.
+`turn settle` must follow the documented order: persist the `--stdin` payload as an artifact when present, allocate and commit the event ID with terminal turn state, publish one unhandled mailbox event carrying that identity, then report success. Idempotency: a retry with identical outcome and normalized summary returns the existing settlement and republishes a missing event; omitted retry stdin is allowed, supplied bytes must match the first payload, and a payload cannot be added later. A differing outcome, summary, or supplied payload exits 4. Event IDs are `evt-` plus `uuid4().hex`; generation is the previous mailbox generation plus one, assigned under the store lock.
 
 For the required black-box crash-gap test, the CLI honors a test-only environment knob `ZXRO_FAULT_EXIT_AFTER=turn-commit` that exits between terminal commit and event publication. The conformance suite also drives the same gap directly through the provider boundary.
 
@@ -119,7 +121,7 @@ For the required black-box crash-gap test, the CLI honors a test-only environmen
 - Turn IDs are UUIDv4. Artifact references are `artifact:<turn-uuid>:<kind>`.
 - Summaries are NFC-normalized; content longer than 1,000 Unicode characters is rejected with exit 2.
 - Timestamps are local-offset ISO 8601 and are never used for uniqueness or ordering.
-- `artifact path` re-verifies the resolved path stays under the active home and fails closed on symlinks.
+- `artifact path` verifies the owned regular-file materialization against the durable byte count and SHA-256 while resolving it beneath the active home, and fails closed on symlinks or changed content.
 
 ## PR contents
 

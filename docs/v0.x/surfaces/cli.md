@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-24T16:31:00+08:00
+updated_at: 2026-08-24T20:05:00+08:00
 ---
 
 # v0.x CLI
@@ -223,6 +223,7 @@ Hook-oriented form:
 zxro turn settle <turn-id> \
   --source claude \
   --status completed \
+  --message "Claude hook reported completion." \
   --stdin
 ```
 
@@ -234,15 +235,15 @@ Supported status values for v0.x:
 
 `--message` is the bounded routing summary. It must not exceed 1,000 Unicode characters after normalization.
 
-`--stdin` stores the producer payload needed for later diagnosis as a turn artifact. Provider-specific payloads must not change the common inbox envelope, and raw stdin must not be copied into that envelope.
+`--stdin` stores the producer payload needed for later diagnosis as a turn artifact. Provider-specific payloads must not change the common inbox envelope, and raw stdin must not be copied into that envelope. The built-in provider rejects stdin when its hex-encoded artifact record would exceed the 16 MiB durable-record limit (roughly 8 MiB of payload), before committing settlement.
 
 Settlement rules:
 
 - A successful first settlement writes the result and any payload artifact before publishing the inbox event.
 - The event receives a stable `event_id` and a mailbox generation.
 - The new event begins unhandled.
-- Repeating an identical settlement is idempotent and must return the existing logical settlement without creating another event or generation.
-- A conflicting second settlement fails deterministically.
+- Repeating an identical outcome and normalized message is idempotent and must return the existing logical settlement without creating another event or generation. A retry may omit stdin; if supplied, its bytes must match the first payload, and a payload cannot be added later.
+- A conflicting outcome, message, or supplied payload fails deterministically.
 - Settling an unknown turn fails without creating an inbox event.
 - The inbox event contains bounded routing context and artifact references, never the full payload.
 - The command reports success only after both terminal turn state and event publication are durable.
@@ -384,7 +385,7 @@ Resolve one artifact reference to its local path when the active artifact provid
 zxro artifact path artifact:550e8400-e29b-41d4-a716-446655440000:review
 ```
 
-For the built-in provider, the returned path must remain under the active `$ZXRO_HOME` and pass zxro's path and symlink safety checks.
+For the built-in provider, the returned path remains under the active `$ZXRO_HOME`. Before returning it, zxro rejects symlinks and unsafe ownership or file types, and verifies the materialized bytes against the durable artifact's byte count and SHA-256 digest.
 
 This is the explicit bridge to deeper inspection:
 
@@ -458,14 +459,7 @@ The example deliberately separates observing delivery, acknowledging the read po
 
 ## Exit codes
 
-Exact numeric codes may be finalized during implementation, but these classes must remain distinct:
-
-- success;
-- usage/validation error;
-- missing artifact or event;
-- conflict or invariant violation;
-- unsafe/malformed durable state;
-- child-process failure for optional `turn run`.
+The numeric exit codes and their meanings are defined by [contract conventions](../../architecture/contracts/conventions.md#errors).
 
 ## Related
 

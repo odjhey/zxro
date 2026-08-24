@@ -1,12 +1,12 @@
 ---
 name: decision_separate_delivery_from_attention
-description: "Proposed decision to keep the inbox read cursor separate from per-event attention handling."
+description: "Accepted decision to keep the inbox read cursor separate from per-event attention handling."
 type: decision
 tags: [decisions, v0.x, inbox, mailbox]
-status: draft
+status: current
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:03:00+08:00
-updated_at: 2026-08-24T16:03:00+08:00
+updated_at: 2026-08-24T20:05:00+08:00
 ---
 
 # 0002: Separate inbox delivery position from attention handling
@@ -41,7 +41,7 @@ This is the most flexible model, but v0.x settlement events are already task-sco
 
 ## Choice
 
-**Proposed:** make each actionable v0.x inbox event independently handleable. Do not add a separate mailbox-item object yet.
+Make each actionable v0.x inbox event independently handleable. Do not add a separate mailbox-item object yet.
 
 The intended model is:
 
@@ -90,9 +90,9 @@ For v0.x, `turn settle` remains the operation that creates actionable inbox even
 - A future notification coalescer may batch several events, but a delivery batch must never become the identity used to mark each event handled.
 - A future separate mailbox-item entity remains available if one event later contains several independently actionable reasons or needs explicit supersession.
 
-## Rule or follow-up
+## Rule
 
-Before M1 implementation starts, update the v0.x CLI, scope, implementation-plan, and test documents so they no longer define `inbox pending` as merely `generation > ack`.
+M1 implements `pending` from handled state, not from read generation. The CLI spec and durable store contract carry the same rule.
 
 Required acceptance behavior:
 

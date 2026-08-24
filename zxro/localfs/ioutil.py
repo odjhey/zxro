@@ -10,6 +10,7 @@ from .home import MANAGED_DIRS, check_stat, prepare_home
 
 _DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+MAX_RECORD_BYTES = 16 * 1024 * 1024
 
 
 def _same_inode(left, right):
@@ -176,12 +177,12 @@ def read_json(access: StoreAccess, directory: str, filename: str) -> dict:
                 chunks = []
                 size = 0
                 while True:
-                    chunk = os.read(fd, min(64 * 1024, 16 * 1024 * 1024 + 1 - size))
+                    chunk = os.read(fd, min(64 * 1024, MAX_RECORD_BYTES + 1 - size))
                     if not chunk:
                         break
                     chunks.append(chunk)
                     size += len(chunk)
-                    if size > 16 * 1024 * 1024:
+                    if size > MAX_RECORD_BYTES:
                         raise UnsafeStateError(f"state record is too large: {label}")
                 value = json.loads(b"".join(chunks).decode("utf-8"))
             except (UnicodeError, json.JSONDecodeError) as exc:
@@ -216,6 +217,8 @@ def atomic_replace(access: StoreAccess, directory: str, filename: str, value: di
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600, dir_fd=directory_fd)
             os.fchmod(fd, 0o600)
             payload = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+            if len(payload) > MAX_RECORD_BYTES:
+                raise UnsafeStateError(f"state record is too large: {label}")
             view = memoryview(payload)
             while view:
                 written = os.write(fd, view)
@@ -246,18 +249,22 @@ def atomic_replace(access: StoreAccess, directory: str, filename: str, value: di
             raise UnsafeStateError(f"cannot verify replaced state record {label}: {exc}") from exc
 
 
-def list_records(access: StoreAccess, directory: str) -> list[dict]:
+def list_names(access: StoreAccess, directory: str) -> list[str]:
     with access.directory(directory) as directory_fd:
         try:
             entries = sorted(os.listdir(directory_fd))
         except OSError as exc:
             raise UnsafeStateError(f"cannot list state directory {access.home / directory}: {exc}") from exc
         access.verify_directory(directory, directory_fd)
-    records = []
+    names = []
     for name in entries:
         if name.startswith(".zxro-tmp-"):
             continue
         if not name.endswith(".json"):
             raise UnsafeStateError(f"unexpected state entry: {access.home / directory / name}")
-        records.append(read_json(access, directory, name))
-    return records
+        names.append(name)
+    return names
+
+
+def list_records(access: StoreAccess, directory: str) -> list[dict]:
+    return [read_json(access, directory, name) for name in list_names(access, directory)]

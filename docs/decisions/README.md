@@ -6,7 +6,7 @@ tags: [decisions]
 status: current
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T16:03:00+08:00
+updated_at: 2026-08-24T21:40:00+08:00
 ---
 
 # Decision records
@@ -28,9 +28,6 @@ Use decision records for choices whose rationale or consequences future contribu
 ## Accepted decisions
 
 - [0001: Build the v0 CLI first with Python stdlib](./0001-v0-cli-first-python-stdlib.md)
-
-## Proposed decisions
-
-- [0002: Separate inbox delivery position from attention handling](./0002-separate-delivery-from-attention.md) — extracted from Rozoro's generation/mailbox lessons; review before M1 implementation
+- [0002: Separate inbox delivery position from attention handling](./0002-separate-delivery-from-attention.md)
 
 Start from [0000-template.md](./0000-template.md). Add accepted records to this index and to [docs/INDEX.md](../INDEX.md). Mark replaced records `superseded` and link their replacement.

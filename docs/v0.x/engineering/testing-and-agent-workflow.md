@@ -6,7 +6,7 @@ tags: [v0.x, engineering, testing, agents]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T16:31:00+08:00
+updated_at: 2026-08-24T21:40:00+08:00
 ---
 
 # v0.x testing and agent workflow
@@ -27,7 +27,7 @@ updated_at: 2026-08-24T16:31:00+08:00
 |---|---|---|---|
 | CLI contract | Exercise commands through `subprocess` and verify output, exit codes, and observable state | Temporary `$ZXRO_HOME`; no external commands unless faked | Yes |
 | Durable-store conformance | Exercise work, turn, artifact, delivery, read ack, handled state, idempotency, isolation, and crash-recovery semantics through one provider boundary | Fresh provider namespace per test | Built-in provider: yes; optional adapters: opt-in |
-| Built-in artifact invariants | Exercise locking, atomic replacement, JSON/JSONL parsing, event-generation rules, and artifact reference safety | Temporary directories and concurrent Python processes | Yes |
+| Built-in artifact invariants | Exercise locking, atomic replacement, indexed JSON parsing, event-generation rules, and artifact reference safety | Temporary directories and concurrent Python processes | Yes |
 | Context-cost invariants | Verify bounded summaries, delta-only unread reads, bounded pending attention, and metadata-only routine inspection | Synthetic large artifacts in a temporary home | Yes |
 | Manual smoke | Walk the CLI with Unix utilities and inspect files directly | Disposable local home | Before integration milestones |
 | Storage-adapter smoke | Confirm a candidate external CLI satisfies the same behavior without leaking provider commands into callers | Disposable external-provider namespace | When evaluating an adapter |
@@ -128,10 +128,10 @@ Provider composition may split terminal turn state and mailbox publication acros
 A fixture should:
 
 1. persist artifacts;
-2. commit the terminal turn using a known settlement key;
+2. commit the terminal turn with its allocated event ID;
 3. simulate interruption before mailbox publication;
 4. retry the settlement/reconciliation path;
-5. verify exactly one mailbox event exists for that settlement;
+5. verify exactly one mailbox event exists with that event ID;
 6. retry again and verify event ID and generation do not change;
 7. verify the newly published event begins unhandled.
 

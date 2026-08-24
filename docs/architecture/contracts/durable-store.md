@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-24T16:31:00+08:00
+updated_at: 2026-08-24T23:58:00+08:00
 ---
 
 # Durable store contract
@@ -20,7 +20,7 @@ The contract has two goals:
 - let zxro implementation proceed now against a stable behavior boundary;
 - let candidate off-the-shelf tools be evaluated by conformance instead of by similarity to zxro's first implementation.
 
-The built-in v0 provider may use JSON, JSONL, filesystem locks, and per-turn files. Those are implementation choices, not this contract.
+The built-in v0 provider may use indexed JSON, filesystem locks, and per-turn files. Those are implementation choices, not this contract.
 
 ## Owners and consumers
 
@@ -61,7 +61,7 @@ The useful capability groups are:
 
 A candidate may implement only one group. For example, Beads may satisfy the work-store contract while zxro keeps turns locally and another CLI provides mailbox semantics.
 
-Provider composition must not change public zxro command behavior.
+Provider composition must not change public zxro command behavior. Core code injects the M1 settlement, mailbox, and artifact capabilities defined in `zxro.contract`; CLI handlers do not construct a built-in M1 provider directly. Provider conformance fixtures target those capabilities and can be reused with provider-specific setup and fault hooks.
 
 ## Canonical objects
 
@@ -172,11 +172,13 @@ A mailbox event is immutable, bounded routing context for one watchtower.
   "watchtower_id": "main",
   "work_id": "auth-fix",
   "turn_id": "550e8400-e29b-41d4-a716-446655440000",
+  "agent": "claude",
   "outcome": "completed",
   "summary": "Implementation complete; four focused tests pass.",
   "artifact_refs": [
     "artifact:550e8400-e29b-41d4-a716-446655440000:report"
-  ]
+  ],
+  "created_at": "2026-08-24T16:31:00+08:00"
 }
 ```
 
@@ -204,6 +206,7 @@ Actionable events have independent handled state keyed by `event_id`:
 ```json
 {
   "event_id": "evt-7a63...",
+  "watchtower_id": "main",
   "handled_at": "2026-08-24T16:31:00+08:00"
 }
 ```
@@ -298,7 +301,7 @@ turn.list(state=...)
 ### Settle
 
 ```text
-turn.settle(id, outcome, summary, artifact_refs, source, settlement_key) -> turn
+turn.settle(id, outcome, summary, payload, source) -> turn
 ```
 
 Supported v0.x outcomes are:
@@ -309,9 +312,9 @@ failed
 cancelled
 ```
 
-Settlement is idempotent. Repeating the same logical settlement returns the existing result and must not create another mailbox event. A conflicting terminal settlement fails deterministically.
+Settlement is idempotent. Repeating the same outcome and normalized summary returns the existing result and must not create another mailbox event. Retry payload may be omitted; when supplied, its digest must match the first settlement, and a settlement without payload cannot gain one later. A conflicting terminal settlement fails deterministically.
 
-`settlement_key` is a stable idempotency key for the logical completion, normally derived from the turn identity and terminal transition. Adapters may map this to a provider-native idempotency mechanism or emulate it.
+The event ID is allocated before terminal commit and stored with the settlement as its stable delivery identity. Adapters may map this identity to a provider-native idempotency mechanism or emulate it. Crash-gap publication must reuse the committed event ID.
 
 ## Artifact-store operations
 
@@ -354,7 +357,7 @@ A provider with message IDs, thread IDs, sequence numbers, or another native mod
 mail.unread(watchtower_id) -> events
 ```
 
-`unread` is the delivery delta. It returns events whose generation is strictly greater than the watchtower's durable read cursor.
+`unread` is the delivery delta. It returns events whose generation is strictly greater than the watchtower's durable read cursor. Before returning an event, the provider must resolve its direct event-ID lookup and require exact event identity, owner, and generation agreement. Generation values are integers, not booleans or numeric strings.
 
 If read ack is `40` and generations `41`, `42`, and `43` exist, `unread` returns only `41..43`.
 
@@ -385,7 +388,9 @@ Rules:
 - ack may not move backwards;
 - repeating the current ack is allowed;
 - ack never deletes inbox history;
-- ack does not mark any event handled.
+- ack does not mark any event handled;
+- the requested generation must be an integer, not a boolean, numeric string, or float, and validation occurs before provider state access;
+- before advancing, ack must resolve and validate every newly acknowledged generation; a missing or mismatched generation fails closed without changing the cursor.
 
 ### Handle
 
@@ -397,6 +402,8 @@ Rules:
 
 - handling affects exactly one event;
 - events may be handled out of generation order;
+- handling first commits authoritative handled state, then removes unresolved attention;
+- interruption around either write leaves the event pending or durably handled, and retry converges idempotently;
 - handling the same event twice is idempotent;
 - handling does not mutate the immutable event;
 - handling does not close work;
@@ -422,14 +429,20 @@ zxro settles a turn in this order:
 
 ```text
 1. persist referenced artifacts
-2. commit terminal turn state with settlement_key
-3. publish one unhandled mailbox event with the same logical settlement identity
-4. return success
+2. commit terminal turn state with its allocated event ID
+3. create the immutable generation event without overwriting
+4. create the direct event-ID index without overwriting
+5. advance mailbox high-water and unresolved state
+6. return success
 ```
+
+Steps 3 through 5 form a resumable publication state machine. Before mutating the requested turn or assigning a generation, settlement must resolve and validate the direct index of the mailbox's already-published boundary events at generations `highest` and `highest - 1`; a missing or mismatched boundary index fails closed without touching the requested turn or mailbox. Retry or another settlement then reconciles and validates an immutable event at `highest + 1` before proceeding. A committed direct index above high-water must advance mailbox state before success. Interruption before or after any publication write must not overwrite an event or lose visibility. If handling succeeds between index and mailbox commits, repair must preserve handled state and must not add the event to unresolved attention.
 
 The safety rule is asymmetric:
 
-> A watchtower must never receive a settlement event whose durable turn result cannot be resolved.
+> A watchtower must never receive a settlement event whose durable turn result and referenced artifact metadata cannot be resolved and matched to the event.
+
+`unread` and `pending` must fail closed if an event's terminal turn, ownership, settlement identity, outcome, summary, or artifact metadata is missing or disagrees. They must not return a partially validated envelope.
 
 A process may crash after step 2 and before step 3. That leaves a settled turn whose mailbox event has not yet been published. This state is recoverable. Retrying settlement or reconciliation must detect the committed settlement and idempotently publish the missing event.
 
@@ -502,7 +515,7 @@ For a work item with hundreds of prior turns and large historical artifacts, one
 unread cost ~= new delivery
 ```
 
-`pending` may grow with the number of genuinely unresolved actionable events. It must not grow with the byte size of their reports, logs, or transcripts.
+`pending` may grow with the number of genuinely unresolved actionable events. It must not grow with the byte size of their reports, logs, or transcripts. If authoritative handled markers remain after an interrupted handle, a pending read compacts those stale unresolved IDs so later empty reads return to fixed cost without exact-handle retries.
 
 ```text
 pending cost ~= unresolved bounded events
@@ -515,6 +528,8 @@ pending cost ~= accumulated artifact history
 ```
 
 Increasing the byte size of an old artifact must not increase the output size of `unread` or `pending` when the event envelopes are unchanged.
+
+Providers must also bound reconciliation work by the requested view. `unread` reads generations after the watchtower's ack, `pending` reads unresolved events, and direct handling resolves one event ID. Empty views and one new settlement must not scan handled history or another watchtower's history.
 
 ## Isolation contract
 
@@ -550,7 +565,7 @@ After a mutating operation reports success, its state must survive immediate cal
 
 Providers must fail closed on malformed, conflicting, or unsafe state. They must not guess through corruption.
 
-Retries after uncertain process termination must be safe for operations that carry an idempotency key, especially settlement and mailbox publication.
+Retries after uncertain process termination must be safe for operations that carry a stable identity. Settlement and mailbox publication use the committed event ID defined above.
 
 Read ack and handled state are separate durable mutations. A crash after ack but before handling is safe because the event remains visible in `pending`.
 
@@ -601,6 +616,9 @@ The conformance suite must cover at least:
 - idempotent event handling;
 - work close remaining independent from read ack and event handling;
 - crash recovery between terminal-state commit and mailbox publication;
+- fail-closed reads for missing or mismatched terminal turns and artifact metadata;
+- empty unread/pending and one new settlement remaining independent of handled history size;
+- missing-object reads leaving a nonexistent provider namespace uncreated;
 - namespace isolation;
 - progressive-disclosure and bounded-context invariants.
 

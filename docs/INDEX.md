@@ -6,7 +6,7 @@ tags: [docs, meta, toc]
 status: current
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T17:06:13+08:00
+updated_at: 2026-08-24T21:40:00+08:00
 ---
 
 # Docs index
@@ -53,7 +53,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [Decision records](./decisions/README.md) | index | Decision format and index |
 | [Decision template](./decisions/0000-template.md) | decision | Copyable decision-record template |
 | [0001: Build the v0 CLI first with Python stdlib](./decisions/0001-v0-cli-first-python-stdlib.md) | decision | Dependency-free Python CLI first; harness integrations and compiled rewrite deferred |
-| [0002: Separate inbox delivery position from attention handling](./decisions/0002-separate-delivery-from-attention.md) | decision | Proposed split between read acknowledgement and independently handled inbox events |
+| [0002: Separate inbox delivery position from attention handling](./decisions/0002-separate-delivery-from-attention.md) | decision | Accepted split between read acknowledgement and independently handled inbox events |
 
 ## v0.x
 
@@ -68,6 +68,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [CLI-first delivery plan](./v0.x/execution/cli-first-delivery-plan.md) | plan | Three stacked PRs with parallel test/docs tracks, repository layout, locked implementation decisions, and test-to-contract mapping for M0–M2 |
 | [Human decision gates](./v0.x/execution/human-decision-gates.md) | guide | Decisions requiring human approval |
 | [Task cards](./v0.x/execution/task-cards/README.md) | index | Task-card index and usage |
+| [M1 durable settlement](./v0.x/execution/task-cards/m1-durable-settlement.md) | checklist | M1 scope, compatibility decisions, and executable acceptance evidence |
 | [Task-card template](./v0.x/execution/task-cards/task-card-template.md) | plan | Copyable implementation task card |
 | [Surfaces](./v0.x/surfaces/README.md) | index | Product-interface index |
 | [v0.x CLI](./v0.x/surfaces/cli.md) | spec | Durable CRUD, settlement, unread delivery, pending attention, handling, bounded summaries, inspection, artifact resolution, and metadata helpers |

@@ -12,6 +12,12 @@ def validate_id(value: str, label: str = "id") -> str:
     return value
 
 
+def validate_event_id(value: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"evt-[0-9a-f]{32}", value):
+        raise ValidationError(f"invalid event id: {value!r}")
+    return value
+
+
 def validate_turn_id(value: str) -> str:
     try:
         parsed = uuid.UUID(value)
