@@ -503,6 +503,7 @@ class PinnedRecordTests(unittest.TestCase):
                 with mock.patch("zxro.localfs.ioutil.os.open", side_effect=replace_before_open):
                     with self.assertRaises(UnsafeStateError):
                         pin.verify_current()
+                self.assertTrue(replaced)
                 path.unlink()
                 path.with_suffix(".original").rename(path)
 
@@ -525,6 +526,7 @@ class PinnedRecordTests(unittest.TestCase):
 
                 with mock.patch("zxro.localfs.ioutil.os.fstat", side_effect=replace_after_open):
                     pin.verify_current()
+                self.assertTrue(swapped)
                 path.chmod(0o600)
                 path.unlink()
                 moved.rename(path)
@@ -553,6 +555,68 @@ class PinnedRecordTests(unittest.TestCase):
                     pass
         self.assertTrue(target.samefile(attacker))
         self.assertEqual(json.loads(attacker.read_text()), {"id": "attacker"})
+
+    def test_exact_publication_rejects_mode_widening(self):
+        target = self.home / "work" / "job.json"
+        with self.assertRaisesRegex(UnsafeStateError, "may have been published"):
+            with mutation(self.home) as access:
+                with publish_json_exact_pinned(
+                    access, "work", "job.json", {"id": "job"}, validate=lambda value: value
+                ) as pin:
+                    target.chmod(0o444)
+                    pin.verify_current()
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o444)
+
+    def test_pre_sample_temp_replacement_preserves_unknown_name(self):
+        target = self.home / "work" / "job.json"
+        outside = Path(self.temp.name) / "outside-pre-sample"
+        outside.write_text("untouched")
+        real_open = os.open
+        fired = False
+
+        def replace_before_temp_sample(name, flags, *args, **kwargs):
+            nonlocal fired
+            if isinstance(name, str) and name.startswith(".zxro-tmp-") and not flags & os.O_CREAT and not fired:
+                fired = True
+                os.unlink(name, dir_fd=kwargs["dir_fd"])
+                os.symlink(outside, name, dir_fd=kwargs["dir_fd"])
+            return real_open(name, flags, *args, **kwargs)
+
+        with mutation(self.home) as access, mock.patch(
+            "zxro.localfs.ioutil.os.open", side_effect=replace_before_temp_sample
+        ):
+            with self.assertRaises(UnsafeStateError):
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    pass
+        self.assertTrue(fired)
+        self.assertFalse(target.exists())
+        entries = list(target.parent.glob(".zxro-tmp-*"))
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(entries[0].is_symlink())
+        self.assertEqual(outside.read_text(), "untouched")
+        entries[0].unlink()
+
+    def test_post_link_open_failure_cleans_confirmed_operation_temp(self):
+        target = self.home / "work" / "job.json"
+        real_open = os.open
+        fired = False
+
+        def fail_destination_open(name, flags, *args, **kwargs):
+            nonlocal fired
+            if name == "job.json" and not fired:
+                fired = True
+                raise OSError("injected destination open failure")
+            return real_open(name, flags, *args, **kwargs)
+
+        with mutation(self.home) as access, mock.patch(
+            "zxro.localfs.ioutil.os.open", side_effect=fail_destination_open
+        ):
+            with self.assertRaisesRegex(UnsafeStateError, "may have been published"):
+                with publish_json_exact_pinned(access, "work", "job.json", {"id": "job"}, validate=lambda value: value):
+                    pass
+        self.assertTrue(fired)
+        self.assertEqual(json.loads(target.read_text()), {"id": "job"})
+        self.assertEqual(list(target.parent.glob(".zxro-tmp-*")), [])
 
     @unittest.skipUnless(Path("/proc/self/fd").exists(), "requires procfs")
     def test_closed_pin_loop_does_not_leak_descriptors(self):

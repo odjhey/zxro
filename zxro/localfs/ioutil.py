@@ -2,6 +2,7 @@ import fcntl
 import json
 import os
 import secrets
+import stat
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
@@ -169,7 +170,7 @@ def _verify_lock(access, fd, expected):
         raise UnsafeStateError("store lock changed during operation")
 
 
-def _check_record_fd(fd: int, label: Path, *, readonly: bool = False):
+def _check_record_fd(fd: int, label: Path, *, readonly: bool = False, mode: int | None = None):
     try:
         current = os.fstat(fd)
     except OSError as exc:
@@ -177,14 +178,16 @@ def _check_record_fd(fd: int, label: Path, *, readonly: bool = False):
     check_stat(current, label, directory=False)
     if readonly and current.st_mode & 0o222:
         raise UnsafeStateError(f"state record is writable: {label}")
+    if mode is not None and stat.S_IMODE(current.st_mode) != mode:
+        raise UnsafeStateError(f"state record mode changed: {label}")
     return current
 
 
-def _open_record(directory_fd: int, filename: str, label: Path, *, readonly: bool = False) -> int:
+def _open_record(directory_fd: int, filename: str, label: Path, *, readonly: bool = False, mode: int | None = None) -> int:
     fd = None
     try:
         fd = os.open(filename, _RECORD_FLAGS, dir_fd=directory_fd)
-        _check_record_fd(fd, label, readonly=readonly)
+        _check_record_fd(fd, label, readonly=readonly, mode=mode)
         return fd
     except BaseException as exc:
         if fd is not None:
@@ -198,7 +201,7 @@ def _open_record(directory_fd: int, filename: str, label: Path, *, readonly: boo
         raise
 
 
-def _sample_chain(access, directory: str, filename: str, *, readonly: bool):
+def _sample_chain(access, directory: str, filename: str, *, readonly: bool, mode: int | None = None):
     """Open one ordered namespace sample. Each open is its lookup checkpoint."""
     home_fd = directory_fd = record_fd = None
     label = access.home / directory / filename
@@ -211,7 +214,7 @@ def _sample_chain(access, directory: str, filename: str, *, readonly: bool):
         directory_fd = os.open(directory, _DIRECTORY_FLAGS, dir_fd=home_fd)
         directory_stat = os.fstat(directory_fd)
         check_stat(directory_stat, access.home / directory, directory=True)
-        record_fd = _open_record(directory_fd, filename, label, readonly=readonly)
+        record_fd = _open_record(directory_fd, filename, label, readonly=readonly, mode=mode)
         return home_fd, directory_fd, record_fd
     except BaseException as exc:
         for fd in (record_fd, directory_fd, home_fd):
@@ -256,7 +259,7 @@ def _parse_object(raw: bytes, label: Path) -> dict:
 
 
 class PinnedRecord:
-    def __init__(self, access, directory, filename, directory_fd, record_fd, value, raw, readonly, max_bytes):
+    def __init__(self, access, directory, filename, directory_fd, record_fd, value, raw, readonly, max_bytes, mode=None):
         self.value = value
         self.raw = raw
         self.directory_fd = directory_fd
@@ -267,11 +270,12 @@ class PinnedRecord:
         self._label = access.home / directory / filename
         self._readonly = readonly
         self._max_bytes = max_bytes
+        self._mode = mode
 
     def verify_current(self) -> None:
         try:
             sample = _sample_chain(
-                self._access, self._directory, self._filename, readonly=self._readonly
+                self._access, self._directory, self._filename, readonly=self._readonly, mode=self._mode
             )
         except NotFoundError:
             raise UnsafeStateError(f"state record changed during operation: {self._label}") from None
@@ -281,10 +285,10 @@ class PinnedRecord:
                 raise UnsafeStateError(f"managed directory changed during operation: {self._label.parent}")
             if not _same_inode(os.fstat(sampled_record_fd), os.fstat(self.record_fd)):
                 raise UnsafeStateError(f"state record changed during operation: {self._label}")
-            before = _check_record_fd(sampled_record_fd, self._label, readonly=self._readonly)
+            before = _check_record_fd(sampled_record_fd, self._label, readonly=self._readonly, mode=self._mode)
             if _read_bounded(sampled_record_fd, self._max_bytes, self._label) != self.raw:
                 raise UnsafeStateError(f"state record contents changed during operation: {self._label}")
-            after = _check_record_fd(sampled_record_fd, self._label, readonly=self._readonly)
+            after = _check_record_fd(sampled_record_fd, self._label, readonly=self._readonly, mode=self._mode)
             if not _same_inode(before, after):
                 raise UnsafeStateError(f"state record changed during operation: {self._label}")
         finally:
@@ -346,13 +350,29 @@ def _encoded(value: dict, label: Path) -> bytes:
 
 
 def _remove_temp(directory_fd: int, temporary: str) -> None:
-    """Best-effort cleanup. Portable pathname unlink cannot be conditional by inode."""
+    """Direct cleanup after a successful identity sample.
+
+    Portable pathname unlink cannot bind the sample to the unlink. A same-UID
+    process can still replace the name in that unavoidable window.
+    """
     try:
         os.unlink(temporary, dir_fd=directory_fd)
     except FileNotFoundError:
         pass
     except OSError as exc:
         raise UnsafeStateError(f"cannot remove temporary publication path {temporary}: {exc}") from exc
+
+
+def _temp_name_is_current(directory_fd: int, temporary: str, temp_fd: int, label: Path, *, mode: int) -> bool:
+    sample_fd = None
+    try:
+        sample_fd = _open_record(directory_fd, temporary, label, readonly=not bool(mode & 0o222), mode=mode)
+        return _same_inode(os.fstat(sample_fd), os.fstat(temp_fd))
+    except (NotFoundError, UnsafeStateError, OSError):
+        return False
+    finally:
+        if sample_fd is not None:
+            os.close(sample_fd)
 
 
 @contextmanager
@@ -377,39 +397,43 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                     raise UnsafeStateError(f"cannot write state record {label}")
                 view = view[written:]
             os.fsync(temp_fd)
-            before = _check_record_fd(temp_fd, label, readonly=readonly)
+            before = _check_record_fd(temp_fd, label, readonly=readonly, mode=mode)
             if _read_bounded(temp_fd, MAX_RECORD_BYTES, label) != payload:
                 raise UnsafeStateError(f"temporary state record changed during publication: {label}")
-            _check_record_fd(temp_fd, label, readonly=readonly)
+            _check_record_fd(temp_fd, label, readonly=readonly, mode=mode)
 
-            sample_fd = _open_record(directory_fd, temporary, label, readonly=readonly)
+            cleanup_temp = False
+            sample_fd = _open_record(directory_fd, temporary, label, readonly=readonly, mode=mode)
             if not _same_inode(os.fstat(sample_fd), before):
-                cleanup_temp = False
                 raise UnsafeStateError(f"temporary state record changed during publication: {label}")
             os.close(sample_fd)
             sample_fd = None
+            cleanup_temp = True
             try:
                 os.link(temporary, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd, follow_symlinks=False)
                 destination_created = True
-                cleanup_temp = False
+                cleanup_temp = _temp_name_is_current(directory_fd, temporary, temp_fd, label, mode=mode)
             except FileExistsError:
-                _remove_temp(directory_fd, temporary)
-                cleanup_temp = False
+                cleanup_temp = _temp_name_is_current(directory_fd, temporary, temp_fd, label, mode=mode)
+                if cleanup_temp:
+                    _remove_temp(directory_fd, temporary)
+                    cleanup_temp = False
                 try:
-                    record_fd = _open_record(directory_fd, filename, label, readonly=readonly)
+                    record_fd = _open_record(directory_fd, filename, label, readonly=readonly, mode=mode)
                 except NotFoundError:
                     raise UnsafeStateError(f"state record changed during publication: {label}") from None
             else:
                 try:
-                    record_fd = _open_record(directory_fd, filename, label, readonly=readonly)
+                    record_fd = _open_record(directory_fd, filename, label, readonly=readonly, mode=mode)
                     if not _same_inode(os.fstat(record_fd), os.fstat(temp_fd)):
                         raise UnsafeStateError(f"published state record changed during operation: {label}")
                     raw = _read_bounded(record_fd, MAX_RECORD_BYTES, label)
                     if raw != payload:
                         raise UnsafeStateError(f"published state record changed during operation: {label}")
-                    _check_record_fd(record_fd, label, readonly=readonly)
-                    _remove_temp(directory_fd, temporary)
-                    cleanup_temp = False
+                    _check_record_fd(record_fd, label, readonly=readonly, mode=mode)
+                    if cleanup_temp:
+                        _remove_temp(directory_fd, temporary)
+                        cleanup_temp = False
                     os.fsync(directory_fd)
                 except BaseException as exc:
                     raise UnsafeStateError(f"state record may have been published: {label}: {exc}") from exc
@@ -421,7 +445,7 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                 raise ConflictError(f"record already exists: {Path(filename).stem}")
             if destination_created and existing_normalized != normalized:
                 raise UnsafeStateError(f"state record may have been published: {label}: validation mismatch")
-            pin = PinnedRecord(access, directory, filename, directory_fd, record_fd, value, raw, readonly, MAX_RECORD_BYTES)
+            pin = PinnedRecord(access, directory, filename, directory_fd, record_fd, value, raw, readonly, MAX_RECORD_BYTES, mode=mode)
             try:
                 pin.verify_current()
                 yield pin
@@ -441,8 +465,8 @@ def publish_json_exact_pinned(access: StoreAccess, directory: str, filename: str
                 if fd is not None:
                     os.close(fd)
             if cleanup_temp:
-                # This direct unlink preserves race-free M0/M1 cleanup. A same-UID
-                # process can replace the name in the unavoidable pathname window.
+                # The last sample authorized cleanup. The direct unlink still has
+                # the documented unavoidable same-UID pathname replacement window.
                 try:
                     _remove_temp(directory_fd, temporary)
                 except UnsafeStateError:
