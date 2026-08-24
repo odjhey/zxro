@@ -56,11 +56,41 @@ class M1ProviderConformance:
 
     def test_crash_repair_preserves_identity_and_visibility(self):
         turn = self.create_turn()
-        event_id = self.interrupt_settlement(turn, "index-commit")
+        event_id = self.interrupt_after_terminal_commit(turn)
         self.m1.settle(turn.id, "test", "completed", "done", None)
         events = self.m1.unread("main")
         self.assertEqual([(event.event_id, event.generation) for event in events], [(event_id, 1)])
         self.assertEqual([event.event_id for event in self.m1.pending("main")], [event_id])
+
+    def test_mismatched_cross_record_evidence_fails_closed(self):
+        turn = self.create_turn()
+        _, event = self.m1.settle(turn.id, "test", "completed", "done", b"evidence")
+        restore = self.corrupt_artifact_relationship(turn, event)
+        with self.assertRaises(self.unsafe_error):
+            self.m1.unread("main")
+        restore()
+        restore = self.corrupt_event_identity_lookup(event)
+        with self.assertRaises(self.unsafe_error):
+            self.m1.unread("main")
+        with self.assertRaises(self.unsafe_error):
+            self.m1.ack("main", event.generation)
+        restore()
+
+    def test_ack_integrity_failure_does_not_advance(self):
+        events = [self.m1.settle(self.create_turn().id, "test", "completed", "done", None)[1] for _ in range(3)]
+        restore = self.remove_ack_generation(events[1])
+        with self.assertRaises(self.unsafe_error):
+            self.m1.ack("main", 3)
+        restore()
+        self.assertEqual([event.generation for event in self.m1.unread("main")], [1, 2, 3])
+
+    def test_resumable_handle_uses_authoritative_handled_state(self):
+        event = self.m1.settle(self.create_turn().id, "test", "completed", "done", None)[1]
+        self.interrupt_handle_after_authoritative_commit(event)
+        self.assertNotIn(event.event_id, [item.event_id for item in self.m1.pending("main")])
+        first = self.m1.handle(event.event_id)
+        self.assertEqual(self.m1.handle(event.event_id), first)
+        self.assertNotIn(event.event_id, [item.event_id for item in self.m1.pending("main")])
 
     def test_namespace_isolation(self):
         other_m1, other_turns = self.new_namespace()

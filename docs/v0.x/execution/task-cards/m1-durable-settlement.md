@@ -6,7 +6,7 @@ tags: [v0.x, execution, cli, mailbox]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: "2026-08-24T20:05:00+08:00"
-updated_at: "2026-08-24T22:20:00+08:00"
+updated_at: "2026-08-24T22:50:00+08:00"
 ---
 
 # M1 durable settlement task card
@@ -50,11 +50,13 @@ M1 depends on merged PR #6 at commit `7dbb533` and accepts [decision 0002](../..
 | Missing or mismatched terminal turns and artifact metadata fail closed | `DurableLoopCliTests.test_inbox_fails_closed_for_missing_terminal_turn_or_artifact`, `test_artifact_digest_and_unresolved_owner_are_cross_checked`, plus reusable M1 conformance coverage |
 | Publication resumes around every event/index/mailbox write without overwrite, including an interleaved settlement | `DurableLoopCliTests.test_three_record_publication_resumes_without_overwrite` |
 | Stdin overflow is rejected before settlement using a file-backed oversized input | `DurableLoopCliTests.test_oversized_artifact_is_rejected_before_settlement` |
-| M1 settlement, conflict, delivery, ack, handling, concurrency, crash repair, isolation, progressive-disclosure, missing-object, corruption, and scaling semantics are reusable across provider fixtures | All cases in `M1ProviderConformance`, run by `BuiltinM1ProviderConformance` |
+| M1 settlement, conflict, delivery, ack integrity, handling recovery, concurrency, terminal-commit repair, isolation, progressive-disclosure, missing-object, cross-record mismatch, corruption, and scaling semantics are reusable across providers through contract-semantic fixture hooks | All cases in `M1ProviderConformance`, run by `BuiltinM1ProviderConformance`; indexed-JSON publication windows remain in `DurableLoopCliTests` |
 | Empty unread/pending and one new settlement do not read handled history | `M1ProviderConformance.test_empty_views_and_new_settlement_ignore_handled_history` |
 | A handle between index and mailbox commit remains handled after repair | `DurableLoopCliTests.test_handle_between_index_and_mailbox_survives_repair` |
 | Malformed next publication leaves the requested turn running | `DurableLoopCliTests.test_malformed_next_event_leaves_requested_turn_running` |
-| Ack rejects missing terminal or intermediate generations without advancing | `DurableLoopCliTests.test_ack_rejects_missing_terminal_and_intermediate_generations_without_advancing` |
+| Ack rejects missing terminal or intermediate generations without advancing | `DurableLoopCliTests.test_ack_rejects_missing_terminal_and_intermediate_generations_without_advancing` and `M1ProviderConformance.test_ack_integrity_failure_does_not_advance` |
+| Unread and ack require an exact direct identity lookup | `DurableLoopCliTests.test_unread_and_ack_reject_missing_or_mismatched_direct_index` and reusable mismatch conformance |
+| Handle faults before/after authoritative marker and mailbox writes never lose attention and retries converge | `DurableLoopCliTests.test_handle_fault_matrix_converges_without_lost_attention` and `M1ProviderConformance.test_resumable_handle_uses_authoritative_handled_state` |
 | Missing M1 objects leave a nonexistent home untouched | `MissingM1ObjectsHaveNoSideEffects.test_missing_commands_do_not_create_home` |
 | M0 CRUD, isolation, malformed-state, path, lock, and atomic-write behavior remains intact | Existing conformance and `LocalFsInvariantTests` suite |
 

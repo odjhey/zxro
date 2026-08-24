@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-24T22:20:00+08:00
+updated_at: 2026-08-24T22:50:00+08:00
 ---
 
 # Durable store contract
@@ -357,7 +357,7 @@ A provider with message IDs, thread IDs, sequence numbers, or another native mod
 mail.unread(watchtower_id) -> events
 ```
 
-`unread` is the delivery delta. It returns events whose generation is strictly greater than the watchtower's durable read cursor.
+`unread` is the delivery delta. It returns events whose generation is strictly greater than the watchtower's durable read cursor. Before returning an event, the provider must resolve its direct event-ID lookup and require exact event identity, owner, and generation agreement.
 
 If read ack is `40` and generations `41`, `42`, and `43` exist, `unread` returns only `41..43`.
 
@@ -401,6 +401,8 @@ Rules:
 
 - handling affects exactly one event;
 - events may be handled out of generation order;
+- handling first commits authoritative handled state, then removes unresolved attention;
+- interruption around either write leaves the event pending or durably handled, and retry converges idempotently;
 - handling the same event twice is idempotent;
 - handling does not mutate the immutable event;
 - handling does not close work;

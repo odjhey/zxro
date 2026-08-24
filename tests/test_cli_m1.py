@@ -169,6 +169,21 @@ class DurableLoopCliTests(CliCase):
         self.assertEqual(self.settle(turn).returncode, 0)
         self.assertNotIn(event_id, [event["event_id"] for event in self.ok_json("inbox", "pending", "--watchtower", "main")])
 
+    def test_handle_fault_matrix_converges_without_lost_attention(self):
+        for point in ("before-handle-marker-commit", "handle-marker-commit", "before-handle-mailbox-commit", "handle-mailbox-commit"):
+            with self.subTest(point=point):
+                turn = self.turn()
+                self.assertEqual(self.settle(turn).returncode, 0)
+                event_id = next(event["event_id"] for event in self.ok_json("inbox", "pending", "--watchtower", "main") if event["turn_id"] == turn)
+                result = self.cli("inbox", "handle", event_id, env={"ZXRO_FAULT_EXIT_AFTER": point})
+                self.assertEqual(result.returncode, 86)
+                pending = [event["event_id"] for event in self.ok_json("inbox", "pending", "--watchtower", "main")]
+                marker = self.home / "inbox-handled" / f"{event_id}.json"
+                self.assertTrue(event_id in pending or marker.exists())
+                self.assertEqual(self.cli("inbox", "handle", event_id).returncode, 0)
+                self.assertNotIn(event_id, [event["event_id"] for event in self.ok_json("inbox", "pending", "--watchtower", "main")])
+                self.assertEqual(self.cli("inbox", "handle", event_id).returncode, 0)
+
     def test_crash_repair_rejects_mismatched_existing_event(self):
         turn = self.turn()
         self.assertEqual(self.settle(turn, env={"ZXRO_FAULT_EXIT_AFTER": "turn-commit"}).returncode, 86)
@@ -234,6 +249,26 @@ class DurableLoopCliTests(CliCase):
         self.assertEqual(result.returncode, 5, result.stderr)
         self.assertEqual(self.ok_json("turn", "show", turn)["state"], "running")
         self.assertEqual(list((self.home / "artifacts").iterdir()), [])
+
+    def test_unread_and_ack_reject_missing_or_mismatched_direct_index(self):
+        for mode in ("missing", "mismatched"):
+            with self.subTest(mode=mode):
+                turn = self.turn(); self.assertEqual(self.settle(turn).returncode, 0)
+                event = next(event for event in self.ok_json("inbox", "unread", "--watchtower", "main") if event["turn_id"] == turn)
+                index = self.home / "inbox-index" / f"{event['event_id']}.json"
+                if mode == "missing":
+                    index.unlink()
+                else:
+                    value = json.loads(index.read_text()); value["generation"] += 1; index.write_text(json.dumps(value))
+                self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
+                before = json.loads((self.home / "inbox" / "main.json").read_text())["ack"]
+                self.assertEqual(self.cli("ack", "--watchtower", "main", "--through", str(event["generation"])).returncode, 5)
+                self.assertEqual(json.loads((self.home / "inbox" / "main.json").read_text())["ack"], before)
+                if mode == "missing":
+                    index.write_text(json.dumps({"event_id": event["event_id"], "watchtower_id": "main", "generation": event["generation"]}))
+                else:
+                    value["generation"] -= 1; index.write_text(json.dumps(value))
+                self.assertEqual(self.cli("ack", "--watchtower", "main", "--through", str(event["generation"])).returncode, 0)
 
     def test_ack_rejects_missing_terminal_and_intermediate_generations_without_advancing(self):
         first = self.turn(); self.assertEqual(self.settle(first).returncode, 0)

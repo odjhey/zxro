@@ -62,6 +62,16 @@ class LocalDurableLoop:
             raise UnsafeStateError("event index does not match event")
         return event
 
+    @staticmethod
+    def _validate_index(access, event):
+        try:
+            value = read_json(access, "inbox-index", f"{event.event_id}.json")
+        except NotFoundError as exc:
+            raise UnsafeStateError("published event is missing its direct index") from exc
+        expected = {"event_id": event.event_id, "watchtower_id": event.watchtower_id, "generation": event.generation}
+        if value != expected:
+            raise UnsafeStateError("published event direct index mismatch")
+
     def _validate_event(self, access, event):
         try:
             turn = self.turns.get_from(access, event.turn_id)
@@ -215,7 +225,13 @@ class LocalDurableLoop:
                 raise UnsafeStateError("mailbox index references missing event") from exc
             if any(event.watchtower_id != watchtower_id for event in events):
                 raise UnsafeStateError("mailbox index references another watchtower")
-            return [self._validate_event(access, event) for event in events]
+            visible = []
+            for event in events:
+                self._validate_index(access, event)
+                self._validate_event(access, event)
+                if not pending or self._handled(access, event) is None:
+                    visible.append(event)
+            return visible
 
     def ack(self, watchtower_id, through):
         watchtower_id = validate_id(watchtower_id, "watchtower id")
@@ -233,6 +249,7 @@ class LocalDurableLoop:
             except NotFoundError as exc:
                 raise UnsafeStateError("ack range references missing event") from exc
             for event in events:
+                self._validate_index(access, event)
                 self._validate_event(access, event)
             box["ack"] = through
             atomic_replace(access, "inbox", f"{watchtower_id}.json", box)
@@ -248,15 +265,19 @@ class LocalDurableLoop:
         with mutation(self.home) as access:
             event = self._validate_event(access, self._event_by_id(access, event_id))
             box = self._mailbox(access, event.watchtower_id)
+            handled = self._handled(access, event)
+            if handled is None:
+                if event.generation <= box["highest"] and event_id not in box["unresolved"]:
+                    raise UnsafeStateError("published event has neither unresolved nor handled state")
+                handled = {"event_id": event_id, "watchtower_id": event.watchtower_id, "handled_at": timestamp()}
+                self._fault("before-handle-marker-commit")
+                atomic_create(access, "inbox-handled", f"{event_id}.json", handled)
+                self._fault("handle-marker-commit")
             if event_id in box["unresolved"]:
                 box["unresolved"].remove(event_id)
+                self._fault("before-handle-mailbox-commit")
                 atomic_replace(access, "inbox", f"{event.watchtower_id}.json", box)
-            handled = {"event_id": event_id, "watchtower_id": event.watchtower_id, "handled_at": timestamp()}
-            existing = self._handled(access, event)
-            if existing is None:
-                atomic_replace(access, "inbox-handled", f"{event_id}.json", handled)
-            else:
-                handled = existing
+                self._fault("handle-mailbox-commit")
             return handled
 
     def artifact_path(self, ref):

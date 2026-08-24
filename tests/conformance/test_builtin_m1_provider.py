@@ -1,3 +1,5 @@
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -40,10 +42,30 @@ class BuiltinM1ProviderConformance(M1ProviderConformance, unittest.TestCase):
     def remove_artifact(self, turn_id, kind):
         (self.home / "artifacts" / f"{turn_id}--{kind}.json").unlink()
 
-    def interrupt_settlement(self, turn, point):
-        result = run_cli(self.home, "turn", "settle", turn.id, "--source", "test", "--status", "completed", "--message", "done", env={"ZXRO_FAULT_EXIT_AFTER": point})
+    def interrupt_after_terminal_commit(self, turn):
+        result = run_cli(self.home, "turn", "settle", turn.id, "--source", "test", "--status", "completed", "--message", "done", env={"ZXRO_FAULT_EXIT_AFTER": "turn-commit"})
         self.assertEqual(result.returncode, 86, result.stderr)
         return self.turns.get(turn.id).settlement.event_id
+
+    def corrupt_artifact_relationship(self, turn, event):
+        path = self.home / "artifacts" / f"{turn.id}--stdin.json"; saved = path.read_bytes()
+        value = json.loads(saved); content = b"replacement"
+        value.update(bytes=len(content), sha256=hashlib.sha256(content).hexdigest(), content_hex=content.hex())
+        path.write_text(json.dumps(value))
+        return lambda: path.write_bytes(saved)
+
+    def corrupt_event_identity_lookup(self, event):
+        path = self.home / "inbox-index" / f"{event.event_id}.json"; saved = path.read_bytes()
+        value = json.loads(saved); value["generation"] += 1; path.write_text(json.dumps(value))
+        return lambda: path.write_bytes(saved)
+
+    def remove_ack_generation(self, event):
+        path = self.home / "inbox-events" / f"{event.watchtower_id}--{event.generation:020d}.json"; saved = path.read_bytes(); path.unlink()
+        return lambda: path.write_bytes(saved)
+
+    def interrupt_handle_after_authoritative_commit(self, event):
+        result = run_cli(self.home, "inbox", "handle", event.event_id, env={"ZXRO_FAULT_EXIT_AFTER": "handle-marker-commit"})
+        self.assertEqual(result.returncode, 86, result.stderr)
 
     def new_namespace(self):
         temporary = tempfile.TemporaryDirectory(); self.extra_temps.append(temporary)
