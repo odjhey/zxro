@@ -6,7 +6,7 @@ tags: [architecture, target-state, zxro]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T21:40:00+08:00
+updated_at: 2026-08-25T00:00:00+08:00
 ---
 
 # Product architecture
@@ -265,7 +265,7 @@ zxro does not model companies or organizations as domain objects in v0.x.
 | External system | Purpose | Direction | Failure posture |
 |---|---|---|---|
 | acpx | Persistent ACP sessions and agent transport | zxro/operator -> acpx | zxro records no runtime claim it cannot verify; native recovery remains available |
-| Pi | Watchtower and crew agent | bidirectional through acpx; later native extension -> zxro | `agent_settled` integration is optional until the CLI contract is proven |
+| Pi | Watchtower and crew agent | bidirectional through acpx; native extension -> zxro | `agent_settled` integration calls the same CLI contract as the manual path; see [Pi settlement extension](../../integrations/pi/README.md) |
 | Claude Code | Crew agent | bidirectional through acpx; later hook -> zxro | `Stop`/failure integration is optional until the CLI contract is proven |
 | Built-in file provider | Dependency-free v0 durable store | zxro read/write | fail closed on malformed, unsafe, or conflicting state |
 | Optional work/mail providers | Replace one or more durable capabilities behind adapters | zxro adapter <-> provider | provider failure must preserve zxro ordering/idempotency/attention semantics or fail the operation |
