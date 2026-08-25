@@ -6,7 +6,7 @@ tags: [v0.x, execution, delivery, cli]
 status: draft
 generated: "Claude Fable 5, 2026-08-24"
 created_at: "2026-08-24T17:06:13+08:00"
-updated_at: "2026-08-24T21:40:00+08:00"
+updated_at: "2026-08-25T18:48:31+08:00"
 ---
 
 # CLI-first delivery plan
