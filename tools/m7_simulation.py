@@ -198,17 +198,23 @@ def required_predicates(report: dict) -> dict[str, bool]:
     stop = report.get("stop_conditions", {})
     wake = report.get("wake_and_reconciliation", [])
     repositories = report.get("repository_evidence", [])
-    records = [item.get("json", {}) for item in report.get("durable_evidence", [])]
+    evidence = report.get("durable_evidence", [])
+    records = [item.get("json", {}) for item in evidence]
     events = [item for item in records if item.get("type") == "turn_settled"]
-    handled = [item for item in report.get("durable_evidence", []) if item.get("path", "").startswith("inbox-handled/")]
+    durable_turns = [item.get("json", {}) for item in evidence if item.get("path", "").startswith("turns/")]
+    durable_artifacts = [item.get("json", {}) for item in evidence if item.get("path", "").startswith("artifacts/") and "json" in item]
+    artifact_refs = {item.get("ref") for item in durable_artifacts}
+    handled = [item for item in evidence if item.get("path", "").startswith("inbox-handled/")]
     mailbox = next((item for item in records if item.get("watchtower_id") == "m7-sim-watchtower" and "ack" in item), {})
     return {
         "bounded_turn_count": len(turns) == MAX_TURNS and stop.get("turn_count") == MAX_TURNS and stop.get("bounded_by") == MAX_TURNS,
         "workflow_order": stages == [(stage, target) for stage, target, _ in STAGES] and all(item.get("state") == "settled" and item.get("outcome") == "completed" for item in turns),
         "cwd_separation": environment.get("watchtower_cwd") == "watchtower" and environment.get("target_cwds") == ["repo-a", "repo-b"] and all(item.get("target_cwd_is_separate") is True for item in turns),
+        "durable_turn_cwds": len(durable_turns) == MAX_TURNS and len({item.get("cwd") for item in durable_turns}) == 2 and all(any(record.get("id") == turn.get("turn_id") and record.get("cwd") == turn.get("expected_target_cwd") for record in durable_turns) for turn in turns),
         "disposable_git_repositories": len(repositories) == 2 and all(item.get("is_git_repository") is True and item.get("head") for item in repositories),
         "wake_reconciliation": len(wake) == MAX_TURNS and len(wake[0].get("dropped_wake", [])) == 2 and wake[0].get("poll_after_dropped_wake", {}).get("handled_expected_turn") is True and all(item.get("stage_released_after_handling") is True for item in wake) and all(item.get("duplicate_wake_count") == 2 for item in wake[1:]),
         "settlement_idempotency": len(events) == MAX_TURNS and len({item.get("event_id") for item in events}) == MAX_TURNS and all(item.get("retry_preserved_event_id") is True for item in turns),
+        "artifact_evidence": len(durable_turns) == MAX_TURNS and len(durable_artifacts) >= MAX_TURNS and all(isinstance(record.get("artifact_refs"), list) and record["artifact_refs"] and all(ref in artifact_refs for ref in record["artifact_refs"]) for record in durable_turns) and all(isinstance(item.get("content_hex"), str) and item.get("content_hex") and isinstance(item.get("bytes"), int) and item["bytes"] > 0 for item in durable_artifacts),
         "closed_work_stop": stop.get("final_work_state") == "closed" and stop.get("close_result") == "closed" and stop.get("repeated_close_state") == "closed" and stop.get("new_turn_after_close_rejected") is True and stop.get("terminal_retry_after_close") is True and stop.get("unread_after_close") == 0 and stop.get("pending_after_close") == 0,
         "provider_free_children": environment.get("child_environment") == "explicit-safe-whitelist" and environment.get("provider_credentials_in_children") is False and environment.get("provider_config_in_children") is False and all(item.get("runtime_evidence", {}).get("forbidden_provider_keys") == [] and item.get("runtime_evidence", {}).get("private_config_home") is True and item.get("runtime_evidence", {}).get("git_repository") is True for item in turns),
         "durable_evidence": [item.get("generation") for item in events] == list(range(1, MAX_TURNS + 1)) and len(handled) == MAX_TURNS and mailbox.get("ack") == MAX_TURNS and mailbox.get("highest") == MAX_TURNS and mailbox.get("unresolved") == [],
@@ -232,6 +238,18 @@ def apply_fault(report: dict, fault: str | None) -> None:
         report["environment"]["provider_credentials_in_children"] = True
     elif fault == "repository":
         report["repository_evidence"][0]["is_git_repository"] = False
+    elif fault == "durable-cwd":
+        turn_id = report["turns"][0]["turn_id"]
+        for item in report["durable_evidence"]:
+            if item.get("path", "").startswith("turns/") and item.get("json", {}).get("id") == turn_id:
+                item["json"]["cwd"] = "/wrong/durable-target"
+                break
+    elif fault == "artifact-refs":
+        for item in report["turns"]:
+            item["artifact_count"] = 0
+        for item in report["durable_evidence"]:
+            if item.get("path", "").startswith(("turns/", "inbox-events/")) and "json" in item:
+                item["json"]["artifact_refs"] = []
 
 
 def run_fake_runtime(
@@ -455,6 +473,8 @@ def run_simulation(fault: str | None = None) -> dict:
                     "ordinal": ordinal,
                     "stage": stage,
                     "target": target_label,
+                    "expected_target_cwd": str(target),
+                    "durable_cwd": settled["cwd"],
                     "target_cwd_is_separate": str(target) != str(watchtower),
                     "state": settled["state"],
                     "outcome": settled["outcome"],
@@ -575,7 +595,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--fault",
-        choices=("stop-condition", "provider-environment", "repository"),
+        choices=("stop-condition", "provider-environment", "repository", "durable-cwd", "artifact-refs"),
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args(argv)

@@ -89,6 +89,8 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
         self.assertEqual([turn["stage"] for turn in turns], ["coder-a", "reviewer-a", "coder-b", "tester-b"])
         self.assertEqual([turn["target"] for turn in turns], ["repo-a", "repo-a", "repo-b", "repo-b"])
         self.assertTrue(all(turn["target_cwd_is_separate"] for turn in turns))
+        self.assertTrue(all(turn["durable_cwd"] == turn["expected_target_cwd"] for turn in turns))
+        self.assertEqual(len({turn["durable_cwd"] for turn in turns}), 2)
         self.assertTrue(all(turn["state"] == "settled" for turn in turns))
         self.assertTrue(all(turn["retry_preserved_event_id"] for turn in turns))
         self.assertEqual([turn["runtime_evidence"]["runtime"] for turn in turns], ["fake-runtime"] * 4)
@@ -145,7 +147,7 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
         self.assertTrue(all(turn["runtime_evidence"]["git_repository"] for turn in report["turns"]))
 
     def test_required_contract_faults_fail_closed_without_passed_output(self):
-        for fault in ("stop-condition", "provider-environment", "repository"):
+        for fault in ("stop-condition", "provider-environment", "repository", "durable-cwd", "artifact-refs"):
             with self.subTest(fault=fault):
                 result = subprocess.run(
                     [str(ROOT / "bin" / "zxro-m7-sim"), "--fault", fault],
@@ -167,11 +169,16 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
         records = [item for item in report["durable_evidence"] if "json" in item]
         events = [item["json"] for item in records if item["path"].startswith("inbox-events/")]
         turns = [item["json"] for item in records if item["path"].startswith("turns/")]
+        artifacts = [item["json"] for item in records if item["path"].startswith("artifacts/")]
         handled = [item for item in records if item["path"].startswith("inbox-handled/")]
         self.assertEqual([event["generation"] for event in events], [1, 2, 3, 4])
         self.assertEqual(len({event["event_id"] for event in events}), 4)
         self.assertEqual(len(turns), 4)
         self.assertTrue(all(turn["state"] == "settled" for turn in turns))
+        self.assertEqual(len(artifacts), 4)
+        artifact_refs = {artifact["ref"] for artifact in artifacts}
+        self.assertTrue(all(turn["artifact_refs"] and set(turn["artifact_refs"]).issubset(artifact_refs) for turn in turns))
+        self.assertTrue(all(artifact["content_hex"] and artifact["bytes"] > 0 for artifact in artifacts))
         self.assertEqual(len(handled), 4)
         mailbox = next(item["json"] for item in records if item["path"] == "inbox/m7-sim-watchtower.json")
         self.assertEqual(mailbox["ack"], 4)
