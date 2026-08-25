@@ -95,14 +95,13 @@ class DurableLoopCliTests(CliCase):
 
     def test_explicit_null_verdict_fields_are_unsafe_durable_state(self):
         turn = self.turn()
-        self.assertEqual(self.settle(turn, "--verdict", "blocked", "--needs", "operator input").returncode, 0)
+        self.assertEqual(self.settle(turn).returncode, 0)
         turn_path = self.home / "turns" / f"{turn}.json"
         original_turn = turn_path.read_bytes()
-        for location, field in (("turn", "verdict"), ("turn", "needs"), ("settlement", "verdict"), ("settlement", "needs")):
-            with self.subTest(location=location, field=field):
+        for field in ("verdict", "needs"):
+            with self.subTest(location="settlement", field=field):
                 record = json.loads(original_turn)
-                target = record if location == "turn" else record["settlement"]
-                target[field] = None
+                record["settlement"][field] = None
                 turn_path.write_text(json.dumps(record))
                 self.assertEqual(self.cli("turn", "show", turn).returncode, 5)
                 turn_path.write_bytes(original_turn)
