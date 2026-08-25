@@ -119,6 +119,27 @@ class ArtifactPutCliTests(CliCase):
         self.assertEqual(self.cli("artifact", "path", f"artifact:{self.turn}:orphan").returncode, 3)
         self.assertEqual(self.put("thirty-third", b"x").returncode, 2)
 
+    def test_master_format_stdin_settlement_upgrades_on_read(self):
+        body = b"master payload"
+        settled = self.binary_cli(
+            "turn", "settle", self.turn, "--source", "manual", "--status", "completed",
+            "--message", "done", "--stdin", body=body,
+        )
+        self.assertEqual(settled.returncode, 0, settled.stderr)
+        turn_path = self.home / "turns" / f"{self.turn}.json"
+        record = json.loads(turn_path.read_text())
+        record.pop("artifacts")
+        turn_path.write_text(json.dumps(record))
+
+        shown = self.shown()
+        self.assertEqual(shown["artifacts"], [{
+            "ref": f"artifact:{self.turn}:stdin", "kind": "stdin", "bytes": len(body),
+        }])
+        resolved = self.cli("artifact", "path", f"artifact:{self.turn}:stdin")
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        unread = self.cli("inbox", "unread", "--watchtower", "main")
+        self.assertEqual(unread.returncode, 0, unread.stderr)
+
     def test_custom_artifact_digest_is_anchored_in_turn_metadata(self):
         self.assertEqual(self.put("review", b"original").returncode, 0)
         self.assertEqual(self.cli(
@@ -137,6 +158,28 @@ class ArtifactPutCliTests(CliCase):
         self.assertEqual(self.cli("artifact", "path", ref).returncode, 5)
         self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
 
+    def test_digestless_custom_metadata_cannot_anchor_a_rewrite(self):
+        self.assertEqual(self.put("review", b"original").returncode, 0)
+        self.assertEqual(self.cli(
+            "turn", "settle", self.turn, "--source", "manual", "--status", "completed", "--message", "done",
+        ).returncode, 0)
+        turn_path = self.home / "turns" / f"{self.turn}.json"
+        turn = json.loads(turn_path.read_text())
+        turn["artifacts"][0].pop("sha256")
+        turn_path.write_text(json.dumps(turn))
+        artifact_path = self.home / "artifacts" / f"{self.turn}--review.json"
+        artifact = json.loads(artifact_path.read_text())
+        replacement = b"coherent rewrite"
+        artifact.update(
+            bytes=len(replacement),
+            sha256=__import__("hashlib").sha256(replacement).hexdigest(),
+            content_hex=replacement.hex(),
+        )
+        artifact_path.write_text(json.dumps(artifact))
+        ref = f"artifact:{self.turn}:review"
+        self.assertEqual(self.cli("artifact", "path", ref).returncode, 5)
+        self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
+
     def test_legacy_reference_only_turn_still_enforces_cap(self):
         turn_path = self.home / "turns" / f"{self.turn}.json"
         record = json.loads(turn_path.read_text())
@@ -144,6 +187,23 @@ class ArtifactPutCliTests(CliCase):
         turn_path.write_text(json.dumps(record))
         shown = self.cli("turn", "show", self.turn)
         self.assertEqual(shown.returncode, 5)
+
+    def test_settlement_stdin_artifact_commit_gap_omitted_retry_recovers_orphan(self):
+        settle_args = (
+            "turn", "settle", self.turn, "--source", "manual", "--status", "completed",
+            "--message", "done", "--stdin",
+        )
+        crashed = self.binary_cli(*settle_args, body=b"orphaned", env={"ZXRO_FAULT_EXIT_AFTER": "artifact-commit"})
+        self.assertEqual(crashed.returncode, 86)
+        self.assertNotIn("artifact_refs", self.shown())
+        retry = self.cli(
+            "turn", "settle", self.turn, "--source", "manual", "--status", "completed", "--message", "done",
+        )
+        self.assertEqual(retry.returncode, 0, retry.stderr)
+        shown = self.shown()
+        self.assertEqual(shown["settlement"]["payload_sha256"], __import__("hashlib").sha256(b"orphaned").hexdigest())
+        self.assertEqual(shown["artifact_refs"], [f"artifact:{self.turn}:stdin"])
+        self.assertEqual(self.cli("artifact", "path", shown["artifact_refs"][0]).returncode, 0)
 
     def test_settlement_stdin_metadata_commit_gap_is_resumable(self):
         settle_args = (

@@ -43,9 +43,19 @@ class LocalTurnStore:
         if record.artifact_refs and (not record.artifacts or any(item.sha256 is None for item in record.artifacts)):
             metadata = []
             try:
-                for ref in record.artifact_refs:
-                    turn_id, kind = Artifact.parse_ref(ref)
+                if not record.artifacts:
+                    if record.state != "settled" or record.artifact_refs != (f"artifact:{record.id}:stdin",):
+                        raise ValueError("reference-only metadata is not a master-format stdin settlement")
+                    candidates = (ArtifactMetadata(record.artifact_refs[0], "stdin", 0),)
+                else:
+                    candidates = record.artifacts
+                for item in candidates:
+                    turn_id, kind = Artifact.parse_ref(item.ref)
                     artifact = Artifact.from_dict(read_json(access, "artifacts", Artifact.record_name("turn", turn_id, kind)))
+                    if kind != "stdin" or record.settlement is None or artifact.sha256 != record.settlement.payload_sha256:
+                        raise ValueError("legacy metadata has no trusted digest")
+                    if record.artifacts and (item.bytes != artifact.bytes or item.kind != artifact.kind):
+                        raise ValueError("legacy metadata does not match artifact")
                     metadata.append(ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256))
             except Exception as exc:
                 raise UnsafeStateError("cannot load legacy turn artifact metadata") from exc
@@ -159,7 +169,13 @@ class LocalTurnStore:
                 if data.get("verdict") != settlement.verdict or data.get("needs") != settlement.needs:
                     raise ValueError("settlement verdict fields disagree")
                 stdin = next((item for item in data["artifacts"] if item.kind == "stdin"), None)
-                if (stdin is None) != (settlement.payload_sha256 is None):
+                if data["artifacts"]:
+                    payload_present = stdin is not None
+                else:
+                    payload_present = bool(data["artifact_refs"])
+                    if payload_present and data["artifact_refs"] != (f"artifact:{data['id']}:stdin",):
+                        raise ValueError("invalid reference-only settlement metadata")
+                if payload_present != (settlement.payload_sha256 is not None):
                     raise ValueError("settlement payload fields disagree")
                 data["settlement"] = settlement
             except Exception as exc:

@@ -242,6 +242,21 @@ class LocalDurableLoop:
                 elif payload is not None:
                     turn, artifact = self._put_artifact(access, turn, "stdin", payload, settlement=True)
                     digest = artifact.sha256
+                else:
+                    try:
+                        artifact = self._artifact_record(access, turn.id, "stdin")
+                    except NotFoundError:
+                        artifact = None
+                    if artifact is not None:
+                        metadata = ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
+                        turn = Turn(**{
+                            **turn.to_dict(),
+                            "artifact_refs": (*turn.artifact_refs, artifact.ref),
+                            "artifacts": (*turn.artifacts, metadata),
+                        })
+                        atomic_replace(access, "turns", f"{turn.id}.json", turn.to_dict())
+                        self._fault("artifact-metadata-commit")
+                        digest = artifact.sha256
                 settled_at = timestamp()
                 settlement = Settlement(source, outcome, message, digest, event_id, settled_at, verdict, needs)
                 turn = Turn(**{
