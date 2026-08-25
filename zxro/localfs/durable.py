@@ -191,8 +191,11 @@ class LocalDurableLoop:
             raise ValidationError("artifact kind 'stdin' is reserved for turn settle --stdin")
         if len(payload) > MAX_STDIN_BYTES:
             raise ValidationError(f"stdin payload too large: maximum is {MAX_STDIN_BYTES} bytes")
-        with reading(self.home) as access:
-            self.turns.get_from(access, turn_id)
+        # Preserve missing-home no-side-effect behavior without racing an unlocked
+        # preflight read against ordinary concurrent turn updates.
+        if not self.home.exists():
+            with reading(self.home) as access:
+                self.turns.get_from(access, turn_id)
         with mutation(self.home) as access:
             turn = self.turns.get_from(access, turn_id)
             _, artifact = self._put_artifact(access, turn, kind, payload)

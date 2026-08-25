@@ -85,6 +85,24 @@ class ArtifactPutCliTests(CliCase):
         self.assertEqual((self.home / "artifacts" / f"{self.turn}--review.json").read_bytes(), before_artifact)
         self.assertEqual(sorted(path.name for path in (self.home / "artifacts").iterdir()), [f"{self.turn}--review.json"])
 
+    def test_distinct_kind_contention_has_only_success_or_cap_results(self):
+        processes = [
+            subprocess.Popen(
+                [str(BIN), "artifact", "put", self.turn, "--kind", f"race-{index}", "--stdin"],
+                cwd=ROOT, env={**os.environ, "ZXRO_HOME": str(self.home)},
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            for index in range(40)
+        ]
+        results = []
+        for process in processes:
+            stdout, stderr = process.communicate(b"evidence", timeout=30)
+            results.append((process.returncode, stdout, stderr))
+        self.assertEqual([code for code, _, _ in results].count(0), 32, results)
+        self.assertEqual([code for code, _, _ in results].count(2), 8, results)
+        self.assertNotIn(5, [code for code, _, _ in results], results)
+        self.assertEqual(len(self.shown()["artifact_refs"]), 32)
+
     def test_oversize_and_artifact_cap_are_atomic(self):
         oversized = self.put("large", b"x" * (MAX_STDIN_BYTES + 1))
         self.assertEqual(oversized.returncode, 2)
@@ -187,6 +205,28 @@ class ArtifactPutCliTests(CliCase):
         turn_path.write_text(json.dumps(record))
         shown = self.cli("turn", "show", self.turn)
         self.assertEqual(shown.returncode, 5)
+
+    def test_conflicting_retry_after_event_commit_is_byte_stable(self):
+        settle_args = (
+            "turn", "settle", self.turn, "--source", "manual", "--status", "completed",
+            "--message", "original",
+        )
+        crashed = self.binary_cli(*settle_args, env={"ZXRO_FAULT_EXIT_AFTER": "event-commit"})
+        self.assertEqual(crashed.returncode, 86)
+
+        def snapshot():
+            return {
+                path.relative_to(self.home): path.read_bytes()
+                for path in self.home.rglob("*") if path.is_file()
+            }
+
+        before = snapshot()
+        conflict = self.cli(
+            "turn", "settle", self.turn, "--source", "manual", "--status", "completed",
+            "--message", "different",
+        )
+        self.assertEqual(conflict.returncode, 4, conflict.stderr)
+        self.assertEqual(snapshot(), before)
 
     def test_settlement_stdin_artifact_commit_gap_omitted_retry_recovers_orphan(self):
         settle_args = (
