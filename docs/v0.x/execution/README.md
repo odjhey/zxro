@@ -5,12 +5,13 @@ type: index
 tags: [v0.x, execution]
 status: current
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-25T13:00:51+08:00
+updated_at: 2026-08-25T13:10:00+08:00
 ---
 
 # v0.x Execution
 
 - [Implementation plan](./implementation-plan.md)
+- [ZR1-ZR4 delivery plan](./rozoro-requirements-plan.md)
 - [CLI-first delivery plan](./cli-first-delivery-plan.md)
 - [CLI-first Web UI plan](./web-ui-plan.md)
 - [Machine contract design](./machine-contract-design.md)
