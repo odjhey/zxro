@@ -20,9 +20,10 @@ class Work:
     id: str
     watchtower_id: str
     state: str
+    metadata: dict | None = None
 
     def to_dict(self):
-        return asdict(self)
+        return {key: value for key, value in asdict(self).items() if value is not None}
 
 
 @dataclass(frozen=True)
@@ -226,6 +227,8 @@ class WorkStore(Protocol):
     def get(self, id: str) -> Work: ...
     def list(self, watchtower_id: str | None = None, state: str | None = None) -> list[Work]: ...
     def close(self, id: str) -> Work: ...
+    def set_metadata(self, id: str, namespace: str, payload: dict) -> Work: ...
+    def unset_metadata(self, id: str, namespace: str) -> Work: ...
 
 
 class TurnStore(Protocol):

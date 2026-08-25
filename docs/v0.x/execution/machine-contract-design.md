@@ -15,7 +15,7 @@ sources:
   - ref: ../../architecture/contracts/durable-store.md
     credibility: primary
 created_at: "2026-08-25T13:00:51+08:00"
-updated_at: "2026-08-25T18:50:47+08:00"
+updated_at: "2026-08-25T19:21:34+08:00"
 ---
 
 # Machine contract design: versioned JSON envelope and namespaced metadata
@@ -183,6 +183,8 @@ Acceptance (maps to issue #25):
 
 ### WP2: namespaced work metadata
 
+Status: implemented on the A1 stack, pending A1 merge and contract compatibility review.
+
 Outcome: work records store and expose bounded namespaced metadata through the versioned contract; depends on WP1.
 
 Steps:
@@ -196,11 +198,11 @@ Steps:
 
 Acceptance (maps to issue #26):
 
-- [ ] Work records store and return bounded namespaced metadata.
-- [ ] Metadata survives lifecycle operations unchanged unless explicitly updated.
-- [ ] JSON output exposes metadata through the D1 envelope.
-- [ ] Tests cover namespace isolation, validation, round-trip, bounds, and malformed input.
-- [ ] Core behavior stays provider-neutral; no provider-specific interpretation in core.
+- [x] Work records store and return bounded namespaced metadata.
+- [x] Metadata survives lifecycle operations unchanged unless explicitly updated.
+- [x] JSON output exposes metadata through the D1 envelope.
+- [x] Tests cover namespace isolation, validation, round-trip, bounds, and malformed input.
+- [x] Core behavior stays provider-neutral; no provider-specific interpretation in core.
 
 ## Verification
 

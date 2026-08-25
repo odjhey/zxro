@@ -6,7 +6,7 @@ tags: [v0.x, execution, task-cards, cli, metadata]
 status: draft
 generated: "Claude Fable 5 agent, 2026-08-25"
 created_at: "2026-08-25T14:25:09+08:00"
-updated_at: "2026-08-25T14:25:09+08:00"
+updated_at: "2026-08-25T19:21:34+08:00"
 ---
 
 # A2 — Namespaced work metadata
@@ -51,13 +51,21 @@ Work records store and return bounded namespaced metadata through `zxro work met
 3. Expose metadata in work output, then add the conformance cases.
 4. Update the durable store contract's work object and `work.update` sections and the CLI spec.
 
+## Operator decisions
+
+The implementation records these approved contract choices:
+
+- older binaries may reject metadata-bearing work records with exit class 5;
+- a namespace payload root counts as depth 1;
+- `work meta show <work-id> <missing-namespace>` exits with class 3.
+
 ## Acceptance criteria
 
-- [ ] Bounded namespaced metadata survives all lifecycle operations unless explicitly updated.
-- [ ] Namespace writes replace only the named namespace; concurrent writers cannot corrupt or interleave state.
-- [ ] All D4 bounds enforced deterministically at the documented exit classes.
-- [ ] `--json` exposure rides the A1 envelope as an additive field with no version bump.
-- [ ] Core behavior stays provider-neutral; no namespace is interpreted by core.
+- [x] Bounded namespaced metadata survives all lifecycle operations unless explicitly updated.
+- [x] Namespace writes replace only the named namespace; concurrent writers cannot corrupt or interleave state.
+- [x] All D4 bounds are enforced at the documented exit classes.
+- [x] `--json` exposure rides the A1 envelope as an additive field with no version bump.
+- [x] Core behavior stays provider-neutral; no namespace is interpreted by core.
 
 ## Verification
 
@@ -69,8 +77,8 @@ bin/zxro --json work show <work-id>   # metadata present inside data
 
 ## Documentation impact
 
-- [ ] Durable store contract, CLI spec, and conventions updated in this PR.
-- [ ] Machine contract design WP2 marked delivered.
+- [x] Durable store contract, CLI spec, and conventions updated in this PR.
+- [x] Machine contract design WP2 marked delivered.
 
 ## Human gate
 

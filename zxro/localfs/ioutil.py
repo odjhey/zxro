@@ -185,7 +185,7 @@ def read_json(access: StoreAccess, directory: str, filename: str) -> dict:
                     if size > MAX_RECORD_BYTES:
                         raise UnsafeStateError(f"state record is too large: {label}")
                 value = json.loads(b"".join(chunks).decode("utf-8"))
-            except (UnicodeError, json.JSONDecodeError) as exc:
+            except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
                 raise UnsafeStateError(f"malformed state record {label}: {exc}") from exc
             _record_stat(fd, directory_fd, filename, label)
             access.verify_directory(directory, directory_fd)

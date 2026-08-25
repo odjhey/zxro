@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: "2026-08-25T19:17:39+08:00"
+updated_at: "2026-08-25T19:21:34+08:00"
 ---
 
 # Durable store contract
@@ -98,7 +98,9 @@ Work is a durable logical job that survives several delegated turns.
   "id": "auth-fix",
   "watchtower_id": "main",
   "state": "open",
-  "summary": "Refresh-token handling needs correction."
+  "metadata": {
+    "github": {"issue": 29}
+  }
 }
 ```
 
@@ -108,6 +110,8 @@ Required properties:
 - one watchtower owns the work at a time in v0.x;
 - closing work does not delete its turns, artifacts, or mailbox history;
 - current-state reads do not require replaying all historical bodies.
+
+The optional `metadata` object maps lowercase namespaces to namespace-owned objects. Core does not interpret namespace content. Absent metadata is omitted, never `null`. A namespace payload root counts as depth 1. Payloads allow objects through depth 4, NFC-normalized strings through 2,048 characters, integers, booleans, and arrays containing only those scalar types. Namespace and object keys match `[a-z0-9][a-z0-9._-]{0,63}`; `.` and `..` are invalid. Floats and nulls are invalid. The `zxro` namespace is reserved. Canonical compact, key-sorted UTF-8 JSON for the whole metadata object must not exceed 16 KiB.
 
 Dependencies, labels, priorities, parent/child links, claims, and semantic search are optional provider capabilities.
 
@@ -264,6 +268,8 @@ work.update(id, changes) -> work
 ```
 
 Conflicting or invalid updates must fail deterministically. The provider does not need generic JSON patch support.
+
+Metadata updates replace or remove one whole namespace while holding the home mutation lock. Replacement preserves every other namespace. Removal is idempotent. Both operations are allowed on open and closed work and do not change lifecycle state. Validation code must be reusable by other record types, although v0.x enables metadata only for work.
 
 ### Close
 

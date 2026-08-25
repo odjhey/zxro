@@ -29,3 +29,16 @@ class ProviderConformance:
         self.registry.create("main", "/one"); self.work.create("same", "main")
         registry2.create("main", "/two"); work2.create("same", "main"); self.work.close("same")
         self.assertEqual(work2.get("same").state, "open")
+
+    def test_work_metadata_round_trips_without_lifecycle_effects(self):
+        self.registry.create("main", "/wt"); self.work.create("job", "main")
+        self.work.set_metadata("job", "tracker", {"id": 29})
+        self.turn.create("job", "pi", "coder", "/crew")
+        self.work.set_metadata("job", "review", {"passed": True})
+        closed = self.work.close("job")
+        self.assertEqual(closed.metadata, {"tracker": {"id": 29}, "review": {"passed": True}})
+        replaced = self.work.set_metadata("job", "tracker", {"id": 30})
+        self.assertEqual(replaced.state, "closed")
+        self.assertEqual(replaced.metadata, {"tracker": {"id": 30}, "review": {"passed": True}})
+        self.work.unset_metadata("job", "review"); self.work.unset_metadata("job", "review")
+        self.assertEqual(self.work.get("job").metadata, {"tracker": {"id": 30}})

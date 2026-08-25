@@ -3,6 +3,7 @@ from pathlib import Path
 from zxro.contract import Work
 from zxro.errors import NotFoundError, UnsafeStateError, ValidationError
 from zxro.ids import validate_id
+from zxro.metadata import validate_metadata, validate_name, validate_namespace
 from .ioutil import atomic_create, atomic_replace, list_records, mutation, read_json, reading
 
 
@@ -55,17 +56,45 @@ class LocalWorkStore:
             current = self.get_from(access, id)
             if current.state == "closed":
                 return current
-            closed = Work(current.id, current.watchtower_id, "closed")
+            closed = Work(current.id, current.watchtower_id, "closed", current.metadata)
             atomic_replace(access, "work", f"{id}.json", closed.to_dict())
             return closed
 
+    def set_metadata(self, id, namespace, payload):
+        id = validate_id(id, "work id")
+        payload = validate_namespace(namespace, payload)
+        with mutation(self.home) as access:
+            current = self.get_from(access, id)
+            metadata = dict(current.metadata or {})
+            metadata[namespace] = payload
+            metadata = validate_metadata(metadata)
+            updated = Work(current.id, current.watchtower_id, current.state, metadata)
+            atomic_replace(access, "work", f"{id}.json", updated.to_dict())
+            return updated
+
+    def unset_metadata(self, id, namespace):
+        id = validate_id(id, "work id")
+        validate_name(namespace, "metadata namespace")
+        if namespace == "zxro":
+            raise ValidationError(f"reserved metadata namespace: {namespace}")
+        with mutation(self.home) as access:
+            current = self.get_from(access, id)
+            if not current.metadata or namespace not in current.metadata:
+                return current
+            metadata = dict(current.metadata)
+            del metadata[namespace]
+            updated = Work(current.id, current.watchtower_id, current.state, metadata or None)
+            atomic_replace(access, "work", f"{id}.json", updated.to_dict())
+            return updated
+
     @staticmethod
     def _decode(data):
-        if set(data) != {"id", "watchtower_id", "state"} or not all(isinstance(data.get(key), str) for key in data) or data.get("state") not in ("open", "closed"):
+        if not {"id", "watchtower_id", "state"} <= set(data) or set(data) - {"id", "watchtower_id", "state", "metadata"} or not all(isinstance(data.get(key), str) for key in ("id", "watchtower_id", "state")) or data.get("state") not in ("open", "closed") or data.get("metadata", {}) is None:
             raise UnsafeStateError("invalid work record schema")
         try:
             validate_id(data["id"], "work id")
             validate_id(data["watchtower_id"], "watchtower id")
+            metadata = validate_metadata(data.get("metadata", {}), normalize=False)
         except Exception as exc:
             raise UnsafeStateError(f"invalid work record: {exc}") from exc
-        return Work(**data)
+        return Work(data["id"], data["watchtower_id"], data["state"], metadata or None)
