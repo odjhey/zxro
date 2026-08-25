@@ -155,7 +155,7 @@ Mark a logical work item closed after the watchtower or operator accepts the out
 zxro work close auth-fix
 ```
 
-Closing work does not delete turns, inbox events, or native agent sessions. It is independent from mailbox read ack and event handling.
+Closing work does not delete turns, inbox events, or native agent sessions. It is independent from mailbox read ack and event handling. New turns for closed work are rejected. Retrying an already settled turn remains allowed so a caller can repair an interrupted publication.
 
 ## Turn commands
 
