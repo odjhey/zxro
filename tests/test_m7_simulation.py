@@ -151,9 +151,10 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
 
     def test_required_contract_faults_fail_closed_without_passed_output(self):
         for fault in ("stop-condition", "provider-environment", "repository", "durable-cwd", "artifact-refs", "swapped-refs", "wrong-artifact-owner", "empty-public-refs"):
-            with self.subTest(fault=fault):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temporary:
+                evidence = Path(temporary) / f"{fault}.json"
                 result = subprocess.run(
-                    [str(ROOT / "bin" / "zxro-m7-sim"), "--fault", fault],
+                    [str(ROOT / "bin" / "zxro-m7-sim"), "--fault", fault, "--evidence", str(evidence)],
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
@@ -161,6 +162,28 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('"result": "passed"', result.stdout)
                 self.assertIn("required simulation predicates failed", result.stderr)
+                report = json.loads(evidence.read_text())
+                self.assertTrue(report["fault_injection"]["changed"])
+                self.assertNotEqual(report["fault_injection"]["before"], report["fault_injection"]["after"])
+                self.assertEqual(report["result"], "failed")
+
+    def test_wrong_owner_fault_records_real_mutation_before_failing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "wrong-owner.json"
+            result = subprocess.run(
+                [str(ROOT / "bin" / "zxro-m7-sim"), "--fault", "wrong-artifact-owner", "--evidence", str(evidence)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            report = json.loads(evidence.read_text())
+        mutation = report["fault_injection"]
+        self.assertTrue(mutation["changed"])
+        self.assertNotEqual(mutation["before"], mutation["after"])
+        self.assertEqual(report["result"], "failed")
+        self.assertIn("required simulation predicates failed", report["error"])
+        self.assertNotIn('"result": "passed"', result.stdout)
 
     def test_evidence_contains_durable_settlements_and_handled_events(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -62,7 +62,9 @@ _PROVIDER_ENV_TOKENS = (
 )
 
 class SimulationContractError(RuntimeError):
-    pass
+    def __init__(self, message: str, report: dict | None = None):
+        super().__init__(message)
+        self.report = report
 
 
 def provider_like_key(key: str) -> bool:
@@ -230,37 +232,69 @@ def validate_contract(report: dict) -> dict[str, bool]:
     report["contract_predicates"] = predicates
     failed = [name for name, passed in predicates.items() if passed is not True]
     if failed:
-        raise SimulationContractError("required simulation predicates failed: " + ", ".join(failed))
+        raise SimulationContractError("required simulation predicates failed: " + ", ".join(failed), report)
     return predicates
+
+
+def record_fault(report: dict, fault: str, before, after) -> None:
+    changed = before != after
+    if not changed:
+        raise SimulationContractError(f"fault injection was a no-op: {fault}", report)
+    report["fault_injection"] = {"fault": fault, "changed": changed, "before": before, "after": after}
 
 
 def apply_fault(report: dict, fault: str | None) -> None:
     if fault == "stop-condition":
+        before = report["stop_conditions"]["pending_after_close"]
         report["stop_conditions"]["pending_after_close"] = 1
+        record_fault(report, fault, before, report["stop_conditions"]["pending_after_close"])
     elif fault == "provider-environment":
+        before = report["environment"]["provider_credentials_in_children"]
         report["environment"]["provider_credentials_in_children"] = True
+        record_fault(report, fault, before, report["environment"]["provider_credentials_in_children"])
     elif fault == "repository":
+        before = report["repository_evidence"][0]["is_git_repository"]
         report["repository_evidence"][0]["is_git_repository"] = False
+        record_fault(report, fault, before, report["repository_evidence"][0]["is_git_repository"])
     elif fault == "durable-cwd":
         turn_id = report["turns"][0]["turn_id"]
-        for item in report["durable_evidence"]:
-            if item.get("path", "").startswith("turns/") and item.get("json", {}).get("id") == turn_id:
-                item["json"]["cwd"] = "/wrong/durable-target"
-                break
+        target = next(item for item in report["turns"] if item["turn_id"] == turn_id)["expected_target_cwd"]
+        turn_record = next(item["json"] for item in report["durable_evidence"] if item.get("path", "").startswith("turns/") and item.get("json", {}).get("id") == turn_id)
+        before = turn_record["cwd"]
+        turn_record["cwd"] = "/wrong/durable-target"
+        if turn_record["cwd"] == target:
+            raise SimulationContractError("durable cwd fault did not change the expected cwd", report)
+        record_fault(report, fault, before, turn_record["cwd"])
     elif fault == "artifact-refs":
+        before = [list(item.get("json", {}).get("artifact_refs", [])) for item in report["durable_evidence"] if item.get("path", "").startswith("turns/")]
         for item in report["turns"]:
             item["artifact_count"] = 0
         for item in report["durable_evidence"]:
             if item.get("path", "").startswith(("turns/", "inbox-events/")) and "json" in item:
                 item["json"]["artifact_refs"] = []
+        after = [list(item.get("json", {}).get("artifact_refs", [])) for item in report["durable_evidence"] if item.get("path", "").startswith("turns/")]
+        record_fault(report, fault, before, after)
     elif fault == "swapped-refs":
-        report["turns"][0]["public_artifact_refs"], report["turns"][1]["public_artifact_refs"] = report["turns"][1]["public_artifact_refs"], report["turns"][0]["public_artifact_refs"]
+        first, second = report["turns"][0], report["turns"][1]
+        before = [list(first["public_artifact_refs"]), list(second["public_artifact_refs"])]
+        if first["public_artifact_refs"] == second["public_artifact_refs"]:
+            raise SimulationContractError("swapped refs fault requires distinct refs", report)
+        first["public_artifact_refs"], second["public_artifact_refs"] = second["public_artifact_refs"], first["public_artifact_refs"]
+        record_fault(report, fault, before, [first["public_artifact_refs"], second["public_artifact_refs"]])
     elif fault == "wrong-artifact-owner":
-        artifact_records = [item for item in report["durable_evidence"] if item.get("path", "").startswith("artifacts/") and "json" in item]
-        artifact_records[0]["json"]["turn_id"] = report["turns"][1]["turn_id"]
+        source_turn = report["turns"][0]["turn_id"]
+        destination_turn = report["turns"][1]["turn_id"]
+        artifact_record = next(item["json"] for item in report["durable_evidence"] if item.get("path", "").startswith("artifacts/") and item.get("json", {}).get("turn_id") == source_turn)
+        before = artifact_record["turn_id"]
+        artifact_record["turn_id"] = destination_turn
+        if artifact_record["turn_id"] == source_turn:
+            raise SimulationContractError("wrong artifact owner fault did not change ownership", report)
+        record_fault(report, fault, before, artifact_record["turn_id"])
     elif fault == "empty-public-refs":
+        before = [list(item["public_artifact_refs"]) for item in report["turns"]]
         for item in report["turns"]:
             item["public_artifact_refs"] = []
+        record_fault(report, fault, before, [list(item["public_artifact_refs"]) for item in report["turns"]])
 
 
 def run_fake_runtime(
@@ -614,7 +648,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         report = run_simulation(args.fault)
-    except (OSError, RuntimeError, SimulationContractError, json.JSONDecodeError) as exc:
+    except SimulationContractError as exc:
+        if args.evidence and exc.report is not None:
+            failed_report = {**exc.report, "result": "failed", "error": str(exc)}
+            args.evidence.parent.mkdir(parents=True, exist_ok=True)
+            args.evidence.write_text(json.dumps(failed_report, indent=2, sort_keys=True) + "\n")
+        print(f"m7 simulation failed: {exc}", file=sys.stderr)
+        return 1
+    except (OSError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"m7 simulation failed: {exc}", file=sys.stderr)
         return 1
     if args.evidence:
