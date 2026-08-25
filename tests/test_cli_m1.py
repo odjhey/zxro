@@ -93,6 +93,49 @@ class DurableLoopCliTests(CliCase):
                 after = {path: path.read_bytes() for path in self.home.rglob("*") if path.is_file()}
                 self.assertEqual(after, before)
 
+    def test_explicit_null_verdict_fields_are_unsafe_durable_state(self):
+        turn = self.turn()
+        self.assertEqual(self.settle(turn, "--verdict", "blocked", "--needs", "operator input").returncode, 0)
+        turn_path = self.home / "turns" / f"{turn}.json"
+        original_turn = turn_path.read_bytes()
+        for location, field in (("turn", "verdict"), ("turn", "needs"), ("settlement", "verdict"), ("settlement", "needs")):
+            with self.subTest(location=location, field=field):
+                record = json.loads(original_turn)
+                target = record if location == "turn" else record["settlement"]
+                target[field] = None
+                turn_path.write_text(json.dumps(record))
+                self.assertEqual(self.cli("turn", "show", turn).returncode, 5)
+                turn_path.write_bytes(original_turn)
+
+        event_path = next((self.home / "inbox-events").iterdir())
+        original_event = event_path.read_bytes()
+        for field in ("verdict", "needs"):
+            with self.subTest(location="event", field=field):
+                event = json.loads(original_event)
+                event[field] = None
+                event_path.write_text(json.dumps(event))
+                self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
+                event_path.write_bytes(original_event)
+
+    def test_conflicting_retry_does_not_repair_crash_gap(self):
+        turn = self.turn()
+        accepted = ("--verdict", "blocked", "--needs", "operator input")
+        crashed = self.settle(turn, *accepted, env={"ZXRO_FAULT_EXIT_AFTER": "event-commit"})
+        self.assertEqual(crashed.returncode, 86)
+        committed = self.ok_json("turn", "show", turn)
+        event_id = committed["settlement"]["event_id"]
+        before = {path.relative_to(self.home): path.read_bytes() for path in self.home.rglob("*") if path.is_file()}
+
+        conflict = self.settle(turn, "--verdict", "blocked", "--needs", "different input")
+        self.assertEqual(conflict.returncode, 4, conflict.stderr)
+        after = {path.relative_to(self.home): path.read_bytes() for path in self.home.rglob("*") if path.is_file()}
+        self.assertEqual(after, before)
+        self.assertFalse((self.home / "inbox-index" / f"{event_id}.json").exists())
+
+        self.assertEqual(self.settle(turn, *accepted).returncode, 0)
+        event = self.ok_json("inbox", "unread", "--watchtower", "main")
+        self.assertEqual([(item["event_id"], item["generation"]) for item in event], [(event_id, 1)])
+
     def test_mailbox_rejects_verdict_mismatch_with_terminal_turn(self):
         turn = self.turn()
         self.assertEqual(self.settle(turn, "--verdict", "done").returncode, 0)

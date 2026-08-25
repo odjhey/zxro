@@ -87,7 +87,12 @@ class LocalTurnStore:
             if not {"outcome", "summary", "settlement"} <= set(data) or not isinstance(data.get("artifact_refs", []), list) or not isinstance(data["settlement"], dict):
                 raise UnsafeStateError("settled turn lacks settlement fields")
             try:
-                settlement = Settlement(**data["settlement"])
+                settlement_data = data["settlement"]
+                if "verdict" in settlement_data and not isinstance(settlement_data["verdict"], str):
+                    raise ValueError("invalid settlement verdict")
+                if "needs" in settlement_data and not isinstance(settlement_data["needs"], str):
+                    raise ValueError("invalid settlement needs")
+                settlement = Settlement(**settlement_data)
                 safe_string(settlement.source, "source")
                 if settlement.outcome not in {"completed", "failed", "cancelled"}:
                     raise ValueError("invalid outcome")

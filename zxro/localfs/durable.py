@@ -156,6 +156,10 @@ class LocalDurableLoop:
             self.turns.get_from(access, turn_id)
         with mutation(self.home) as access:
             turn = self.turns.get_from(access, turn_id)
+            if turn.state == "settled":
+                existing = turn.settlement
+                if existing.outcome != outcome or existing.summary != message or existing.verdict != verdict or existing.needs != needs or (payload is not None and existing.payload_sha256 != digest):
+                    raise ConflictError("turn already has a different settlement")
             box = self._mailbox(access, turn.watchtower_id)
             if box["highest"]:
                 try:
@@ -185,10 +189,6 @@ class LocalDurableLoop:
                 atomic_replace(access, "turns", f"{turn.id}.json", turn.to_dict())
                 if os.environ.get("ZXRO_FAULT_EXIT_AFTER") == "turn-commit":
                     os._exit(86)
-            else:
-                existing = turn.settlement
-                if existing.outcome != outcome or existing.summary != message or existing.verdict != verdict or existing.needs != needs or (payload is not None and existing.payload_sha256 != digest):
-                    raise ConflictError("turn already has a different settlement")
             try:
                 event = self._event_by_id(access, turn.settlement.event_id)
             except NotFoundError:

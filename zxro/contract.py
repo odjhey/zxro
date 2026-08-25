@@ -123,6 +123,10 @@ class MailboxEvent:
             if len(value["summary"]) > 1000 or unicodedata.normalize("NFC", value["summary"]) != value["summary"]:
                 raise ValueError("invalid summary normalization or length")
             verdict, needs = value.get("verdict"), value.get("needs")
+            if "verdict" in value and not isinstance(verdict, str):
+                raise ValueError("invalid verdict")
+            if "needs" in value and not isinstance(needs, str):
+                raise ValueError("invalid needs")
             if verdict not in {None, "done", "partial", "blocked"}:
                 raise ValueError("invalid verdict")
             if (verdict == "blocked") != (needs is not None):
