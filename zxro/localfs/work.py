@@ -3,7 +3,7 @@ from pathlib import Path
 from zxro.contract import Work
 from zxro.errors import NotFoundError, UnsafeStateError, ValidationError
 from zxro.ids import validate_id
-from zxro.metadata import validate_metadata, validate_name, validate_namespace
+from zxro.metadata import RESERVED_NAMESPACES, validate_metadata, validate_name, validate_namespace
 from .ioutil import atomic_create, atomic_replace, list_records, mutation, read_json, reading
 
 
@@ -75,7 +75,7 @@ class LocalWorkStore:
     def unset_metadata(self, id, namespace):
         id = validate_id(id, "work id")
         validate_name(namespace, "metadata namespace")
-        if namespace == "zxro":
+        if namespace in RESERVED_NAMESPACES:
             raise ValidationError(f"reserved metadata namespace: {namespace}")
         with mutation(self.home) as access:
             current = self.get_from(access, id)

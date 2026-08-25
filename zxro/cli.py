@@ -81,7 +81,9 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         elif args.action == "close": value = work.close(args.id)
         elif args.action == "list": value = work.list(args.watchtower, args.state)
         elif args.meta_action == "set":
-            raw = sys.stdin.buffer.read()
+            raw = sys.stdin.buffer.read(MAX_STDIN_BYTES + 1)
+            if len(raw) > MAX_STDIN_BYTES:
+                raise ValidationError(f"stdin payload too large: maximum is {MAX_STDIN_BYTES} bytes")
             try:
                 payload = json.loads(raw.decode("utf-8"), parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
             except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
