@@ -282,6 +282,38 @@ class ArtifactPutCliTests(CliCase):
         self.assertEqual(shown["state"], "running")
         self.assertEqual(len(shown["artifact_refs"]), 32)
 
+    def test_supplied_stdin_at_full_cap_does_not_reconcile_mailbox(self):
+        unrelated = self.cli(
+            "turn", "create", "--work", "job", "--agent", "pi",
+            "--session", "unrelated-supplied", "--cwd", "/tmp",
+        ).stdout.strip()
+        publication_gap = self.binary_cli(
+            "turn", "settle", unrelated, "--source", "manual", "--status", "completed",
+            "--message", "unrelated", env={"ZXRO_FAULT_EXIT_AFTER": "index-commit"},
+        )
+        self.assertEqual(publication_gap.returncode, 86)
+        self.assertFalse((self.home / "inbox" / "main.json").exists())
+        for index in range(32):
+            self.assertEqual(self.put(f"attached-{index}", b"x").returncode, 0)
+
+        before = {
+            path.relative_to(self.home): path.read_bytes()
+            for path in self.home.rglob("*") if path.is_file()
+        }
+        rejected = self.binary_cli(
+            "turn", "settle", self.turn, "--source", "manual", "--status", "completed",
+            "--message", "done", "--stdin", body=b"supplied",
+        )
+        self.assertEqual(rejected.returncode, 2, rejected.stderr)
+        after = {
+            path.relative_to(self.home): path.read_bytes()
+            for path in self.home.rglob("*") if path.is_file()
+        }
+        self.assertEqual(after, before)
+        shown = self.shown()
+        self.assertEqual(shown["state"], "running")
+        self.assertEqual(len(shown["artifact_refs"]), 32)
+
     def test_settlement_stdin_metadata_commit_gap_is_resumable(self):
         settle_args = (
             "turn", "settle", self.turn, "--source", "manual", "--status", "completed",

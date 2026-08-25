@@ -216,16 +216,19 @@ class LocalDurableLoop:
         with mutation(self.home) as access:
             turn = self.turns.get_from(access, turn_id)
             recovered_stdin = None
+            existing_stdin = None
             if turn.state == "settled":
                 existing = turn.settlement
                 if existing.outcome != outcome or existing.summary != message or existing.verdict != verdict or existing.needs != needs or (payload is not None and existing.payload_sha256 != digest):
                     raise ConflictError("turn already has a different settlement")
-            elif payload is None:
-                try:
-                    recovered_stdin = self._artifact_record(access, turn.id, "stdin")
-                except NotFoundError:
-                    pass
-                if recovered_stdin is not None and len(turn.artifacts) >= 32:
+            else:
+                existing_stdin = next((item for item in turn.artifacts if item.kind == "stdin"), None)
+                if payload is None:
+                    try:
+                        recovered_stdin = self._artifact_record(access, turn.id, "stdin")
+                    except NotFoundError:
+                        pass
+                if existing_stdin is None and len(turn.artifacts) >= 32 and (payload is not None or recovered_stdin is not None):
                     raise ValidationError("turn artifact limit exceeded: maximum is 32")
             box = self._mailbox(access, turn.watchtower_id)
             if box["highest"]:
@@ -241,7 +244,6 @@ class LocalDurableLoop:
                 box = self._mailbox(access, turn.watchtower_id)
             if turn.state == "running":
                 event_id = "evt-" + uuid.uuid4().hex
-                existing_stdin = next((item for item in turn.artifacts if item.kind == "stdin"), None)
                 if existing_stdin is not None:
                     artifact = self._artifact_record(access, turn.id, "stdin")
                     expected = ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
