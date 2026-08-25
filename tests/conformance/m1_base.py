@@ -27,6 +27,19 @@ class M1ProviderConformance:
         with self.assertRaises(self.conflict_error):
             self.m1.settle(turn.id, "test", "failed", "done", None)
 
+    def test_structured_verdict_round_trip_and_retry_identity(self):
+        turn = self.create_turn()
+        settled, event = self.m1.settle(turn.id, "test", "completed", "waiting", None, "blocked", "operator input")
+        repeated, same_event = self.m1.settle(turn.id, "retry", "completed", "waiting", None, "blocked", "operator input")
+        self.assertEqual((settled.verdict, settled.needs), ("blocked", "operator input"))
+        self.assertEqual((event.verdict, event.needs), ("blocked", "operator input"))
+        self.assertEqual(repeated, settled)
+        self.assertEqual(same_event, event)
+        with self.assertRaises(self.conflict_error):
+            self.m1.settle(turn.id, "test", "completed", "waiting", None, "blocked", "different input")
+        with self.assertRaises(self.conflict_error):
+            self.m1.settle(turn.id, "test", "completed", "waiting", None, "partial", None)
+
     def test_unread_ack_pending_and_out_of_order_idempotent_handle(self):
         events = [self.m1.settle(self.create_turn().id, "test", "completed", f"done {index}", None)[1] for index in range(1, 4)]
         self.assertEqual([event.generation for event in self.m1.unread("main")], [1, 2, 3])

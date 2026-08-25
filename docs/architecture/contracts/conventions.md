@@ -6,7 +6,7 @@ tags: [architecture, contracts, conventions]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: "2026-08-25T18:34:06+08:00"
+updated_at: "2026-08-25T19:15:39+08:00"
 ---
 
 # Contract conventions and primitives
@@ -61,11 +61,13 @@ A command must diagnose the error on stderr and leave JSON stdout empty. Malform
 
 ## Settlement compatibility
 
-The outcome, NFC-normalized summary, and payload digest define settlement retry equality. `source` is immutable first-write provenance, not settlement identity. A retry may omit stdin. Supplied retry bytes must match the first payload exactly. A retry cannot add payload bytes to a settlement that originally omitted them.
+The outcome, NFC-normalized summary, optional verdict, optional NFC-normalized needs, and payload digest define settlement retry equality. `source` is immutable first-write provenance, not settlement identity. A retry may omit stdin. Supplied retry bytes must match the first payload exactly. A retry cannot add payload bytes to a settlement that originally omitted them.
+
+The approved verdict vocabulary is `done | partial | blocked`. `blocked` requires non-empty `needs`. `needs` is invalid with `done`, `partial`, or an omitted verdict. Both fields are absent when no verdict is supplied. `needs` has a 1,000-character limit after NFC normalization.
 
 zxro allocates the event ID before terminal turn commit and stores it in settlement metadata. Publication assigns generation while holding the home lock. Crash-gap retries therefore retain event identity.
 
-M1 reads M0 running records without migration and preserves all M0 command names, arguments, output fields, and exit classes. Once M1 settles a turn, an M0 binary rejects that turn's additive fields and `settled` state with code 5. Operators testing a downgrade must use a copied pre-settlement home or a fresh home. This limitation avoids unsafe lossy conversion.
+M1 reads M0 running records without migration and preserves all M0 command names, arguments, output fields, and exit classes. Verdict-less settled records remain valid. An older binary rejects verdict-carrying turn and mailbox records with code 5 because their additive fields are unknown. Operators testing a downgrade must use a copied pre-settlement home or a fresh home. This limitation avoids unsafe lossy conversion.
 
 ## Security and privacy
 

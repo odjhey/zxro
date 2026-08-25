@@ -40,6 +40,111 @@ class DurableLoopCliTests(CliCase):
         self.assertEqual(path.returncode, 0, path.stderr)
         self.assertEqual(__import__("pathlib").Path(path.stdout.strip()).read_text(), "raw hook payload")
 
+    def test_structured_verdict_round_trips_and_verdictless_omits_fields(self):
+        plain = self.turn()
+        self.assertEqual(self.settle(plain).returncode, 0)
+        plain_record = self.ok_json("turn", "show", plain)
+        self.assertNotIn("verdict", plain_record)
+        self.assertNotIn("needs", plain_record)
+        self.assertNotIn("verdict", plain_record["settlement"])
+        self.assertNotIn("needs", plain_record["settlement"])
+
+        blocked = self.turn()
+        result = self.settle(blocked, "--verdict", "blocked", "--needs", "operator d\u0065\u0301cision")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = self.ok_json("turn", "show", blocked)
+        self.assertEqual((record["outcome"], record["verdict"], record["needs"]), ("completed", "blocked", "operator d\u00e9cision"))
+        self.assertEqual((record["settlement"]["verdict"], record["settlement"]["needs"]), ("blocked", "operator d\u00e9cision"))
+        for command in ("unread", "pending"):
+            event = next(item for item in self.ok_json("inbox", command, "--watchtower", "main") if item["turn_id"] == blocked)
+            self.assertEqual((event["verdict"], event["needs"]), ("blocked", "operator d\u00e9cision"))
+
+    def test_verdict_needs_coupling_and_length(self):
+        cases = (
+            ((), 0),
+            (("--verdict", "done"), 0),
+            (("--verdict", "partial"), 0),
+            (("--verdict", "blocked"), 2),
+            (("--needs", "input"), 2),
+            (("--verdict", "done", "--needs", "input"), 2),
+            (("--verdict", "partial", "--needs", "input"), 2),
+            (("--verdict", "blocked", "--needs", "x" * 1001), 2),
+        )
+        for extra, expected in cases:
+            with self.subTest(extra=extra):
+                result = self.settle(self.turn(), *extra)
+                self.assertEqual(result.returncode, expected, result.stderr)
+
+    def test_verdict_retry_identity_and_crash_gap_repair(self):
+        turn = self.turn()
+        args = ("--verdict", "blocked", "--needs", "operator input")
+        crashed = self.settle(turn, *args, env={"ZXRO_FAULT_EXIT_AFTER": "turn-commit"})
+        self.assertEqual(crashed.returncode, 86)
+        committed = self.ok_json("turn", "show", turn)
+        event_id = committed["settlement"]["event_id"]
+        self.assertEqual(self.settle(turn, *args).returncode, 0)
+        event = next(item for item in self.ok_json("inbox", "unread", "--watchtower", "main") if item["turn_id"] == turn)
+        self.assertEqual((event["event_id"], event["generation"]), (event_id, 1))
+        for changed in (("--verdict", "done"), ("--verdict", "blocked", "--needs", "different input"), ()):
+            with self.subTest(changed=changed):
+                before = {path: path.read_bytes() for path in self.home.rglob("*") if path.is_file()}
+                result = self.settle(turn, *changed)
+                self.assertEqual(result.returncode, 4, result.stderr)
+                after = {path: path.read_bytes() for path in self.home.rglob("*") if path.is_file()}
+                self.assertEqual(after, before)
+
+    def test_explicit_null_verdict_fields_are_unsafe_durable_state(self):
+        turn = self.turn()
+        self.assertEqual(self.settle(turn).returncode, 0)
+        turn_path = self.home / "turns" / f"{turn}.json"
+        original_turn = turn_path.read_bytes()
+        for field in ("verdict", "needs"):
+            with self.subTest(location="settlement", field=field):
+                record = json.loads(original_turn)
+                record["settlement"][field] = None
+                turn_path.write_text(json.dumps(record))
+                self.assertEqual(self.cli("turn", "show", turn).returncode, 5)
+                turn_path.write_bytes(original_turn)
+
+        event_path = next((self.home / "inbox-events").iterdir())
+        original_event = event_path.read_bytes()
+        for field in ("verdict", "needs"):
+            with self.subTest(location="event", field=field):
+                event = json.loads(original_event)
+                event[field] = None
+                event_path.write_text(json.dumps(event))
+                self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
+                event_path.write_bytes(original_event)
+
+    def test_conflicting_retry_does_not_repair_crash_gap(self):
+        turn = self.turn()
+        accepted = ("--verdict", "blocked", "--needs", "operator input")
+        crashed = self.settle(turn, *accepted, env={"ZXRO_FAULT_EXIT_AFTER": "event-commit"})
+        self.assertEqual(crashed.returncode, 86)
+        committed = self.ok_json("turn", "show", turn)
+        event_id = committed["settlement"]["event_id"]
+        before = {path.relative_to(self.home): path.read_bytes() for path in self.home.rglob("*") if path.is_file()}
+
+        conflict = self.settle(turn, "--verdict", "blocked", "--needs", "different input")
+        self.assertEqual(conflict.returncode, 4, conflict.stderr)
+        after = {path.relative_to(self.home): path.read_bytes() for path in self.home.rglob("*") if path.is_file()}
+        self.assertEqual(after, before)
+        self.assertFalse((self.home / "inbox-index" / f"{event_id}.json").exists())
+
+        self.assertEqual(self.settle(turn, *accepted).returncode, 0)
+        event = self.ok_json("inbox", "unread", "--watchtower", "main")
+        self.assertEqual([(item["event_id"], item["generation"]) for item in event], [(event_id, 1)])
+
+    def test_mailbox_rejects_verdict_mismatch_with_terminal_turn(self):
+        turn = self.turn()
+        self.assertEqual(self.settle(turn, "--verdict", "done").returncode, 0)
+        path = next((self.home / "inbox-events").iterdir())
+        event = json.loads(path.read_text())
+        event["verdict"] = "partial"
+        path.write_text(json.dumps(event))
+        self.assertEqual(self.cli("inbox", "unread", "--watchtower", "main").returncode, 5)
+        self.assertEqual(self.cli("inbox", "pending", "--watchtower", "main").returncode, 5)
+
     def test_artifact_corruption_fails_closed(self):
         turn = self.turn()
         self.assertEqual(self.settle(turn, "--stdin", input="evidence").returncode, 0)

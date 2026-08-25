@@ -8,7 +8,7 @@ from ..contract import Artifact, MailboxEvent, Settlement, Turn
 from ..errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from ..ids import safe_string, validate_event_id, validate_id, validate_turn_id
 from .home import check_stat
-from ..settle import MAX_STDIN_BYTES, normalize_summary
+from ..settle import MAX_STDIN_BYTES, normalize_summary, normalize_verdict
 from .ioutil import MAX_RECORD_BYTES, atomic_create, atomic_replace, mutation, read_json, reading
 
 
@@ -86,7 +86,7 @@ class LocalDurableLoop:
             turn = self.turns.get_from(access, event.turn_id)
         except NotFoundError as exc:
             raise UnsafeStateError("mailbox event references missing turn") from exc
-        expected = MailboxEvent(turn.settlement.event_id, event.generation, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.outcome, turn.summary, turn.artifact_refs, turn.settlement.settled_at) if turn.state == "settled" else None
+        expected = MailboxEvent(turn.settlement.event_id, event.generation, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.outcome, turn.summary, turn.artifact_refs, turn.settlement.settled_at, turn.verdict, turn.needs) if turn.state == "settled" else None
         if expected != event:
             raise UnsafeStateError("mailbox event does not match terminal turn")
         for ref in event.artifact_refs:
@@ -142,12 +142,13 @@ class LocalDurableLoop:
         atomic_replace(access, "inbox", f"{event.watchtower_id}.json", box)
         return event
 
-    def settle(self, turn_id, source, outcome, message, payload):
+    def settle(self, turn_id, source, outcome, message, payload, verdict=None, needs=None):
         turn_id = validate_turn_id(turn_id)
         source = safe_string(source, "source")
         if outcome not in {"completed", "failed", "cancelled"}:
             raise ValidationError(f"invalid settlement status: {outcome!r}")
         message = normalize_summary(message)
+        verdict, needs = normalize_verdict(verdict, needs)
         if payload is not None and len(payload) > MAX_STDIN_BYTES:
             raise ValidationError(f"stdin payload too large: maximum is {MAX_STDIN_BYTES} bytes")
         digest = hashlib.sha256(payload).hexdigest() if payload is not None else None
@@ -155,6 +156,10 @@ class LocalDurableLoop:
             self.turns.get_from(access, turn_id)
         with mutation(self.home) as access:
             turn = self.turns.get_from(access, turn_id)
+            if turn.state == "settled":
+                existing = turn.settlement
+                if existing.outcome != outcome or existing.summary != message or existing.verdict != verdict or existing.needs != needs or (payload is not None and existing.payload_sha256 != digest):
+                    raise ConflictError("turn already has a different settlement")
             box = self._mailbox(access, turn.watchtower_id)
             if box["highest"]:
                 try:
@@ -179,20 +184,16 @@ class LocalDurableLoop:
                     atomic_replace(access, "artifacts", f"{turn_id}--stdin.json", artifact)
                     artifact_refs = (ref,)
                 settled_at = timestamp()
-                settlement = Settlement(source, outcome, message, digest, event_id, settled_at)
-                turn = Turn(**{**turn.to_dict(), "state": "settled", "outcome": outcome, "summary": message, "artifact_refs": artifact_refs, "settlement": settlement})
+                settlement = Settlement(source, outcome, message, digest, event_id, settled_at, verdict, needs)
+                turn = Turn(**{**turn.to_dict(), "state": "settled", "outcome": outcome, "summary": message, "verdict": verdict, "needs": needs, "artifact_refs": artifact_refs, "settlement": settlement})
                 atomic_replace(access, "turns", f"{turn.id}.json", turn.to_dict())
                 if os.environ.get("ZXRO_FAULT_EXIT_AFTER") == "turn-commit":
                     os._exit(86)
-            else:
-                existing = turn.settlement
-                if existing.outcome != outcome or existing.summary != message or (payload is not None and existing.payload_sha256 != digest):
-                    raise ConflictError("turn already has a different settlement")
             try:
                 event = self._event_by_id(access, turn.settlement.event_id)
             except NotFoundError:
                 generation = box["highest"] + 1
-                event = MailboxEvent(turn.settlement.event_id, generation, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.outcome, turn.summary, turn.artifact_refs, turn.settlement.settled_at)
+                event = MailboxEvent(turn.settlement.event_id, generation, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.outcome, turn.summary, turn.artifact_refs, turn.settlement.settled_at, turn.verdict, turn.needs)
                 self._fault("before-event-commit")
                 atomic_create(access, "inbox-events", f"{turn.watchtower_id}--{generation:020d}.json", event.to_dict())
                 self._fault("event-commit")
@@ -209,7 +210,7 @@ class LocalDurableLoop:
                     if self._reconcile_next(access, box) is None:
                         raise UnsafeStateError("event index is above mailbox high-water without an immutable event")
                     box = self._mailbox(access, turn.watchtower_id)
-                expected = MailboxEvent(turn.settlement.event_id, event.generation, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.outcome, turn.summary, turn.artifact_refs, turn.settlement.settled_at)
+                expected = MailboxEvent(turn.settlement.event_id, event.generation, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.outcome, turn.summary, turn.artifact_refs, turn.settlement.settled_at, turn.verdict, turn.needs)
                 if event != expected:
                     raise UnsafeStateError("settlement event does not match committed turn")
             self._validate_event(access, event)

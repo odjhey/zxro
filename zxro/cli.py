@@ -28,7 +28,7 @@ def parser():
     create = turn.add_parser("create"); create.add_argument("--work", required=True); create.add_argument("--agent", required=True); create.add_argument("--session", required=True); create.add_argument("--cwd", required=True); create.add_argument("--native-session-id")
     show = turn.add_parser("show"); show.add_argument("id")
     listing = turn.add_parser("list"); listing.add_argument("--work"); listing.add_argument("--state")
-    settle = turn.add_parser("settle"); settle.add_argument("id"); settle.add_argument("--source", required=True); settle.add_argument("--status", required=True, choices=("completed", "failed", "cancelled")); settle.add_argument("--message", required=True); settle.add_argument("--stdin", action="store_true")
+    settle = turn.add_parser("settle"); settle.add_argument("id"); settle.add_argument("--source", required=True); settle.add_argument("--status", required=True, choices=("completed", "failed", "cancelled")); settle.add_argument("--message", required=True); settle.add_argument("--verdict", choices=("done", "partial", "blocked")); settle.add_argument("--needs"); settle.add_argument("--stdin", action="store_true")
 
     inbox = commands.add_parser("inbox").add_subparsers(dest="action", required=True)
     unread = inbox.add_parser("unread"); unread.add_argument("--watchtower", required=True)
@@ -76,7 +76,7 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
             payload = sys.stdin.buffer.read(MAX_STDIN_BYTES + 1) if args.stdin else None
             if payload is not None and len(payload) > MAX_STDIN_BYTES:
                 raise ValidationError(f"stdin payload too large: maximum is {MAX_STDIN_BYTES} bytes")
-            value, _ = loop.settle(args.id, args.source, args.status, args.message, payload)
+            value, _ = loop.settle(args.id, args.source, args.status, args.message, payload, args.verdict, args.needs)
     elif args.command == "inbox":
         if args.action == "unread": value = loop.unread(args.watchtower)
         elif args.action == "pending": value = loop.pending(args.watchtower)

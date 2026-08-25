@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-25T11:50:00+08:00
+updated_at: 2026-08-25T19:15:39+08:00
 ---
 
 # Durable store contract
@@ -127,13 +127,15 @@ A turn is one delegated execution against a work item.
 }
 ```
 
-A settled turn adds a terminal outcome, bounded summary, and zero or more artifact references:
+A settled turn adds a terminal execution outcome, bounded summary, optional producer verdict, optional needs text, and zero or more artifact references:
 
 ```json
 {
   "state": "settled",
   "outcome": "completed",
-  "summary": "Implemented refresh handling; focused tests pass.",
+  "summary": "Implemented refresh handling; operator approval remains.",
+  "verdict": "blocked",
+  "needs": "operator approval",
   "artifact_refs": [
     "artifact:550e8400-e29b-41d4-a716-446655440000:report"
   ]
@@ -174,7 +176,9 @@ A mailbox event is immutable, bounded routing context for one watchtower.
   "turn_id": "550e8400-e29b-41d4-a716-446655440000",
   "agent": "claude",
   "outcome": "completed",
-  "summary": "Implementation complete; four focused tests pass.",
+  "summary": "Implementation complete; operator approval remains.",
+  "verdict": "blocked",
+  "needs": "operator approval",
   "artifact_refs": [
     "artifact:550e8400-e29b-41d4-a716-446655440000:report"
   ],
@@ -302,7 +306,7 @@ turn.list(state=...)
 ### Settle
 
 ```text
-turn.settle(id, outcome, summary, payload, source) -> turn
+turn.settle(id, outcome, summary, payload, source, verdict?, needs?) -> turn
 ```
 
 Supported v0.x outcomes are:
@@ -313,7 +317,9 @@ failed
 cancelled
 ```
 
-Settlement is idempotent. Repeating the same outcome and normalized summary returns the existing result and must not create another mailbox event. Retry payload may be omitted; when supplied, its digest must match the first settlement, and a settlement without payload cannot gain one later. A conflicting terminal settlement fails deterministically.
+Settlement is idempotent. Repeating the same outcome, normalized summary, optional verdict, and optional normalized needs returns the existing result and must not create another mailbox event. Retry payload may be omitted; when supplied, its digest must match the first settlement, and a settlement without payload cannot gain one later. A changed verdict or needs is a conflicting terminal settlement and fails with exit class 4 without mutation.
+
+Verdicts use `done | partial | blocked`. They are producer claims about work against the brief or summary, not execution outcomes. `blocked` requires non-empty needs. Needs is invalid with `done`, `partial`, or an omitted verdict, is NFC-normalized, and is limited to 1,000 characters. An omitted verdict persists neither field. A verdict does not close work, handle an event, report runtime liveness, or assign an actor.
 
 The event ID is allocated before terminal commit and stored with the settlement as its stable delivery identity. Adapters may map this identity to a provider-native idempotency mechanism or emulate it. Crash-gap publication must reuse the committed event ID.
 
@@ -443,7 +449,7 @@ The safety rule is asymmetric:
 
 > A watchtower must never receive a settlement event whose durable turn result and referenced artifact metadata cannot be resolved and matched to the event.
 
-`unread` and `pending` must fail closed if an event's terminal turn, ownership, settlement identity, outcome, summary, or artifact metadata is missing or disagrees. They must not return a partially validated envelope.
+`unread` and `pending` must fail closed with exit class 5 if an event's terminal turn, ownership, settlement identity, outcome, summary, verdict, needs, or artifact metadata is missing or disagrees. They must not return a partially validated envelope.
 
 A process may crash after step 2 and before step 3. That leaves a settled turn whose mailbox event has not yet been published. This state is recoverable. Retrying settlement or reconciliation must detect the committed settlement and idempotently publish the missing event.
 
