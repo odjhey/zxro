@@ -1,4 +1,5 @@
 import uuid
+from dataclasses import replace
 from datetime import datetime
 import unicodedata
 from pathlib import Path
@@ -82,7 +83,7 @@ class LocalTurnStore:
                 raise ConflictError(f"turn has a different native session source: {id}")
             if record.native_session_id == native_session_id and record.native_session_source == source:
                 return record
-            bound = Turn(**{**record.to_dict(), "native_session_id": native_session_id, "native_session_source": source})
+            bound = replace(record, native_session_id=native_session_id, native_session_source=source)
             atomic_replace(access, "turns", f"{id}.json", bound.to_dict())
             return bound
 
