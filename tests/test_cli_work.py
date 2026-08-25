@@ -2,6 +2,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 
 from tests.helpers import CliCase
+from zxro.settle import MAX_STDIN_BYTES
 
 
 class WorkCliTests(CliCase):
@@ -109,6 +110,21 @@ class WorkCliTests(CliCase):
         self.assertEqual(self.cli("work", "meta", "set", "job", "size", "--stdin", input_text=json.dumps(exact, separators=(",", ":"))).returncode, 0)
         exact["tail"] += "x"
         self.assertEqual(self.cli("work", "meta", "set", "job", "size", "--stdin", input_text=json.dumps(exact, separators=(",", ":"))).returncode, 2)
+
+    def test_metadata_set_rejects_oversized_stdin_before_buffering(self):
+        self.ok_json("work", "create", "job", "--watchtower", "main")
+        oversized = "x" * (MAX_STDIN_BYTES + 1)
+        result = self.cli("work", "meta", "set", "job", "tracker", "--stdin", input_text=oversized)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("stdin payload too large", result.stderr)
+        self.assertNotIn("metadata", self.ok_json("work", "show", "job"))
+
+    def test_metadata_unset_rejects_reserved_namespace(self):
+        self.ok_json("work", "create", "job", "--watchtower", "main")
+        self.assertEqual(self.cli("work", "meta", "set", "job", "tracker", "--stdin", input_text='{"issue":29}').returncode, 0)
+        result = self.cli("work", "meta", "unset", "job", "zxro")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.ok_json("work", "meta", "show", "job", "tracker"), {"issue": 29})
 
     def test_malformed_and_newer_durable_work_records_fail_closed(self):
         self.ok_json("work", "create", "job", "--watchtower", "main")
