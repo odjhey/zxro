@@ -89,10 +89,11 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
             value = work.set_metadata(args.id, args.namespace, payload)
         elif args.meta_action == "unset": value = work.unset_metadata(args.id, args.namespace)
         else:
+            if args.namespace is not None:
+                validate_namespace(args.namespace, {})
             record = work.get(args.id)
             metadata = record.metadata or {}
             if args.namespace is not None:
-                validate_namespace(args.namespace, {})
                 if args.namespace not in metadata:
                     raise NotFoundError(f"metadata namespace not found: {args.namespace}")
                 value = metadata[args.namespace]

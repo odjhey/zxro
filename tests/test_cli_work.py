@@ -66,6 +66,12 @@ class WorkCliTests(CliCase):
                 self.assertEqual(self.cli("work", "meta", "set", "job", namespace, "--stdin", input_text=payload).returncode, 2)
         self.assertNotIn("metadata", self.ok_json("work", "show", "job"))
 
+    def test_metadata_show_argument_errors_precede_missing_work(self):
+        self.assertEqual(self.cli("work", "meta", "show", "missing-work", "valid").returncode, 3)
+        for namespace in ("zxro", "Upper", "-bad", "a" * 65):
+            with self.subTest(namespace=namespace):
+                self.assertEqual(self.cli("work", "meta", "show", "missing-work", namespace).returncode, 2)
+
     def test_metadata_set_ignores_insignificant_raw_json_whitespace(self):
         self.ok_json("work", "create", "job", "--watchtower", "main")
         payload = " " * 10_000 + '{"key":"value"}' + " " * 10_000
