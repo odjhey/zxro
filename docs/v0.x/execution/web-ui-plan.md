@@ -23,15 +23,15 @@ sources:
   - ref: ../engineering/runtime-and-provisioning.md
     credibility: primary
 created_at: "2026-08-25T09:35:45+08:00"
-updated_at: "2026-08-25T10:12:39+08:00"
+updated_at: "2026-08-25T10:29:39+08:00"
 ---
 
 # CLI-first Web UI plan
 
 ## Plan provenance
 
-- `attempt_count: 6`
-- `caused_by: independent reviewer detailed G19/G6, refresh and logging contract defects; separate scout verified M2 env/bind/run wording inconsistency`
+- `attempt_count: 7`
+- `caused_by: standard reviewer findings on a7337bae`
 - Baseline: merged `origin/master` at `a191ae7`, including M0, M1, and the public-CLI multi-turn readiness evidence.
 - Verification during planning: `python3 -m unittest discover -s tests -v` passed 84 of 84 tests against that baseline.
 
@@ -570,7 +570,7 @@ The proposed commands below do not exist on `master`.
 
   Validate logging flags and environment values before provider access. Correlation IDs are bounded opaque strings with a closed character set. A log file is explicit, must resolve outside the active `$ZXRO_HOME`, and must pass owner, permission, file-type, parent-directory, and symlink checks. File-backed logs use the fixed retention defaults in this plan unless a later contract adds bounded retention flags.
 
-  Required events cover every public CLI command, not only reads. They include invocation start/completion, command dispatch, provider read or mutation start/completion/failure, state validation failure, lock wait where applicable, settlement publication stages, and artifact verification. Each completion includes exit code and elapsed milliseconds. A mutation log may report that the command returned success or failed at a named stage. It cannot replace the durable record as proof of commit.
+  Required events cover every public CLI command, not only reads. They include invocation start/completion, command dispatch, provider read or mutation start/completion/failure, state validation failure, lock wait where applicable, settlement publication stages, and artifact verification. Every non-terminal stage outcome includes elapsed milliseconds and exactly one of `result_code` or stable `error_code`; it never includes `process_exit_code`. Only the one terminal `zxro.cli.invocation.completed` reports the process exit. A mutation log may report that the command returned success or failed at a named stage. It cannot replace the durable record as proof of commit.
 - Output and exit behavior: with logging off, successful stderr remains empty and failures keep the current bounded human diagnostic. With `--log-format jsonl` to stderr, every stderr line follows the log schema. Every invocation with a level other than `off` constructs exactly one terminal `zxro.cli.invocation.completed` event, even when its success level would otherwise fall below the threshold. The terminal event is the final and highest-sequence event and carries `process_exit_code` plus overall `result_code` or `error_code`. A healthy enabled sink receives it exactly once. Stage events never carry `process_exit_code`; they use `result_code` on success or stable `error_code` on failure. With `--log-file`, normal command stderr keeps its current behavior while structured events go to the file. Invalid logging configuration exits 2 before state access. A runtime sink, append, rotation, formatting, or redaction failure disables that sink, emits at most one bounded fallback warning when possible, and never changes the underlying command exit code, retries a mutation, or redirects logs to stdout or `$ZXRO_HOME`.
 - Schema and versioning: every event contains `log_schema_version`, stable `event_name`, `event_version`, `timestamp`, `level`, `invocation_id`, per-invocation `sequence`, optional validated correlation fields, and a typed `attributes` object. Sequence starts at 1 and increments by 1 after threshold filtering, so a healthy stream has no gaps and the terminal event has the largest value. Event names use a stable namespace such as `zxro.cli.invocation.completed` and `zxro.state.validation.failed`. Additive attributes are allowed. Renaming an event or changing attribute meaning requires a new event version.
 - Security and privacy: default events omit argv values, cwd, home path, prompt/summary/artifact content, stdin, environment, session/native IDs, and raw records. Resource correlation uses process-local keyed fingerprints by default. `--log-sensitive` may include raw ZXRO IDs and masked path tails, but never credentials, prompts, payloads, artifact bodies, cookies, authorization data, or raw environment values.
@@ -701,7 +701,7 @@ Every successful response uses an envelope like:
 }
 ```
 
-Before G5, `snapshot_id` is a SHA-256 digest of the API version, negotiated capability/schema versions, ordered command labels, and canonical successful result digests. It is not a provider transaction token. `consistency: observational` means two bounded observations agreed; it does not mean a writer could not commit immediately after observation.
+Before G5, snapshot hashing uses the exact canonical framing defined below. `snapshot_id` covers the API version, negotiated capability/schema versions, and every ordered anchor's command label, validated argument object, and canonical anchor digest. It is not a provider transaction token. `consistency: observational` means two bounded observations agreed; it does not mean a writer could not commit immediately after observation.
 
 A failed refresh never publishes a new snapshot. If an earlier successful snapshot exists, `/api/v1/snapshot` returns that exact `snapshot_id`, `observed_at`, and data with `freshness: stale`, `stale_age_ms` measured from the retained snapshot's `observed_at`, and one bounded `refresh_failure`. If no successful snapshot exists, data is unavailable rather than partial. `unstable` and `degraded` are refresh failure kinds shown in diagnostics, not freshness labels attached to partial current data. Errors use a versioned envelope and never include raw artifact bytes.
 
@@ -714,12 +714,36 @@ Pre-G5 refresh is observational, not transactional. One refresh freezes its capa
 Each refresh uses at most three attempts, the initial attempt plus two retries. One attempt follows this exact protocol:
 
 1. Run every required command in a fixed order as pass A. Require exit 0, one bounded JSON result, the negotiated schema, and valid ownership/reference relationships.
-2. Canonicalize each result as UTF-8 JSON with sorted object keys, compact separators, and preserved array order. Hash the command label, non-secret argument identity, and canonical result with SHA-256. Hash the ordered vector of those digests.
+2. Canonicalize and frame each command label, validated argument object, and result using the definition below. Hash each anchor frame with SHA-256 and retain the ordered anchor tuple `(label, canonical arguments, 32-byte anchor digest)`.
 3. Run the identical command plan as pass B. If pass A's watchtower IDs no longer match pass B, the vector differs and the attempt is unstable; do not add or remove commands mid-attempt.
 4. Apply the same parse, schema, relationship, and digest checks to pass B.
 5. Succeed only when every required read in both passes succeeds and the complete ordered digest vectors match exactly.
 6. Build all current-view indexes and aggregates from pass B only. Index or aggregate failure fails the attempt.
-7. Set `observed_at` after the final pass-B check and derive `snapshot_id` from the successful vector. Publish the new snapshot atomically to the UI only after every required read, consistency check, index, and aggregate succeeds.
+7. Set `observed_at` after the final pass-B check. Build the framed snapshot bytes from the API version, negotiated capability/schema object, and successful ordered pass-B anchor tuples exactly as defined below; `snapshot_id` is the lowercase hexadecimal SHA-256 of those bytes. Publish the new snapshot atomically to the UI only after every required read, consistency check, index, and aggregate succeeds.
+
+Canonicalization accepts only JSON null, booleans, integers, strings, arrays, and objects; floats and non-finite numbers fail the refresh. `J(value)` is UTF-8 JSON with object keys sorted lexicographically by Unicode code point, array order preserved, no insignificant whitespace, base-10 integers without leading zeros, and only JSON-required string escapes. `F(bytes)` is an unsigned 64-bit big-endian byte length followed by those bytes. All literal labels below are UTF-8.
+
+```text
+anchor_digest = SHA256(
+  F("zxro-ui-anchor-v1") ||
+  F(command_label) ||
+  F(J(validated_argument_object)) ||
+  F(J(result))
+)
+
+snapshot_bytes =
+  F("zxro-ui-snapshot-v1") ||
+  F(J(api_version)) ||
+  F(J(negotiated_capability_and_schema_versions)) ||
+  for each anchor in command order:
+    F(command_label) ||
+    F(J(validated_argument_object)) ||
+    F(anchor_digest)
+
+snapshot_id = lowercase_hex(SHA256(snapshot_bytes))
+```
+
+The pass comparison uses the full ordered tuples, not unframed concatenation and not anchor digests alone. The validated argument object may contain exact ZXRO IDs for identity, but it is never logged or returned separately.
 
 A read, parse, schema, relationship, index, or aggregate failure ends the current attempt as degraded. A digest mismatch ends it as unstable. Retry the whole protocol, never one command, up to the limit. After the limit, retain the prior successful snapshot as stale. Bounded failure details contain only failure kind, attempt, stage, command label, stable error code, occurrence time, and redaction/truncation flags. Raw stderr, partial records, and artifact content stay out.
 
@@ -906,7 +930,7 @@ Default sinks:
 - Core CLI with structured logging enabled: JSONL or human logs on stderr unless `--log-file PATH` selects an explicit owner-only file.
 - Web UI: redacted warning/error stderr plus an in-memory ring capped at 1,000 events and 2 MiB of serialized event bytes. Before inserting an event, evict the oldest until both limits hold. Track and display the evicted count. The Web UI has no disk retention by default.
 
-For `--log-file PATH`, `PATH` is the active file and `PATH.1` through `PATH.4` are the only backups. The active file plus four backups is a hard maximum of five files. Each file is capped at 5 MiB; rotate before an append would cross the cap, delete `PATH.4`, and shift the other backups atomically under the logging sink's concurrency control. At sink startup and rotation, delete files older than seven days. Size and age rules both apply, so whichever removes an event first defines retention. One event must fit the per-event bound and may never create a sixth file.
+For `--log-file PATH`, `PATH` is the active file and `PATH.1` through `PATH.4` are the only backups. The active file plus four backups is a hard maximum of five files. Each file is capped at 5 MiB; rotate before an append would cross the cap, delete `PATH.4`, and shift the other backups atomically under the logging sink's concurrency control. On every sink open and before every append, prune files whose newest event is older than seven days. During active use, size or age may remove an event first. Because zxro has no daemon, the seven-day rule is activity-enforced, not a wall-clock deletion guarantee while no process opens the sink; an old file may remain at rest until the next sink open. One event must fit the per-event bound and may never create a sixth file.
 
 Opt-in file retention belongs outside `$ZXRO_HOME`, under an owner-specific state directory partitioned by non-reversible home fingerprint. Set parent directories to `0700`, files to `0600`, reject symlinks and group/world-writable paths, and never share a file between homes.
 
@@ -944,7 +968,7 @@ Required tests include:
 - refresh retry, stale fallback, index failure, redaction failure, and log-sink failure;
 - synthetic token, prompt, summary, path, session, environment, cookie, and artifact content leakage checks across stderr, files, API, HTML, and browser state;
 - sensitive-detail enable/expiry and its unconditional drop list;
-- active `PATH`, only `PATH.1` through `PATH.4`, 5-MiB per-file cap, seven-day pruning, maximum five files, safe concurrent append/rotation, owner-only modes, symlink rejection, and separate home partitions;
+- active `PATH`, only `PATH.1` through `PATH.4`, 5-MiB per-file cap, activity-enforced seven-day pruning on every open and append, the documented no-daemon inactivity caveat, maximum five files, safe concurrent append/rotation, owner-only modes, symlink rejection, and separate home partitions;
 - Web ring enforcement at 1,000 events and 2 MiB, oldest eviction, visible evicted count, and no default disk file;
 - sink-open, append, redaction, formatting, and rotation failures preserving the underlying command exit and never retrying a mutation;
 - exact stdout and exit-code parity with logging on and off;
@@ -1009,7 +1033,7 @@ Add the Web UI as an optional local command or package entry only after its read
 - Missing home, malformed JSON, wrong ownership, unsafe permission, symlink, record mismatch, and output-limit cases.
 - Multi-watchtower and two-home isolation tests.
 - Concurrent settlement during refresh, with no torn snapshot presented as fresh.
-- Exact pass-A/pass-B canonical digest vectors, watchtower-set changes, full-attempt retry, and the initial-plus-two-retry limit.
+- Exact pass-A/pass-B framed canonical digest vectors, including stable repeat hashing, distinct hashes for ambiguous unframed boundaries, and snapshot ID changes when API version, schema vector, command label, arguments, or result changes; plus watchtower-set changes, full-attempt retry, and the initial-plus-two-retry limit.
 - Required read, parse, schema, relationship, index, and aggregate failures retaining the exact prior snapshot with correct stale age and bounded failure details.
 - No-prior failure returning unavailable data, plus poison tests proving partial results never enter views, indexes, timelines, counts, ratios, or analysis.
 - XSS fixtures in every string field, including summaries, session names, cwd, and stderr.
@@ -1149,7 +1173,7 @@ The MVP is acceptable when:
 |---|---|---|
 | CLI logging default | Disabled for ordinary invocations; opt-in human or JSONL stderr, with explicit file destination available | W1 |
 | CLI logging configuration | Global flags override only documented `ZXRO_LOG_*` variables; no discovered config file in the first version | W1 |
-| CLI file retention | Active `PATH` plus `PATH.1` through `PATH.4`, each at most 5 MiB and at most seven days, outside `$ZXRO_HOME`; sink failure never changes command exit | W1 |
+| CLI file retention | Active `PATH` plus `PATH.1` through `PATH.4`, each at most 5 MiB; prune events older than seven days on every sink open and append, with no wall-clock deletion guarantee during inactivity; sink failure never changes command exit | W1 |
 | UI use of core logging | Fixed `info` plus `jsonl` flags and server-generated correlation on approved reads; strip inherited `ZXRO_LOG_*` | W3 |
 | UI log retention | No disk by default; 1,000-event/2-MiB in-memory ring with oldest eviction and visible evicted count | W3 |
 | Sensitive diagnostics | Off by default, process-lifetime opt-in, unconditional content/credential exclusions remain | W1 |
