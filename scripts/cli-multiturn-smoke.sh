@@ -6,7 +6,7 @@ ZXRO=${ZXRO:-"$ROOT/bin/zxro"}
 STATE=${ZXRO_SMOKE_HOME:-"$(mktemp -d "${TMPDIR:-/tmp}/zxro-cli-readiness.XXXXXX")"}
 KEEP=${ZXRO_SMOKE_KEEP:-0}
 INSPECT=${ZXRO_SMOKE_INSPECT:-0}
-export ZXRO_HOME=$STATE
+export ZXRO_HOME="$STATE"
 
 cleanup() {
     if [ "$KEEP" = 1 ]; then
