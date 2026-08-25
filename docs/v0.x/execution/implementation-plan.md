@@ -6,7 +6,7 @@ tags: [v0.x, execution]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-25T09:30:01+08:00
+updated_at: 2026-08-25T09:30:02+08:00
 ---
 
 # v0.x implementation plan
@@ -157,7 +157,7 @@ Provider adapters and harness integrations must not invent provider-specific dur
 
 ## Completion evidence
 
-M0 and M1 merged in PR [#7](https://github.com/odjhey/zxro/pull/7). PR [#17](https://github.com/odjhey/zxro/pull/17) then added and independently accepted the public-CLI multi-turn proof at exact head [`c0a8c49f49836ef3b182883a522c50b917d007a1`](https://github.com/odjhey/zxro/commit/c0a8c49f49836ef3b182883a522c50b917d007a1). The proof merged as [`a191ae7d00ed2d1974ab27581bda80b6346c8cde`](https://github.com/odjhey/zxro/commit/a191ae7d00ed2d1974ab27581bda80b6346c8cde); its [post-merge CI run](https://github.com/odjhey/zxro/actions/runs/32795552021) passed all four jobs.
+M0 merged in PR [#6](https://github.com/odjhey/zxro/pull/6) as [`7dbb53336ff111106d986b38d084f3314b86a0f2`](https://github.com/odjhey/zxro/commit/7dbb53336ff111106d986b38d084f3314b86a0f2). M1 merged in PR [#7](https://github.com/odjhey/zxro/pull/7) as [`7a3db5acd7785bcd3946604ef2282ea887b4f7ce`](https://github.com/odjhey/zxro/commit/7a3db5acd7785bcd3946604ef2282ea887b4f7ce). PR [#17](https://github.com/odjhey/zxro/pull/17) then added and independently accepted the public-CLI multi-turn proof at exact head [`c0a8c49f49836ef3b182883a522c50b917d007a1`](https://github.com/odjhey/zxro/commit/c0a8c49f49836ef3b182883a522c50b917d007a1). The proof merged as [`a191ae7d00ed2d1974ab27581bda80b6346c8cde`](https://github.com/odjhey/zxro/commit/a191ae7d00ed2d1974ab27581bda80b6346c8cde); its [post-merge CI run](https://github.com/odjhey/zxro/actions/runs/32795552021) passed all four jobs.
 
 - [x] Core CLI tests pass with `python3 -m unittest discover -s tests -v`.
 - [x] Built-in provider passes the durable-store conformance suite.
