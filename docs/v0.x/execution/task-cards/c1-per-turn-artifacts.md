@@ -21,7 +21,7 @@ A caller attaches independently addressable evidence to a running turn with `zxr
 
 - No card blocks this one. First card in lane C; [C2](./c2-work-brief.md) stacks on its storage generalization.
 - Runs in parallel with lanes A, B, and D. Use the A1 envelope-tolerant test helper for JSON assertions.
-- The storage work must leave room for an owner scope in references (C2 introduces `artifact:work:<work-id>:brief`); do not hard-code turn ownership into the reference parser or on-disk layout.
+- C1 adds owner-scope parsing and scoped record-name groundwork for C2's `artifact:work:<work-id>:brief` form. This is partial preparation, not completed work-scoped storage. C2 must generalize the durable artifact record, capability methods, validation, and resolution beyond turn ownership.
 
 ## Approved interface decision
 
@@ -39,7 +39,7 @@ The operator approved these rules for C1:
 - `kind` follows existing identifier rules and is unique per turn; a duplicate fails with exit class 4, no overwrite.
 - Rejection of `artifact put` on settled turns (evidence set frozen) with exit class 4.
 - Per-payload bound matching settlement today (16 MiB durable-record limit, roughly 8 MiB payload); per-turn cap of 32 artifacts at exit class 2.
-- References and byte counts in `turn show`; settlement events retain only `artifact_refs`. `artifact path` remains the retrieval step with existing digest and safety checks.
+- References and byte counts in `turn show`; settlement events retain only `artifact_refs`. Durable turn metadata anchors each artifact digest, while public metadata omits it. `artifact path` remains the retrieval step with digest and safety checks.
 - Tests: multiple kinds on one turn, duplicate kind, put after settle, cap, reference visibility, digest verification, and the Scenario C bounded-read regression (growing an old artifact does not grow `inbox unread` or `work show` output).
 
 ## Out of scope

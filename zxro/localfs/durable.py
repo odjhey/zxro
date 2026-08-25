@@ -100,7 +100,7 @@ class LocalDurableLoop:
                 artifact = self._artifact_record(access, turn_id, kind)
             except NotFoundError as exc:
                 raise UnsafeStateError("mailbox event references missing artifact") from exc
-            expected_metadata = ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes)
+            expected_metadata = ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
             digest_mismatch = kind == "stdin" and artifact.sha256 != turn.settlement.payload_sha256
             if artifact.ref != ref or artifact.turn_id != event.turn_id or metadata.get(ref) != expected_metadata or digest_mismatch:
                 raise UnsafeStateError("mailbox event artifact does not match durable turn metadata")
@@ -174,13 +174,14 @@ class LocalDurableLoop:
             if existing != artifact:
                 raise ConflictError(f"artifact kind already exists for turn: {kind}")
         self._fault("artifact-commit")
-        metadata = ArtifactMetadata(ref, kind, len(payload))
+        metadata = ArtifactMetadata(ref, kind, len(payload), digest)
         updated = Turn(**{
             **turn.to_dict(),
             "artifact_refs": (*turn.artifact_refs, ref),
             "artifacts": (*turn.artifacts, metadata),
         })
         atomic_replace(access, "turns", f"{turn.id}.json", updated.to_dict())
+        self._fault("artifact-metadata-commit")
         return updated, artifact
 
     def artifact_put(self, turn_id, kind, payload):
@@ -195,7 +196,7 @@ class LocalDurableLoop:
         with mutation(self.home) as access:
             turn = self.turns.get_from(access, turn_id)
             _, artifact = self._put_artifact(access, turn, kind, payload)
-            return ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes)
+            return ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
 
     def settle(self, turn_id, source, outcome, message, payload, verdict=None, needs=None):
         turn_id = validate_turn_id(turn_id)
@@ -229,8 +230,18 @@ class LocalDurableLoop:
                 box = self._mailbox(access, turn.watchtower_id)
             if turn.state == "running":
                 event_id = "evt-" + uuid.uuid4().hex
-                if payload is not None:
-                    turn, _ = self._put_artifact(access, turn, "stdin", payload, settlement=True)
+                existing_stdin = next((item for item in turn.artifacts if item.kind == "stdin"), None)
+                if existing_stdin is not None:
+                    artifact = self._artifact_record(access, turn.id, "stdin")
+                    expected = ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
+                    if expected != existing_stdin:
+                        raise UnsafeStateError("settlement stdin artifact does not match turn metadata")
+                    if payload is not None and artifact.sha256 != digest:
+                        raise ConflictError("turn already has different settlement stdin")
+                    digest = artifact.sha256
+                elif payload is not None:
+                    turn, artifact = self._put_artifact(access, turn, "stdin", payload, settlement=True)
+                    digest = artifact.sha256
                 settled_at = timestamp()
                 settlement = Settlement(source, outcome, message, digest, event_id, settled_at, verdict, needs)
                 turn = Turn(**{
@@ -369,13 +380,23 @@ class LocalDurableLoop:
                 self._fault("handle-mailbox-commit")
             return handled
 
+    def _attached_artifact(self, access, ref, parsed):
+        turn = self.turns.get_from(access, parsed[0])
+        if ref not in turn.artifact_refs:
+            raise NotFoundError(f"artifact not attached to turn: {ref}")
+        record = self._artifact_record(access, parsed[0], parsed[1])
+        expected = ArtifactMetadata(record.ref, record.kind, record.bytes, record.sha256)
+        metadata = next((item for item in turn.artifacts if item.ref == ref), None)
+        if Artifact.parse_ref(record.ref) != parsed or metadata != expected:
+            raise UnsafeStateError("artifact record does not match attached turn metadata")
+        return record
+
     def artifact_path(self, ref):
         artifact = Artifact.parse_ref(ref)
-        filename = Artifact.record_name("turn", artifact[0], artifact[1])
         with reading(self.home) as access:
-            Artifact.from_dict(read_json(access, "artifacts", filename))
+            self._attached_artifact(access, ref, artifact)
         with mutation(self.home) as access:
-            record = Artifact.from_dict(read_json(access, "artifacts", filename))
+            record = self._attached_artifact(access, ref, artifact)
             if Artifact.parse_ref(record.ref) != artifact:
                 raise UnsafeStateError("artifact record does not match requested reference")
             filename = f"{record.turn_id}--{record.kind}.bin"

@@ -40,13 +40,13 @@ class LocalTurnStore:
             raise UnsafeStateError(f"invalid turn ownership: {exc}") from exc
         if owner.watchtower_id != record.watchtower_id:
             raise UnsafeStateError("turn watchtower does not match work owner")
-        if record.artifact_refs and not record.artifacts:
+        if record.artifact_refs and (not record.artifacts or any(item.sha256 is None for item in record.artifacts)):
             metadata = []
             try:
                 for ref in record.artifact_refs:
                     turn_id, kind = Artifact.parse_ref(ref)
                     artifact = Artifact.from_dict(read_json(access, "artifacts", Artifact.record_name("turn", turn_id, kind)))
-                    metadata.append(ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes))
+                    metadata.append(ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256))
             except Exception as exc:
                 raise UnsafeStateError("cannot load legacy turn artifact metadata") from exc
             record = Turn(**{**record.to_dict(), "artifact_refs": record.artifact_refs, "artifacts": tuple(metadata), "settlement": record.settlement})
@@ -101,14 +101,20 @@ class LocalTurnStore:
             artifacts = tuple(ArtifactMetadata(**item) for item in metadata_values)
             parsed_refs = [Artifact.parse_ref(ref) for ref in artifact_refs]
             valid_metadata = all(
-                set(item) == {"ref", "kind", "bytes"} for item in metadata_values
+                set(item) in ({"ref", "kind", "bytes"}, {"ref", "kind", "bytes", "sha256"})
+                for item in metadata_values
             ) and all(
                 Artifact.parse_ref(item.ref) == (data["id"], item.kind)
                 and type(item.bytes) is int and item.bytes >= 0
+                and (item.sha256 is None or (
+                    isinstance(item.sha256, str) and len(item.sha256) == 64
+                    and len(bytes.fromhex(item.sha256)) == 32
+                ))
                 for item in artifacts
             )
             if (any(turn_id != data["id"] for turn_id, _ in parsed_refs)
                     or len(set(artifact_refs)) != len(artifact_refs)
+                    or len(artifact_refs) > 32
                     or (artifacts and len(artifact_refs) != len(artifacts))
                     or (artifacts and tuple(item.ref for item in artifacts) != artifact_refs)
                     or len(artifacts) > 32 or not valid_metadata):

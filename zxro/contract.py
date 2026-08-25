@@ -109,9 +109,13 @@ class ArtifactMetadata:
     ref: str
     kind: str
     bytes: int
+    sha256: str | None = None
 
     def to_dict(self):
-        return asdict(self)
+        return {key: value for key, value in asdict(self).items() if value is not None}
+
+    def to_public_dict(self):
+        return {"ref": self.ref, "kind": self.kind, "bytes": self.bytes}
 
 
 @dataclass(frozen=True)

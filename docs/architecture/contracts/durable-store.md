@@ -336,7 +336,11 @@ artifact.stat(ref) -> metadata
 artifact.resolve(ref) -> deliberate read target
 ```
 
-`artifact.put` accepts an identifier-valid kind on a running turn. Kinds are unique per turn, and one turn may hold at most 32 artifacts. Duplicate kinds and writes after settlement conflict without overwrite. Kind `stdin` is reserved for settlement. Each payload must fit the provider's durable-record bound. The built-in provider limits stdin to `8 MiB - 4096 bytes` so its hex-encoded record stays below 16 MiB.
+`artifact.put` accepts an identifier-valid kind on a running turn. Kinds are unique per turn, and one turn may hold at most 32 attached artifacts. Duplicate kinds and writes after settlement conflict without overwrite. Kind `stdin` is reserved for settlement. Each payload must fit the provider's durable-record bound. The built-in provider limits stdin to `8 MiB - 4096 bytes` so its hex-encoded record stays below 16 MiB.
+
+The provider must anchor each artifact digest in durable owner metadata before it reports attachment success. Resolution and mailbox validation compare the artifact record with that independent anchor. Changing an artifact body and its artifact-record digest together must therefore fail closed. The active durable-state trust boundary still applies: zxro does not promise detection when an attacker coherently rewrites every trusted owner, artifact, turn, and mailbox record.
+
+A crash may leave an artifact record before its owner metadata commit. Such a record is an unattached orphan: routine reads omit it, deliberate resolution rejects it, and it does not count toward the 32-artifact limit. Retrying the same kind and bytes must attach the existing record without overwrite. Different bytes conflict. Providers may garbage-collect unattached orphans only when doing so cannot race a retry or owner commit.
 
 `artifact.resolve` may return a local path, a provider handle, or another explicit retrieval target. It must never cause routine work, turn, inbox, or inspection reads to inline the artifact body.
 
@@ -455,6 +459,8 @@ The safety rule is asymmetric:
 > A watchtower must never receive a settlement event whose durable turn result and referenced artifact metadata cannot be resolved and matched to the event.
 
 `unread` and `pending` must fail closed with exit class 5 if an event's terminal turn, ownership, settlement identity, outcome, summary, verdict, needs, or artifact metadata is missing or disagrees. They must not return a partially validated envelope.
+
+A process may also crash between an artifact record and its owner metadata commit, or between settlement stdin metadata and terminal turn commit. Artifact retry reconciles an identical orphan. Settlement retry reuses identical committed stdin metadata; when retry omits stdin, it derives settlement identity from the anchored artifact digest. Supplied mismatched bytes conflict.
 
 A process may crash after step 2 and before step 3. That leaves a settled turn whose mailbox event has not yet been published. This state is recoverable. Retrying settlement or reconciliation must detect the committed settlement and idempotently publish the missing event.
 

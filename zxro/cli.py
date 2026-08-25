@@ -96,6 +96,15 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
     else: records = value
     if args.command == "turn" and args.action == "list":
         records = [{key: item for key, item in record.items() if key != "artifacts"} for record in records]
+    elif args.command == "turn" and args.action == "settle":
+        records = {key: item for key, item in records.items() if key != "artifacts"}
+    elif args.command == "turn" and args.action == "show" and "artifacts" in records:
+        records["artifacts"] = [
+            {key: item for key, item in artifact.items() if key in {"ref", "kind", "bytes"}}
+            for artifact in records["artifacts"]
+        ]
+    elif args.command == "artifact" and args.action == "put":
+        records = {key: item for key, item in records.items() if key in {"ref", "kind", "bytes"}}
     render(records, args.json_output, turn_id_only=args.command == "turn" and args.action == "create", path_only=path_only)
 
 
