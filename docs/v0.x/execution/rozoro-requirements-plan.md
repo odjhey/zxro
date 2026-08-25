@@ -13,7 +13,7 @@ sources:
   - ref: ../../architecture/contracts/session-binding.md
     credibility: primary
 created_at: "2026-08-25T13:10:00+08:00"
-updated_at: "2026-08-25T13:10:00+08:00"
+updated_at: "2026-08-25T15:53:42+08:00"
 ---
 
 # ZR1-ZR4 delivery plan
@@ -86,7 +86,10 @@ zxro turn settle <turn-id> \
 
 Decisions:
 
-- `--verdict` takes `done`, `waiting`, `needs-action`, or `blocked`. It is optional; an omitted verdict is stored as absent, so existing callers and hooks keep working unchanged. No default is derived from `--status`, because guessing `done` from `completed` would recreate the ambiguity ZR1 exists to remove;
+- `--verdict` takes `done`, `partial`, or `blocked`. A verdict is the producer's claim about the work measured against the brief (absent a brief, against the work summary and the turn's instructions): `done` claims the brief's ask is met as far as this turn can tell; `partial` claims the ask is partly met or not yet met, work remains, and nothing prevents it; `blocked` claims the work cannot advance without something named in `--needs`. `blocked` takes precedence when both `partial` and `blocked` are true. Every value must complete the sentence "the work is ...": verdicts describe the work item, never the turn's own attempt (that is `--status`) and never the producer's uncertainty (that is omission). It is optional; an omitted verdict is stored as absent and means no claim was made, matching the convention that writers omit absent values. When unsure between `done` and `partial`, claim `partial`; when unable to classify at all, omit. No default is derived from `--status`, because guessing `done` from `completed` would recreate the ambiguity ZR1 exists to remove;
+- a verdict is a claim, not a fact: `done` means this turn believes nothing is left, and the watchtower verifies before acting on it. Acceptance stays with `work close`. A settlement event therefore means: check my work against the brief;
+- earlier drafts used `done|waiting|needs-action|blocked` and then `done|ready|blocked`. `waiting` and `needs-action` were cut because they differ only in who acts next, a routing conclusion owned by the watchtower, not a fact the settling producer can know; `ready` was replaced because its plain reading ("it's ready") collides with `done`. Verdicts state durable work facts; the watchtower maps facts to routing, reading `--needs` when its judgment requires detail. Only the mechanical decision (advance, dispatch next, or stop and attend) must be field-driven;
+- a verdict never encodes runtime liveness. Background tasks or subagents still running at a harness turn-end signal are live runtime truth, not durable work state. A producer that cannot certify a trustworthy terminal boundary must not settle at all (requirement 13 in the [requirements report](../../reports/2026-08-25-rozoro-derived-requirements.md)) rather than settle with a hedged verdict; the retry-identity rule below makes a premature settlement fail loudly when the true terminal result arrives;
 - `--needs` is a bounded free-text value under the same 1,000-character normalization rule as `--message`, for the `inputs-needed` fact. Anything larger belongs in a ZR4 artifact referenced from the turn;
 - verdict and needs join settlement identity: an idempotent retry must repeat them exactly, and a conflicting verdict fails deterministically with exit class 4, matching the existing outcome/summary retry rules;
 - the mailbox event envelope carries `verdict` and `needs` when present, so `inbox unread` and `inbox pending` expose the routing fact directly. The invariant from the report holds: a watchtower never parses words like "blocked" out of prose;
@@ -108,6 +111,7 @@ Decisions:
 
 - the brief is stored through the artifact store with a work-scoped reference, `artifact:work:<work-id>:brief`. This extends the reference grammar with an owner scope; the reference stays opaque to callers and the durable-store contract's artifact section gains the work-scoped form. ZR4's storage generalization lands first so this reuses it;
 - one brief per work item, set once. `work brief set` on a work item that already has a brief fails with exit class 4. The brief records original intent; corrections and later context belong in turn artifacts or the bounded work summary. This is the report's guard against rebuilding `handoff.md`;
+- the immutable brief is also the measuring stick for ZR1 verdicts. When a producer cannot honestly classify `done`, `partial`, or `blocked` against the brief, the work has become different work: open a new work item with a new brief instead of amending the old one. Brief drift is expected, auditable, and a signal for improving brief writing outside zxro, not a defect to patch in place;
 - setting a brief is allowed only while the work item is open. Payload bounds match other artifacts;
 - `work show` returns the brief reference and byte count, never the body. `work brief path` is the deliberate retrieval step, with the same symlink/ownership/digest checks as `artifact path`;
 - `--brief-stdin` at create time is a convenience for the common case; create-then-set has the same durable result. Create with brief must be atomic: a failed brief write must not leave a work record behind.
