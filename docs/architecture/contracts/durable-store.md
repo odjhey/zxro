@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-25T19:15:39+08:00
+updated_at: "2026-08-25T19:17:39+08:00"
 ---
 
 # Durable store contract
@@ -138,6 +138,9 @@ A settled turn adds a terminal execution outcome, bounded summary, optional prod
   "needs": "operator approval",
   "artifact_refs": [
     "artifact:550e8400-e29b-41d4-a716-446655440000:report"
+  ],
+  "artifacts": [
+    {"ref": "artifact:550e8400-e29b-41d4-a716-446655440000:report", "kind": "report", "bytes": 18432}
   ]
 }
 ```
@@ -160,7 +163,7 @@ Minimum metadata:
 }
 ```
 
-A provider may store artifact bytes itself or resolve the reference to another durable location. The reference is opaque to callers.
+A provider may store artifact bytes itself or resolve the reference to another durable location. The reference is opaque to callers. `artifact_refs` remains the stable references-only collection. `turn show` may add the bounded `artifacts` metadata collection shown above, but mailbox events remain references-only.
 
 ### Mailbox event
 
@@ -317,9 +320,9 @@ failed
 cancelled
 ```
 
-Settlement is idempotent. Repeating the same outcome, normalized summary, optional verdict, and optional normalized needs returns the existing result and must not create another mailbox event. Retry payload may be omitted; when supplied, its digest must match the first settlement, and a settlement without payload cannot gain one later. A changed verdict or needs is a conflicting terminal settlement and fails with exit class 4 without mutation.
+Settlement is idempotent. Repeating the same outcome, normalized summary, optional verdict, and optional normalized needs returns the existing result and must not create another mailbox event. Retry payload may be omitted; when supplied, its digest must match the first settlement, and a settlement without payload cannot gain one later. A changed verdict or needs is a conflicting terminal settlement and fails with exit class 4 without mutation. Settlement freezes every artifact already attached to the turn. Its optional stdin payload uses reserved kind `stdin`, follows the same artifact-write path as `artifact.put`, and counts toward the per-turn cap.
 
-Verdicts use `done | partial | blocked`. They are producer claims about work against the brief or summary, not execution outcomes. `blocked` requires non-empty needs. Needs is invalid with `done`, `partial`, or an omitted verdict, is NFC-normalized, and is limited to 1,000 characters. An omitted verdict persists neither field. A verdict does not close work, handle an event, report runtime liveness, or assign an actor.
+Verdicts use `done | partial | blocked`. They are producer claims about the brief or summary, not execution outcomes. `blocked` requires non-empty needs. Needs is invalid with `done`, `partial`, or an omitted verdict, is NFC-normalized, and is limited to 1,000 characters. An omitted verdict persists neither field. A verdict does not close work, handle an event, report runtime liveness, or assign an actor.
 
 The event ID is allocated before terminal commit and stored with the settlement as its stable delivery identity. Adapters may map this identity to a provider-native idempotency mechanism or emulate it. Crash-gap publication must reuse the committed event ID.
 
@@ -333,9 +336,15 @@ artifact.stat(ref) -> metadata
 artifact.resolve(ref) -> deliberate read target
 ```
 
+`artifact.put` accepts an identifier-valid kind on a running turn. Kinds are unique per turn, and one turn may hold at most 32 attached artifacts. Duplicate kinds and writes after settlement conflict without overwrite. Kind `stdin` is reserved for settlement. Each payload must fit the provider's durable-record bound. The built-in provider limits stdin to `8 MiB - 4096 bytes` so its hex-encoded record stays below 16 MiB.
+
+The provider must anchor each artifact digest in durable owner metadata before it reports attachment success. Resolution and mailbox validation compare the artifact record with that independent anchor. Changing an artifact body and its artifact-record digest together must therefore fail closed. The active durable-state trust boundary still applies: zxro does not promise detection when an attacker coherently rewrites every trusted owner, artifact, turn, and mailbox record.
+
+A crash may leave an artifact record before its owner metadata commit. Such a record is an unattached orphan: routine reads omit it, deliberate resolution rejects it, and it does not count toward the 32-artifact limit. Retrying the same kind and bytes must attach the existing record without overwrite. Different bytes conflict. Providers may garbage-collect unattached orphans only when doing so cannot race a retry or owner commit.
+
 `artifact.resolve` may return a local path, a provider handle, or another explicit retrieval target. It must never cause routine work, turn, inbox, or inspection reads to inline the artifact body.
 
-Artifact references must not permit traversal outside the active provider namespace.
+Turn references use `artifact:<turn-id>:<kind>`. Parsers and storage layouts must allow a future owner scope rather than treating turn ownership as the only possible grammar. Artifact references must not permit traversal outside the active provider namespace.
 
 ## Mailbox-store operations
 
@@ -435,7 +444,7 @@ Provider composition must not require a distributed transaction.
 zxro settles a turn in this order:
 
 ```text
-1. persist referenced artifacts
+1. persist all referenced artifact records and bounded turn artifact metadata
 2. commit terminal turn state with its allocated event ID
 3. create the immutable generation event without overwriting
 4. create the direct event-ID index without overwriting
@@ -450,6 +459,8 @@ The safety rule is asymmetric:
 > A watchtower must never receive a settlement event whose durable turn result and referenced artifact metadata cannot be resolved and matched to the event.
 
 `unread` and `pending` must fail closed with exit class 5 if an event's terminal turn, ownership, settlement identity, outcome, summary, verdict, needs, or artifact metadata is missing or disagrees. They must not return a partially validated envelope.
+
+A process may also crash between an artifact record and its owner metadata commit, or between settlement stdin metadata and terminal turn commit. Artifact retry reconciles an identical orphan. Settlement retry reuses identical committed stdin metadata; when retry omits stdin, it derives settlement identity from the anchored artifact digest. Supplied mismatched bytes conflict.
 
 A process may crash after step 2 and before step 3. That leaves a settled turn whose mailbox event has not yet been published. This state is recoverable. Retrying settlement or reconciliation must detect the committed settlement and idempotently publish the missing event.
 

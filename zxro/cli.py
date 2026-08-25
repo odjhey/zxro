@@ -36,6 +36,7 @@ def parser():
     handle = inbox.add_parser("handle"); handle.add_argument("event_id"); handle.add_argument("--watchtower")
     ack = commands.add_parser("ack"); ack.add_argument("--watchtower", required=True); ack.add_argument("--through", required=True, type=int)
     artifact = commands.add_parser("artifact").add_subparsers(dest="action", required=True)
+    put = artifact.add_parser("put"); put.add_argument("turn_id"); put.add_argument("--kind", required=True); put.add_argument("--stdin", action="store_true", required=True)
     path = artifact.add_parser("path"); path.add_argument("ref")
     return root
 
@@ -82,10 +83,28 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         elif args.action == "pending": value = loop.pending(args.watchtower)
         else: value = loop.handle(args.event_id, args.watchtower)
     elif args.command == "ack": value = loop.ack(args.watchtower, args.through)
-    else: value, path_only = loop.artifact_path(args.ref), True
+    else:
+        if args.action == "put":
+            payload = sys.stdin.buffer.read(MAX_STDIN_BYTES + 1)
+            if len(payload) > MAX_STDIN_BYTES:
+                raise ValidationError(f"stdin payload too large: maximum is {MAX_STDIN_BYTES} bytes")
+            value = loop.artifact_put(args.turn_id, args.kind, payload)
+        else:
+            value, path_only = loop.artifact_path(args.ref), True
     if hasattr(value, "to_dict"): records = value.to_dict()
     elif isinstance(value, list): records = [item.to_dict() if hasattr(item, "to_dict") else item for item in value]
     else: records = value
+    if args.command == "turn" and args.action == "list":
+        records = [{key: item for key, item in record.items() if key != "artifacts"} for record in records]
+    elif args.command == "turn" and args.action == "settle":
+        records = {key: item for key, item in records.items() if key != "artifacts"}
+    elif args.command == "turn" and args.action == "show" and "artifacts" in records:
+        records["artifacts"] = [
+            {key: item for key, item in artifact.items() if key in {"ref", "kind", "bytes"}}
+            for artifact in records["artifacts"]
+        ]
+    elif args.command == "artifact" and args.action == "put":
+        records = {key: item for key, item in records.items() if key in {"ref", "kind", "bytes"}}
     render(records, args.json_output, turn_id_only=args.command == "turn" and args.action == "create", path_only=path_only)
 
 

@@ -4,7 +4,7 @@ import os
 import uuid
 from datetime import datetime
 
-from ..contract import Artifact, MailboxEvent, Settlement, Turn
+from ..contract import Artifact, ArtifactMetadata, MailboxEvent, Settlement, Turn
 from ..errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from ..ids import safe_string, validate_event_id, validate_id, validate_turn_id
 from .home import check_stat
@@ -81,6 +81,10 @@ class LocalDurableLoop:
         if value != expected:
             raise UnsafeStateError("published event direct index mismatch")
 
+    @staticmethod
+    def _artifact_record(access, turn_id, kind):
+        return Artifact.from_dict(read_json(access, "artifacts", Artifact.record_name("turn", turn_id, kind)))
+
     def _validate_event(self, access, event):
         try:
             turn = self.turns.get_from(access, event.turn_id)
@@ -89,14 +93,17 @@ class LocalDurableLoop:
         expected = MailboxEvent(turn.settlement.event_id, event.generation, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.outcome, turn.summary, turn.artifact_refs, turn.settlement.settled_at, turn.verdict, turn.needs) if turn.state == "settled" else None
         if expected != event:
             raise UnsafeStateError("mailbox event does not match terminal turn")
+        metadata = {item.ref: item for item in turn.artifacts}
         for ref in event.artifact_refs:
             turn_id, kind = Artifact.parse_ref(ref)
             try:
-                artifact = Artifact.from_dict(read_json(access, "artifacts", f"{turn_id}--{kind}.json"))
+                artifact = self._artifact_record(access, turn_id, kind)
             except NotFoundError as exc:
                 raise UnsafeStateError("mailbox event references missing artifact") from exc
-            if artifact.ref != ref or artifact.turn_id != event.turn_id or artifact.sha256 != turn.settlement.payload_sha256:
-                raise UnsafeStateError("mailbox event artifact does not match durable settlement metadata")
+            expected_metadata = ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
+            digest_mismatch = kind == "stdin" and artifact.sha256 != turn.settlement.payload_sha256
+            if artifact.ref != ref or artifact.turn_id != event.turn_id or metadata.get(ref) != expected_metadata or digest_mismatch:
+                raise UnsafeStateError("mailbox event artifact does not match durable turn metadata")
         return event
 
     @staticmethod
@@ -142,6 +149,58 @@ class LocalDurableLoop:
         atomic_replace(access, "inbox", f"{event.watchtower_id}.json", box)
         return event
 
+    def _put_artifact(self, access, turn, kind, payload, *, settlement=False):
+        kind = validate_id(kind, "artifact kind")
+        if kind == "stdin" and not settlement:
+            raise ValidationError("artifact kind 'stdin' is reserved for turn settle --stdin")
+        if turn.state != "running":
+            raise ConflictError(f"cannot attach artifact to settled turn: {turn.id}")
+        if kind in {item.kind for item in turn.artifacts}:
+            raise ConflictError(f"artifact kind already exists for turn: {kind}")
+        if len(turn.artifacts) >= 32:
+            raise ValidationError("turn artifact limit exceeded: maximum is 32")
+        if len(payload) > MAX_STDIN_BYTES:
+            raise ValidationError(f"stdin payload too large: maximum is {MAX_STDIN_BYTES} bytes")
+        digest = hashlib.sha256(payload).hexdigest()
+        ref = f"artifact:{turn.id}:{kind}"
+        artifact = Artifact(ref, turn.id, kind, len(payload), digest, payload.hex())
+        encoded_size = len((json.dumps(artifact.to_dict(), sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
+        if encoded_size > MAX_RECORD_BYTES:
+            raise ValidationError(f"stdin payload too large to store as a durable artifact: {len(payload)} bytes")
+        try:
+            atomic_create(access, "artifacts", Artifact.record_name("turn", turn.id, kind), artifact.to_dict())
+        except ConflictError:
+            existing = self._artifact_record(access, turn.id, kind)
+            if existing != artifact:
+                raise ConflictError(f"artifact kind already exists for turn: {kind}")
+        self._fault("artifact-commit")
+        metadata = ArtifactMetadata(ref, kind, len(payload), digest)
+        updated = Turn(**{
+            **turn.to_dict(),
+            "artifact_refs": (*turn.artifact_refs, ref),
+            "artifacts": (*turn.artifacts, metadata),
+        })
+        atomic_replace(access, "turns", f"{turn.id}.json", updated.to_dict())
+        self._fault("artifact-metadata-commit")
+        return updated, artifact
+
+    def artifact_put(self, turn_id, kind, payload):
+        turn_id = validate_turn_id(turn_id)
+        kind = validate_id(kind, "artifact kind")
+        if kind == "stdin":
+            raise ValidationError("artifact kind 'stdin' is reserved for turn settle --stdin")
+        if len(payload) > MAX_STDIN_BYTES:
+            raise ValidationError(f"stdin payload too large: maximum is {MAX_STDIN_BYTES} bytes")
+        # Preserve missing-home no-side-effect behavior without racing an unlocked
+        # preflight read against ordinary concurrent turn updates.
+        if not self.home.exists():
+            with reading(self.home) as access:
+                self.turns.get_from(access, turn_id)
+        with mutation(self.home) as access:
+            turn = self.turns.get_from(access, turn_id)
+            _, artifact = self._put_artifact(access, turn, kind, payload)
+            return ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
+
     def settle(self, turn_id, source, outcome, message, payload, verdict=None, needs=None):
         turn_id = validate_turn_id(turn_id)
         source = safe_string(source, "source")
@@ -156,10 +215,37 @@ class LocalDurableLoop:
             self.turns.get_from(access, turn_id)
         with mutation(self.home) as access:
             turn = self.turns.get_from(access, turn_id)
+            recovered_stdin = None
+            existing_stdin = None
+            existing_stdin_artifact = None
             if turn.state == "settled":
                 existing = turn.settlement
                 if existing.outcome != outcome or existing.summary != message or existing.verdict != verdict or existing.needs != needs or (payload is not None and existing.payload_sha256 != digest):
                     raise ConflictError("turn already has a different settlement")
+            else:
+                existing_stdin = next((item for item in turn.artifacts if item.kind == "stdin"), None)
+                if existing_stdin is not None:
+                    existing_stdin_artifact = self._artifact_record(access, turn.id, "stdin")
+                    expected = ArtifactMetadata(
+                        existing_stdin_artifact.ref,
+                        existing_stdin_artifact.kind,
+                        existing_stdin_artifact.bytes,
+                        existing_stdin_artifact.sha256,
+                    )
+                    if expected != existing_stdin:
+                        raise UnsafeStateError("settlement stdin artifact does not match turn metadata")
+                    if payload is not None and existing_stdin_artifact.sha256 != digest:
+                        raise ConflictError("turn already has different settlement stdin")
+                if payload is None:
+                    try:
+                        recovered_stdin = self._artifact_record(access, turn.id, "stdin")
+                    except NotFoundError:
+                        pass
+                    else:
+                        if Artifact.parse_ref(recovered_stdin.ref) != (turn.id, "stdin"):
+                            raise UnsafeStateError("recovered stdin artifact does not match turn")
+                if existing_stdin is None and len(turn.artifacts) >= 32 and (payload is not None or recovered_stdin is not None):
+                    raise ValidationError("turn artifact limit exceeded: maximum is 32")
             box = self._mailbox(access, turn.watchtower_id)
             if box["highest"]:
                 try:
@@ -174,18 +260,35 @@ class LocalDurableLoop:
                 box = self._mailbox(access, turn.watchtower_id)
             if turn.state == "running":
                 event_id = "evt-" + uuid.uuid4().hex
-                artifact_refs = ()
-                if payload is not None:
-                    ref = f"artifact:{turn_id}:stdin"
-                    artifact = Artifact(ref, turn_id, "stdin", len(payload), digest, payload.hex()).to_dict()
-                    encoded_size = len((json.dumps(artifact, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
-                    if encoded_size > MAX_RECORD_BYTES:
-                        raise ValidationError(f"stdin payload too large to store as a durable artifact: {len(payload)} bytes")
-                    atomic_replace(access, "artifacts", f"{turn_id}--stdin.json", artifact)
-                    artifact_refs = (ref,)
+                if existing_stdin is not None:
+                    digest = existing_stdin_artifact.sha256
+                elif payload is not None:
+                    turn, artifact = self._put_artifact(access, turn, "stdin", payload, settlement=True)
+                    digest = artifact.sha256
+                elif recovered_stdin is not None:
+                    artifact = recovered_stdin
+                    metadata = ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
+                    turn = Turn(**{
+                        **turn.to_dict(),
+                        "artifact_refs": (*turn.artifact_refs, artifact.ref),
+                        "artifacts": (*turn.artifacts, metadata),
+                    })
+                    atomic_replace(access, "turns", f"{turn.id}.json", turn.to_dict())
+                    self._fault("artifact-metadata-commit")
+                    digest = artifact.sha256
                 settled_at = timestamp()
                 settlement = Settlement(source, outcome, message, digest, event_id, settled_at, verdict, needs)
-                turn = Turn(**{**turn.to_dict(), "state": "settled", "outcome": outcome, "summary": message, "verdict": verdict, "needs": needs, "artifact_refs": artifact_refs, "settlement": settlement})
+                turn = Turn(**{
+                    **turn.to_dict(),
+                    "state": "settled",
+                    "outcome": outcome,
+                    "summary": message,
+                    "verdict": verdict,
+                    "needs": needs,
+                    "artifact_refs": turn.artifact_refs,
+                    "artifacts": turn.artifacts,
+                    "settlement": settlement,
+                })
                 atomic_replace(access, "turns", f"{turn.id}.json", turn.to_dict())
                 if os.environ.get("ZXRO_FAULT_EXIT_AFTER") == "turn-commit":
                     os._exit(86)
@@ -311,12 +414,23 @@ class LocalDurableLoop:
                 self._fault("handle-mailbox-commit")
             return handled
 
+    def _attached_artifact(self, access, ref, parsed):
+        turn = self.turns.get_from(access, parsed[0])
+        if ref not in turn.artifact_refs:
+            raise NotFoundError(f"artifact not attached to turn: {ref}")
+        record = self._artifact_record(access, parsed[0], parsed[1])
+        expected = ArtifactMetadata(record.ref, record.kind, record.bytes, record.sha256)
+        metadata = next((item for item in turn.artifacts if item.ref == ref), None)
+        if Artifact.parse_ref(record.ref) != parsed or metadata != expected:
+            raise UnsafeStateError("artifact record does not match attached turn metadata")
+        return record
+
     def artifact_path(self, ref):
         artifact = Artifact.parse_ref(ref)
         with reading(self.home) as access:
-            Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
+            self._attached_artifact(access, ref, artifact)
         with mutation(self.home) as access:
-            record = Artifact.from_dict(read_json(access, "artifacts", f"{artifact[0]}--{artifact[1]}.json"))
+            record = self._attached_artifact(access, ref, artifact)
             if Artifact.parse_ref(record.ref) != artifact:
                 raise UnsafeStateError("artifact record does not match requested reference")
             filename = f"{record.turn_id}--{record.kind}.bin"

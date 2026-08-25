@@ -3,7 +3,7 @@ from datetime import datetime
 import unicodedata
 from pathlib import Path
 
-from zxro.contract import Artifact, Settlement, Turn
+from zxro.contract import Artifact, ArtifactMetadata, Settlement, Turn
 from zxro.errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from zxro.ids import lexical_absolute, safe_string, validate_event_id, validate_id, validate_turn_id
 from .ioutil import atomic_create, list_records, mutation, read_json, reading
@@ -40,6 +40,26 @@ class LocalTurnStore:
             raise UnsafeStateError(f"invalid turn ownership: {exc}") from exc
         if owner.watchtower_id != record.watchtower_id:
             raise UnsafeStateError("turn watchtower does not match work owner")
+        if record.artifact_refs and (not record.artifacts or any(item.sha256 is None for item in record.artifacts)):
+            metadata = []
+            try:
+                if not record.artifacts:
+                    if record.state != "settled" or record.artifact_refs != (f"artifact:{record.id}:stdin",):
+                        raise ValueError("reference-only metadata is not a master-format stdin settlement")
+                    candidates = (ArtifactMetadata(record.artifact_refs[0], "stdin", 0),)
+                else:
+                    candidates = record.artifacts
+                for item in candidates:
+                    turn_id, kind = Artifact.parse_ref(item.ref)
+                    artifact = Artifact.from_dict(read_json(access, "artifacts", Artifact.record_name("turn", turn_id, kind)))
+                    if kind != "stdin" or record.settlement is None or artifact.sha256 != record.settlement.payload_sha256:
+                        raise ValueError("legacy metadata has no trusted digest")
+                    if record.artifacts and (item.bytes != artifact.bytes or item.kind != artifact.kind):
+                        raise ValueError("legacy metadata does not match artifact")
+                    metadata.append(ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256))
+            except Exception as exc:
+                raise UnsafeStateError("cannot load legacy turn artifact metadata") from exc
+            record = Turn(**{**record.to_dict(), "artifact_refs": record.artifact_refs, "artifacts": tuple(metadata), "settlement": record.settlement})
         return record
 
     def list(self, work_id=None, state=None):
@@ -64,7 +84,7 @@ class LocalTurnStore:
     @staticmethod
     def _decode(data):
         required = {"id", "work_id", "watchtower_id", "runtime", "agent", "session", "cwd", "state"}
-        optional = {"native_session_id", "outcome", "summary", "verdict", "needs", "artifact_refs", "settlement"}
+        optional = {"native_session_id", "outcome", "summary", "verdict", "needs", "artifact_refs", "artifacts", "settlement"}
         string_fields = required | ({"native_session_id", "outcome", "summary", "verdict", "needs"} & set(data))
         if set(data) - required - optional or not required <= set(data) or any(not isinstance(data.get(key), str) for key in string_fields):
             raise UnsafeStateError("invalid turn record schema")
@@ -81,10 +101,39 @@ class LocalTurnStore:
             raise UnsafeStateError(f"invalid turn record: {exc}") from exc
         if data["runtime"] != "acpx" or data["state"] not in {"running", "settled"} or normalized_cwd != data["cwd"]:
             raise UnsafeStateError("invalid turn invariant")
-        if data["state"] == "running" and set(data) & {"outcome", "summary", "verdict", "needs", "artifact_refs", "settlement"}:
+        if data["state"] == "running" and set(data) & {"outcome", "summary", "verdict", "needs", "settlement"}:
             raise UnsafeStateError("running turn has settlement fields")
+        try:
+            artifact_refs = tuple(data.get("artifact_refs", []))
+            metadata_values = data.get("artifacts", [])
+            if not isinstance(data.get("artifact_refs", []), list) or not isinstance(metadata_values, list):
+                raise ValueError("invalid artifact collections")
+            artifacts = tuple(ArtifactMetadata(**item) for item in metadata_values)
+            parsed_refs = [Artifact.parse_ref(ref) for ref in artifact_refs]
+            valid_metadata = all(
+                set(item) in ({"ref", "kind", "bytes"}, {"ref", "kind", "bytes", "sha256"})
+                for item in metadata_values
+            ) and all(
+                Artifact.parse_ref(item.ref) == (data["id"], item.kind)
+                and type(item.bytes) is int and item.bytes >= 0
+                and (item.sha256 is None or (
+                    isinstance(item.sha256, str) and len(item.sha256) == 64
+                    and len(bytes.fromhex(item.sha256)) == 32
+                ))
+                for item in artifacts
+            )
+            if (any(turn_id != data["id"] for turn_id, _ in parsed_refs)
+                    or len(set(artifact_refs)) != len(artifact_refs)
+                    or len(artifact_refs) > 32
+                    or (artifacts and len(artifact_refs) != len(artifacts))
+                    or (artifacts and tuple(item.ref for item in artifacts) != artifact_refs)
+                    or len(artifacts) > 32 or not valid_metadata):
+                raise ValueError("invalid artifact metadata")
+            data["artifact_refs"], data["artifacts"] = artifact_refs, artifacts
+        except Exception as exc:
+            raise UnsafeStateError("invalid artifact metadata") from exc
         if data["state"] == "settled":
-            if not {"outcome", "summary", "settlement"} <= set(data) or not isinstance(data.get("artifact_refs", []), list) or not isinstance(data["settlement"], dict):
+            if not {"outcome", "summary", "settlement"} <= set(data) or not isinstance(data["settlement"], dict):
                 raise UnsafeStateError("settled turn lacks settlement fields")
             try:
                 settlement_data = data["settlement"]
@@ -115,18 +164,20 @@ class LocalTurnStore:
                     if not isinstance(settlement.payload_sha256, str) or len(settlement.payload_sha256) != 64:
                         raise ValueError("invalid payload digest")
                     bytes.fromhex(settlement.payload_sha256)
-                artifact_refs = tuple(data.get("artifact_refs", []))
-                parsed_refs = [Artifact.parse_ref(ref) for ref in artifact_refs]
-                if any(turn_id != data["id"] for turn_id, _ in parsed_refs) or len(set(artifact_refs)) != len(artifact_refs):
-                    raise ValueError("invalid artifact references")
                 if data["outcome"] != settlement.outcome or data["summary"] != settlement.summary:
                     raise ValueError("settlement fields disagree")
                 if data.get("verdict") != settlement.verdict or data.get("needs") != settlement.needs:
                     raise ValueError("settlement verdict fields disagree")
-                if bool(artifact_refs) != (settlement.payload_sha256 is not None):
+                stdin = next((item for item in data["artifacts"] if item.kind == "stdin"), None)
+                if data["artifacts"]:
+                    payload_present = stdin is not None
+                else:
+                    payload_present = bool(data["artifact_refs"])
+                    if payload_present and data["artifact_refs"] != (f"artifact:{data['id']}:stdin",):
+                        raise ValueError("invalid reference-only settlement metadata")
+                if payload_present != (settlement.payload_sha256 is not None):
                     raise ValueError("settlement payload fields disagree")
                 data["settlement"] = settlement
-                data["artifact_refs"] = artifact_refs
             except Exception as exc:
                 raise UnsafeStateError("invalid settlement record") from exc
         return Turn(**data)
