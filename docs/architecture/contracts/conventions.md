@@ -6,7 +6,7 @@ tags: [architecture, contracts, conventions]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-25T13:00:51+08:00
+updated_at: "2026-08-25T18:34:06+08:00"
 ---
 
 # Contract conventions and primitives
@@ -27,7 +27,22 @@ The built-in provider writes UTF-8 JSON. Public `--json` output is one JSON valu
 
 A missing optional field means the value is absent. Writers omit absent optional values rather than emitting `null`. Durable built-in-provider records fail closed on unknown fields because an older binary cannot prove their meaning. Public JSON consumers should ignore unknown fields so additive CLI output remains compatible.
 
-Public `--json` output carries no schema version yet. A versioned envelope and its bump rules are designed but not implemented; see the [machine contract design](../../v0.x/execution/machine-contract-design.md). When that design lands, its compatibility policy replaces this paragraph.
+Every successful public `--json` result has the shape `{"schema_version":1,"data":...}`. `schema_version` is a positive integer for the whole public machine contract. zxro emits one version per binary and does not negotiate versions. Consumers must stop on an unknown version and ignore unknown fields inside `data`.
+
+The following changes are additive and do not require a version bump:
+
+- adding an optional field to an existing `data` payload;
+- adding a command that uses the current envelope;
+- emitting a previously omitted optional field.
+
+The following changes require a `schema_version` bump:
+
+- removing or renaming a field;
+- changing a field's type or meaning;
+- changing a documented opaque identifier or reference format in a way that breaks equality with earlier values;
+- changing the envelope structure.
+
+Promoting a provider-private field into `data` is additive, but still requires contract review.
 
 ## Errors
 

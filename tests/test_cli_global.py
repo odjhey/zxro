@@ -15,7 +15,9 @@ class GlobalCliTests(CliCase):
     def test_json_success_is_exactly_one_value(self):
         self.seed()
         result = self.cli("--json", "work", "show", "job")
-        self.assertEqual(json.loads(result.stdout)["id"], "job")
+        envelope = json.loads(result.stdout)
+        self.assertEqual(envelope, {"schema_version": 1, "data": envelope["data"]})
+        self.assertEqual(envelope["data"]["id"], "job")
         self.assertEqual(result.stdout.count("\n"), 1)
         self.assertEqual(result.stderr, "")
 

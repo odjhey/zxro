@@ -13,7 +13,7 @@ sources:
   - ref: ../../architecture/contracts/session-binding.md
     credibility: primary
 created_at: "2026-08-25T13:10:00+08:00"
-updated_at: "2026-08-25T15:53:42+08:00"
+updated_at: "2026-08-25T18:34:06+08:00"
 ---
 
 # ZR1-ZR4 delivery plan
@@ -30,7 +30,7 @@ Every design below must respect the invariants already published:
 
 - routine reads stay bounded; no design may inline artifact bodies into work, turn, or inbox output ([durable store contract](../../architecture/contracts/durable-store.md));
 - durable built-in-provider records fail closed on unknown fields, so each additive field carries the same downgrade posture as the M0/M1 boundary in [contract conventions](../../architecture/contracts/conventions.md#settlement-compatibility): an older binary rejects the enriched record with exit class 5;
-- all new public `--json` fields are additive. Under the machine-contract design for issues #25 and #26 (arrives with PR #27, not on this branch), additive fields do not bump the schema version. If that envelope lands first, these fields ship inside it; if not, they ship as bare-payload fields and the envelope sweep picks them up.
+- all new public `--json` fields are additive. Under the machine-contract design for issues #25 and #26, additive fields do not bump the schema version. These fields ship inside the version 1 envelope.
 
 ## ZR3: late session/native-ID binding
 

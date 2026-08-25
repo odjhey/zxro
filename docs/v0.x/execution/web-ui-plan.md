@@ -23,7 +23,7 @@ sources:
   - ref: ../engineering/runtime-and-provisioning.md
     credibility: primary
 created_at: "2026-08-25T09:35:45+08:00"
-updated_at: "2026-08-25T10:39:41+08:00"
+updated_at: "2026-08-25T23:39:02+08:00"
 ---
 
 # CLI-first Web UI plan
@@ -236,7 +236,7 @@ If `turn list` or any other required read fails, the UI publishes no new current
 
 `Safe now` means the merged implementation takes no ZXRO mutation path. It does not mean the command is side-channel free on every filesystem.
 
-| Public CLI capability | JSON shape now | UI view | Read status | Parity rule and test |
+| Public CLI capability | `data` shape inside the version 1 envelope | UI view | Read status | Parity rule and test |
 |---|---|---|---|---|
 | `watchtower list` | Array of watchtower records | Overview, watchtower list | Safe now | Adapter output equals CLI records field for field |
 | `watchtower show <id>` | One watchtower record | Watchtower detail | Safe now | Detail equals `show`; list-to-detail identity must match |
@@ -314,7 +314,7 @@ The proposed commands below do not exist on `master`.
 ### G1. Physically read-only pending attention
 
 - Operator question: "Which actionable events still need attention without changing durable state?"
-- Proposed contract: add `zxro inbox pending --watchtower <id> --read-only`. JSON remains an array of bounded event envelopes. The flag guarantees no compaction, marker creation, lock-file creation, or provider write. A later compatibility decision may make pure reads the default and move compaction to mutation paths or an explicit maintenance command.
+- Proposed contract: add `zxro inbox pending --watchtower <id> --read-only`. The version 1 envelope's `data` remains an array of bounded event records. The flag guarantees no compaction, marker creation, lock-file creation, or provider write. A later compatibility decision may make pure reads the default and move compaction to mutation paths or an explicit maintenance command.
 - Schema and versioning: retain the existing event schema. Advertise the `inbox.pending.read_only` capability and schema revision through G6.
 - Security and privacy: same bounded summaries and references as current pending. No bodies. The guarantee must include missing and malformed state.
 - Dependencies: durable-store contract clarification and provider conformance hooks that count writes as well as reads.
@@ -332,7 +332,7 @@ The proposed commands below do not exist on `master`.
   ```
 
   `stat` returns a versioned envelope containing provider-neutral `ref`, `kind`, and `bytes`, plus optional digest and media metadata when the provider can prove them. `read` returns `ref`, `offset`, `returned_bytes`, `complete`, optional digest, and `data_base64`. It enforces a small maximum chunk. It does not return or create a local path.
-- Schema and versioning: new commands use `{schema_version:1,...}` envelopes. Optional fields follow contract conventions. Existing `artifact path` remains unchanged and is never used by the UI.
+- Schema and versioning: new commands return `{"schema_version":1,"data":{...}}`. Optional fields inside `data` follow contract conventions. Existing `artifact path` remains unchanged and is never used by the UI.
 - Security and privacy: artifact data is high risk. No prefetch, bulk endpoint, routine indexing, browser persistence, logs, or URL parameters containing content. Apply server response limits and `Cache-Control: no-store`.
 - Dependencies: provider-neutral `artifact.stat` and range-read capability. Providers that cannot range-read may return an explicit unsupported capability rather than a path.
 - Priority: P0 for metadata parity. Body preview may follow at P1 after a privacy review.
@@ -347,7 +347,7 @@ The proposed commands below do not exist on `master`.
   zxro inbox history --watchtower <id> --after-generation <n> --limit <n>
   ```
 
-  Return `{schema_version,watchtower_id,events,next_after_generation,complete}`. Each item contains the immutable event plus `read: boolean`, `handled: boolean`, and optional `handled_at`. Generation remains canonical order.
+  Return `{"schema_version":1,"data":{"watchtower_id":...,"events":...,"next_after_generation":...,"complete":...}}`. Each item in `data.events` contains the immutable event plus `read: boolean`, `handled: boolean`, and optional `handled_at`. Generation remains canonical order.
 - Schema and versioning: version the page envelope and history item. Keep the embedded event compatible with current public event JSON.
 - Security and privacy: pagination and output caps are mandatory. History still contains bounded summaries, cwd-free event metadata, and artifact references, not artifact bodies.
 - Dependencies: promote the optional durable-store `mail.since` behavior and add handled-state lookup to the provider-neutral read capability.
@@ -363,7 +363,7 @@ The proposed commands below do not exist on `master`.
   zxro inbox status --watchtower <id>
   ```
 
-  Return `{schema_version,watchtower_id,ack_generation,highest_generation,unread_count,pending_count}` with strict integers and an optional integrity status.
+  Return `{"schema_version":1,"data":{"watchtower_id":...,"ack_generation":...,"highest_generation":...,"unread_count":...,"pending_count":...}}` with strict integers and an optional integrity status inside `data`.
 - Schema and versioning: versioned envelope. Counts name their exact set. Do not add a generic health score.
 - Security and privacy: counts disclose workload shape but no body. Treat them as home-private data.
 - Dependencies: pure pending semantics from G1 or a provider count operation with the same validation.
@@ -379,8 +379,8 @@ The proposed commands below do not exist on `master`.
   zxro state snapshot --include watchtowers,work,turns,mailbox-status
   ```
 
-  Return one bounded, versioned envelope with a provider-issued `snapshot_id`, `observed_at`, included collections, and capability errors. Artifact bodies and full mailbox history stay excluded.
-- Schema and versioning: top-level `schema_version` plus per-capability revisions. A snapshot ID proves equality only within one home and provider; it is not a global event order.
+  Return one bounded `{"schema_version":1,"data":{...}}` envelope. `data` contains a provider-issued `snapshot_id`, `observed_at`, included collections, and capability errors. Artifact bodies and full mailbox history stay excluded.
+- Schema and versioning: the standard top-level `schema_version` wraps `data`, which carries per-capability revisions. A snapshot ID proves equality only within one home and provider; it is not a global event order.
 - Security and privacy: one response aggregates sensitive paths and session references. Apply output caps and never log the body.
 - Dependencies: shared or equivalent provider read consistency. G1 and G4 must already define pure mailbox projections.
 - Priority: P2 core CLI enhancement. MVP can use guarded multi-command refresh first.
@@ -397,8 +397,8 @@ The proposed commands below do not exist on `master`.
   zxro --json-errors <existing read command>
   ```
 
-  Capabilities return command, output, and logging schema revisions without probing mutating commands. With structured logging disabled, JSON errors use stderr and contain `schema_version`, stable `code`, exit class, and bounded message. With G19 JSONL enabled, stderr contains one schema-valid JSON event per line and the final invocation event carries the same error object.
-- Schema and versioning: these commands establish explicit revisions for new envelopes. Existing unversioned record outputs remain compatible and additive.
+  Successful capability results return command, output, and logging schema revisions inside the version 1 envelope's `data` without probing mutating commands. With structured logging disabled, JSON errors use stderr and contain `schema_version`, stable `code`, exit class, and bounded message. With G19 JSONL enabled, stderr contains one schema-valid JSON event per line and the final invocation event carries the same error object.
+- Schema and versioning: these commands advertise revisions beyond the current version 1 result envelope. Existing `data` fields remain compatible and additive.
 - Security and privacy: version output must not include environment variables, home contents, or executable search paths. Errors must not dump raw records or artifact content.
 - Dependencies: the G19 logging event schema must be defined first so G6 can consume and advertise its version, plus a contract-conventions update and stable error identifiers. G19 does not depend on G6.
 - Priority: P0 core CLI prerequisite after G19 and before reliable adapter negotiation. MVP may pin one CLI version, but it still needs a deterministic unsupported-capability screen.
@@ -598,7 +598,7 @@ The proposed commands below do not exist on `master`.
   ```
 
   Return a versioned summary with each scope's `ok|degraded|failed|not_checked` state, checked item count, bounded stable diagnostic codes, opaque resource fingerprints, truncation, and elapsed milliseconds. It must not return record or artifact bodies and must not repair, compact, materialize, ack, or handle.
-- Schema and versioning: `{schema_version:1,observed_at,scopes,complete,duration_ms}` with stable diagnostic codes linked to G19 event names where useful. Human stderr remains separate from JSON stdout.
+- Schema and versioning: `{"schema_version":1,"data":{"observed_at":...,"scopes":...,"complete":...,"duration_ms":...}}` with stable diagnostic codes linked to G19 event names where useful. Human stderr remains separate from JSON stdout.
 - Security and privacy: explicit scope and item limits prevent accidental whole-home disclosure or denial of service. Default output omits raw paths and IDs. Sensitive detail is opt-in and local.
 - Dependencies: provider-neutral validation reads, pure G1/G2 behavior, and no-write conformance hooks. This command is not a localfs inspector.
 - Priority: P1 core CLI enhancement after the minimum logging foundation.

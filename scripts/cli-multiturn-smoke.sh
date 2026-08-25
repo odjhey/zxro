@@ -18,9 +18,20 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-json_event_id() {
-    python3 -c 'import json,sys; events=json.load(sys.stdin); print(next(event["event_id"] for event in events if event["generation"] == int(sys.argv[1])))' "$1"
+json_envelope_data() {
+    python3 -c 'import json,sys; envelope=json.load(sys.stdin); version=envelope.get("schema_version") if type(envelope) is dict else None; valid=type(envelope) is dict and set(envelope) == {"schema_version", "data"} and type(version) is int and version == 1; valid or sys.exit("unsupported JSON envelope"); json.dump(envelope["data"], sys.stdout, separators=(",", ":"), sort_keys=True); print()'
 }
+
+json_event_id() {
+    json_envelope_data | python3 -c 'import json,sys; events=json.load(sys.stdin); print(next(event["event_id"] for event in events if event["generation"] == int(sys.argv[1])))' "$1"
+}
+
+for invalid_version in true 1.0 2; do
+    if printf '{"schema_version":%s,"data":[]}\n' "$invalid_version" | json_envelope_data >/dev/null 2>&1; then
+        printf 'invalid schema version accepted: %s\n' "$invalid_version" >&2
+        exit 1
+    fi
+done
 
 printf 'disposable state: %s\n' "$STATE"
 "$ZXRO" watchtower create ops --cwd /tmp/zxro-operator
@@ -54,7 +65,7 @@ else
 fi
 
 "$ZXRO" ack --watchtower ops --through 6
-test "$("$ZXRO" --json inbox unread --watchtower ops)" = '[]'
+test "$("$ZXRO" --json inbox unread --watchtower ops)" = '{"data":[],"schema_version":1}'
 EVENT6=$(printf '%s\n' "$EVENTS" | json_event_id 6)
 EVENT2=$(printf '%s\n' "$EVENTS" | json_event_id 2)
 "$ZXRO" inbox handle "$EVENT6"
@@ -70,7 +81,7 @@ done
 "$ZXRO" work close release-fix
 "$ZXRO" --json work show release-fix
 "$ZXRO" --json turn list --work release-fix
-test "$("$ZXRO" --json inbox pending --watchtower ops)" = '[]'
+test "$("$ZXRO" --json inbox pending --watchtower ops)" = '{"data":[],"schema_version":1}'
 
 if [ "$INSPECT" = 1 ]; then
     printf '%s\n' 'durable file inventory:'
