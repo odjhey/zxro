@@ -365,6 +365,32 @@ class ArtifactPutCliTests(CliCase):
         shown = payload(json.loads(self.cli("--json", "turn", "show", second).stdout))
         self.assertEqual(shown["settlement"]["payload_sha256"], __import__("hashlib").sha256(b"second").hexdigest())
 
+    def test_recovered_stdin_artifact_ref_mismatch_is_rejected(self):
+        other = self.cli(
+            "turn", "create", "--work", "job", "--agent", "pi",
+            "--session", "other", "--cwd", "/tmp",
+        ).stdout.strip()
+        self.assertEqual(self.binary_cli(
+            "turn", "settle", other, "--source", "manual", "--status", "completed",
+            "--message", "done", "--stdin", body=b"other-turns-stdin",
+        ).returncode, 0)
+        foreign_record = (self.home / "artifacts" / f"{other}--stdin.json").read_text()
+        (self.home / "artifacts" / f"{self.turn}--stdin.json").write_text(foreign_record)
+
+        def snapshot():
+            return {
+                path.relative_to(self.home): path.read_bytes()
+                for path in self.home.rglob("*") if path.is_file()
+            }
+
+        before = snapshot()
+        rejected = self.cli(
+            "turn", "settle", self.turn, "--source", "manual", "--status", "completed", "--message", "done",
+        )
+        self.assertEqual(rejected.returncode, 5, rejected.stderr)
+        self.assertEqual(snapshot(), before)
+        self.assertEqual(self.shown()["state"], "running")
+
     def test_settlement_wire_output_omits_artifact_metadata(self):
         self.assertEqual(self.put("review", b"review").returncode, 0)
         result = self.binary_cli(
