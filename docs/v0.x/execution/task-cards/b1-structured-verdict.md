@@ -6,7 +6,7 @@ tags: [v0.x, execution, task-cards, settlement, mailbox]
 status: draft
 generated: "Claude Fable 5 agent, 2026-08-25"
 created_at: "2026-08-25T14:25:09+08:00"
-updated_at: "2026-08-25T14:25:09+08:00"
+updated_at: "2026-08-25T14:51:24+08:00"
 ---
 
 # B1 — Structured routing verdict
@@ -15,7 +15,7 @@ Implements ZR1 from the [ZR1-ZR4 delivery plan](../rozoro-requirements-plan.md);
 
 ## Outcome
 
-`zxro turn settle` accepts an optional `--verdict done|waiting|needs-action|blocked` and a bounded `--needs` value, both join settlement retry identity, and mailbox event envelopes expose them so a watchtower routes on fields, never on prose. The report's Scenario B passes end to end: `outcome=completed`, `verdict=blocked`.
+`zxro turn settle` accepts an optional `--verdict done|ready|blocked` and a bounded `--needs` value, both join settlement retry identity, and mailbox event envelopes expose them so a watchtower makes its mechanical routing decision on fields, never on prose. The report's Scenario B passes end to end: `outcome=completed`, `verdict=blocked`.
 
 ## Inputs and dependencies
 
@@ -25,7 +25,8 @@ Implements ZR1 from the [ZR1-ZR4 delivery plan](../rozoro-requirements-plan.md);
 
 ## In scope
 
-- `--verdict` (four fixed values) and `--needs` (at most 1,000 Unicode characters after NFC normalization, same rule as `--message`) on `turn settle`; both optional, stored as absent when omitted, no default derived from `--status`.
+- `--verdict` with three fixed values answering one producer-locally knowable question, "can the work advance without something this turn could not provide": `done` (nothing left that this turn knows of), `ready` (more to do, nothing in the way), `blocked` (cannot advance without what `--needs` names). `--needs` is at most 1,000 Unicode characters after NFC normalization, same rule as `--message`. Both optional, stored as absent when omitted, no default derived from `--status`.
+- The two scoping rules that keep the vocabulary honest: a verdict states durable work facts, never who acts next (routing is the watchtower's job, made from fields plus `--needs` judgment), and never runtime liveness (background tasks or subagents still running mean the producer must not settle yet, per requirement 13 of the requirements report, not settle with a hedged verdict).
 - Extending settlement retry equality: an idempotent retry repeats verdict and needs exactly; a conflict fails with exit class 4, matching existing outcome/summary rules.
 - `verdict` and `needs` on the settled turn record and in `inbox unread` / `inbox pending` envelopes when present.
 - Downgrade note in conventions: older binaries reject verdict-carrying durable records with exit class 5.
@@ -36,6 +37,8 @@ Implements ZR1 from the [ZR1-ZR4 delivery plan](../rozoro-requirements-plan.md);
 
 - Deriving a verdict from `--status`.
 - Vocabulary extensions; adding a value is a later contract change.
+- Who-acts-next taxonomies or a `--needs-kind` enum; those encode routing conclusions the producer cannot know. If a live watchtower loop later shows constant `--needs` pattern-matching, add structure from those observed categories, not guessed ones.
+- Settlement-timing enforcement in the harness integrations; the trustworthy-boundary rule lands with the Pi and Claude cards, and a premature settlement already fails loudly here as a retry-identity conflict.
 - Changes to the Pi or Claude integrations themselves.
 - Structured `inputs-needed` payloads beyond bounded text; larger content is a C1 artifact referenced from the turn.
 
@@ -75,7 +78,7 @@ bin/zxro --json inbox pending --watchtower <id>   # verdict field present
 
 ## Human gate
 
-Maintainer sign-off on the verdict vocabulary (`done | waiting | needs-action | blocked`) before implementation, as named in the delivery plan; watchtower logic will switch on these strings.
+Maintainer sign-off on the verdict vocabulary (`done | ready | blocked`) before implementation, as named in the delivery plan; watchtower logic will switch on these strings. Acceptance test for the gate: classify ten real settlement situations using only what the settling process knew at the time; if two classifiers disagree on more than one, the vocabulary is underspecified.
 
 ## Related
 

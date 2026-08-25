@@ -13,7 +13,7 @@ sources:
   - ref: ../../architecture/contracts/session-binding.md
     credibility: primary
 created_at: "2026-08-25T13:10:00+08:00"
-updated_at: "2026-08-25T13:10:00+08:00"
+updated_at: "2026-08-25T14:51:24+08:00"
 ---
 
 # ZR1-ZR4 delivery plan
@@ -86,7 +86,9 @@ zxro turn settle <turn-id> \
 
 Decisions:
 
-- `--verdict` takes `done`, `waiting`, `needs-action`, or `blocked`. It is optional; an omitted verdict is stored as absent, so existing callers and hooks keep working unchanged. No default is derived from `--status`, because guessing `done` from `completed` would recreate the ambiguity ZR1 exists to remove;
+- `--verdict` takes `done`, `ready`, or `blocked`. The three values answer one question the settling producer can answer from local knowledge alone: can the work item advance without something this turn could not provide? `done` means nothing left that this turn knows of; `ready` means more to do with nothing in the way, so the workflow can dispatch the next turn; `blocked` means the work cannot advance without something named in `--needs`. It is optional; an omitted verdict is stored as absent, so existing callers and hooks keep working unchanged. No default is derived from `--status`, because guessing `done` from `completed` would recreate the ambiguity ZR1 exists to remove;
+- an earlier draft used `done|waiting|needs-action|blocked`. `waiting` and `needs-action` were cut because they differ only in who acts next, and that is a routing conclusion owned by the watchtower, not a fact the settling producer can know. Verdicts state durable work facts; the watchtower maps facts to routing, reading `--needs` when its judgment requires detail. Only the mechanical decision (advance, dispatch next, or stop and attend) must be field-driven;
+- a verdict never encodes runtime liveness. Background tasks or subagents still running at a harness turn-end signal are live runtime truth, not durable work state. A producer that cannot certify a trustworthy terminal boundary must not settle at all (requirement 13 in the [requirements report](../../reports/2026-08-25-rozoro-derived-requirements.md)) rather than settle with a hedged verdict; the retry-identity rule below makes a premature settlement fail loudly when the true terminal result arrives;
 - `--needs` is a bounded free-text value under the same 1,000-character normalization rule as `--message`, for the `inputs-needed` fact. Anything larger belongs in a ZR4 artifact referenced from the turn;
 - verdict and needs join settlement identity: an idempotent retry must repeat them exactly, and a conflicting verdict fails deterministically with exit class 4, matching the existing outcome/summary retry rules;
 - the mailbox event envelope carries `verdict` and `needs` when present, so `inbox unread` and `inbox pending` expose the routing fact directly. The invariant from the report holds: a watchtower never parses words like "blocked" out of prose;
