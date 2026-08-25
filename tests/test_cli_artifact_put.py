@@ -324,8 +324,27 @@ class ArtifactPutCliTests(CliCase):
         running = self.shown()
         self.assertEqual(running["state"], "running")
         self.assertEqual([item["kind"] for item in running["artifacts"]], ["stdin"])
+        unrelated = self.cli(
+            "turn", "create", "--work", "job", "--agent", "pi",
+            "--session", "unrelated-mismatch", "--cwd", "/tmp",
+        ).stdout.strip()
+        publication_gap = self.binary_cli(
+            "turn", "settle", unrelated, "--source", "manual", "--status", "completed",
+            "--message", "unrelated", env={"ZXRO_FAULT_EXIT_AFTER": "index-commit"},
+        )
+        self.assertEqual(publication_gap.returncode, 86)
+        self.assertFalse((self.home / "inbox" / "main.json").exists())
+        before = {
+            path.relative_to(self.home): path.read_bytes()
+            for path in self.home.rglob("*") if path.is_file()
+        }
         mismatch = self.binary_cli(*settle_args, body=b"changed")
         self.assertEqual(mismatch.returncode, 4)
+        after = {
+            path.relative_to(self.home): path.read_bytes()
+            for path in self.home.rglob("*") if path.is_file()
+        }
+        self.assertEqual(after, before)
         retry = self.binary_cli(*settle_args, body=b"hook")
         self.assertEqual(retry.returncode, 0, retry.stderr)
 

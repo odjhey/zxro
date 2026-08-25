@@ -217,12 +217,25 @@ class LocalDurableLoop:
             turn = self.turns.get_from(access, turn_id)
             recovered_stdin = None
             existing_stdin = None
+            existing_stdin_artifact = None
             if turn.state == "settled":
                 existing = turn.settlement
                 if existing.outcome != outcome or existing.summary != message or existing.verdict != verdict or existing.needs != needs or (payload is not None and existing.payload_sha256 != digest):
                     raise ConflictError("turn already has a different settlement")
             else:
                 existing_stdin = next((item for item in turn.artifacts if item.kind == "stdin"), None)
+                if existing_stdin is not None:
+                    existing_stdin_artifact = self._artifact_record(access, turn.id, "stdin")
+                    expected = ArtifactMetadata(
+                        existing_stdin_artifact.ref,
+                        existing_stdin_artifact.kind,
+                        existing_stdin_artifact.bytes,
+                        existing_stdin_artifact.sha256,
+                    )
+                    if expected != existing_stdin:
+                        raise UnsafeStateError("settlement stdin artifact does not match turn metadata")
+                    if payload is not None and existing_stdin_artifact.sha256 != digest:
+                        raise ConflictError("turn already has different settlement stdin")
                 if payload is None:
                     try:
                         recovered_stdin = self._artifact_record(access, turn.id, "stdin")
@@ -245,13 +258,7 @@ class LocalDurableLoop:
             if turn.state == "running":
                 event_id = "evt-" + uuid.uuid4().hex
                 if existing_stdin is not None:
-                    artifact = self._artifact_record(access, turn.id, "stdin")
-                    expected = ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
-                    if expected != existing_stdin:
-                        raise UnsafeStateError("settlement stdin artifact does not match turn metadata")
-                    if payload is not None and artifact.sha256 != digest:
-                        raise ConflictError("turn already has different settlement stdin")
-                    digest = artifact.sha256
+                    digest = existing_stdin_artifact.sha256
                 elif payload is not None:
                     turn, artifact = self._put_artifact(access, turn, "stdin", payload, settlement=True)
                     digest = artifact.sha256
