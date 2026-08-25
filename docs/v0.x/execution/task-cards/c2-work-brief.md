@@ -6,7 +6,7 @@ tags: [v0.x, execution, task-cards, artifacts, work]
 status: draft
 generated: "Claude Fable 5 agent, 2026-08-25"
 created_at: "2026-08-25T14:25:09+08:00"
-updated_at: "2026-08-25T14:25:09+08:00"
+updated_at: "2026-08-25T15:53:42+08:00"
 ---
 
 # C2 — Durable work brief
@@ -34,7 +34,7 @@ The original request behind a work item survives session churn: a work item carr
 
 ## Out of scope
 
-- Brief mutation or versioning; corrections belong in turn artifacts or the bounded work summary.
+- Brief mutation or versioning; corrections belong in turn artifacts or the bounded work summary. The brief is an immutable record of the original request and the measuring stick for B1 verdicts, not the current statement of the work (that is the summary). When a producer cannot honestly classify `done`, `partial`, or `blocked` against the brief, the work has become different work: open a new work item with a new brief.
 - Any accumulated handoff document; this card exists to prevent one.
 - Briefs on watchtowers or turns.
 

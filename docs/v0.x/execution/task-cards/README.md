@@ -5,7 +5,7 @@ type: index
 tags: [v0.x, execution, task-cards]
 status: current
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-25T14:25:09+08:00
+updated_at: 2026-08-25T15:53:42+08:00
 ---
 
 # v0.x Task Cards
@@ -30,7 +30,7 @@ lane D  d1 turn bind
 
 - [A1 versioned JSON envelope](./a1-versioned-json-envelope.md) wraps all public `--json` output and publishes the compatibility policy.
 - [A2 namespaced work metadata](./a2-namespaced-work-metadata.md) adds bounded namespaced metadata to work records; stacked on A1.
-- [B1 structured verdict](./b1-structured-verdict.md) separates routing verdict from execution outcome on settlement; gated on the verdict-vocabulary sign-off.
+- [B1 structured verdict](./b1-structured-verdict.md) separates routing verdict (`done|partial|blocked`, measured against the brief) from execution outcome on settlement; the vocabulary gate cleared on 2026-08-25.
 - [C1 per-turn artifacts](./c1-per-turn-artifacts.md) adds `artifact put` with kind-unique references and evidence frozen at settlement.
 - [C2 work brief](./c2-work-brief.md) adds the set-once work-scoped brief artifact; stacked on C1.
 - [D1 turn bind](./d1-turn-bind.md) implements late native-session-ID binding; smallest card, no dependencies.
