@@ -3,7 +3,7 @@ name: v0x_cli_multiturn_operator_readiness
 description: "Behavioral and manual evidence that the merged CLI can carry an operator-driven multi-turn work item without Pi or Claude adapters."
 type: report
 tags: [v0.x, validation, cli, operator]
-status: draft
+status: current
 generated: "OpenAI GPT-5.4, 2026-08-25"
 sources:
   - ref: ../../../tests/test_cli_multiturn.py
@@ -13,16 +13,18 @@ sources:
   - ref: ../surfaces/cli.md
     credibility: primary
 created_at: "2026-08-25T08:00:00+08:00"
-updated_at: "2026-08-25T08:30:00+08:00"
+updated_at: "2026-08-25T09:17:50+08:00"
 ---
 
 # CLI multi-turn operator readiness
 
 ## Recommendation
 
-Recommendation: pass the merged M0 and M1 CLI to operator evaluation for an operator-driven multi-turn flow. The public CLI completed six role turns, including failed and cancelled outcomes followed by recovery turns. It also covered payload retrieval, mailbox processing, history, and close. No Pi or Claude adapter took part.
+The merged M0 and M1 CLI is ready for operator evaluation of an operator-driven multi-turn flow. The public CLI completed six role turns, including failed and cancelled outcomes followed by recovery turns. It also covered payload retrieval, mailbox processing, history, and close. No Pi or Claude adapter took part.
 
-This report remains `draft` until an independent reviewer accepts the evidence. The recommendation is not a release approval or an M7 automation claim. The current CLI does not wake a watchtower or dispatch agents. M2 `inspect`, `turn env`, and `turn run` are not on `master`. Operators can complete this evaluation with `work show`, `turn list`, `turn show`, mailbox commands, and `artifact path`.
+Independent review and validation accepted PR [#17](https://github.com/odjhey/zxro/pull/17) at exact head [`c0a8c49f49836ef3b182883a522c50b917d007a1`](https://github.com/odjhey/zxro/commit/c0a8c49f49836ef3b182883a522c50b917d007a1). The PR merged as [`a191ae7d00ed2d1974ab27581bda80b6346c8cde`](https://github.com/odjhey/zxro/commit/a191ae7d00ed2d1974ab27581bda80b6346c8cde), and the [post-merge `master` CI run](https://github.com/odjhey/zxro/actions/runs/32795552021) passed all four jobs.
+
+This acceptance is not a release approval or an M7 automation claim. The current CLI does not wake a watchtower or dispatch agents. M2 `inspect`, `turn env`, and `turn run` are not on `master`. Operators can complete this evaluation with `work show`, `turn list`, `turn show`, mailbox commands, and `artifact path`.
 
 ## Automated evidence
 
@@ -52,7 +54,7 @@ scripts/cli-multiturn-smoke.sh
 
 The smoke script prints its state path and removes that directory on exit. `ZXRO_SMOKE_KEEP=1` retains state. `ZXRO_SMOKE_INSPECT=1` prints a durable file inventory plus the work, cancelled-turn, and mailbox records. These inspection records corroborate public output; the script never reads them to make lifecycle decisions.
 
-The focused test passed 1 of 1. The full suite passed 84 of 84. The pre-change `master` suite passed 83 of 83, so the new coverage preserves the existing M0 and M1 checks.
+The focused test passed 1 of 1. The full suite passed 84 of 84. The pre-change `master` suite passed 83 of 83, so the new coverage preserves the existing M0 and M1 checks. PR #17's [exact-head CI run](https://github.com/odjhey/zxro/actions/runs/32794924128) passed on Python 3.11 and 3.12 across Ubuntu and macOS.
 
 ## Reproducible terminal run
 

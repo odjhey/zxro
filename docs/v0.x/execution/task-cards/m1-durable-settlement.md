@@ -6,7 +6,7 @@ tags: [v0.x, execution, cli, mailbox]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: "2026-08-24T20:05:00+08:00"
-updated_at: "2026-08-24T23:50:00+08:00"
+updated_at: "2026-08-25T09:17:50+08:00"
 ---
 
 # M1 durable settlement task card
@@ -69,7 +69,7 @@ M1 depends on merged PR #6 at commit `7dbb533` and accepts [decision 0002](../..
 - [x] Retry equality and durable event identity recorded.
 - [x] Focused black-box tests pass locally on Python 3.11+.
 - [x] GitHub Actions passed on Python 3.11 and 3.12 across Ubuntu and macOS for exact implementation head `2bc201a1393b56853db7498c528d192a04854ac1` in [run 32741777149](https://github.com/odjhey/zxro/actions/runs/32741777149).
-- [ ] Independent architecture, security, and compatibility review approves the PR.
+- [x] Independent architecture, security, and compatibility review approved exact PR #7 head [`aa4bdb41faa287f791884bbcca81eac7cfbeaf88`](https://github.com/odjhey/zxro/commit/aa4bdb41faa287f791884bbcca81eac7cfbeaf88); it merged as [`7a3db5acd7785bcd3946604ef2282ea887b4f7ce`](https://github.com/odjhey/zxro/commit/7a3db5acd7785bcd3946604ef2282ea887b4f7ce), and the [post-merge `master` CI run](https://github.com/odjhey/zxro/actions/runs/32744147269) passed all four jobs.
 
 ## Related
 
