@@ -47,6 +47,7 @@ class MultiTurnOperatorFlowTests(CliCase):
             ("reviewer", "failed", "Review process exited before a verdict.", "reviewer exit 17\n"),
             ("reviewer", "completed", "Review found one blocking validation bug.", "BLOCKER: reject empty token\n"),
             ("coder", "completed", "Validation bug fixed; focused tests pass.", "tests: 14 passed\n"),
+            ("tester", "cancelled", "Test run cancelled during environment maintenance.", "maintenance window started\n"),
             ("tester", "completed", "Regression suite passed; ready to close.", "suite: pass\n"),
         )
         for sequence, (role, status, message, payload) in enumerate(stages, 1):
@@ -65,7 +66,7 @@ class MultiTurnOperatorFlowTests(CliCase):
             self.assertEqual(__import__("pathlib").Path(artifact.stdout.strip()).read_text(), payload)
 
         unread = self.ok_json("inbox", "unread", "--watchtower", "ops")
-        self.assertEqual([event["generation"] for event in unread], [1, 2, 3, 4, 5])
+        self.assertEqual([event["generation"] for event in unread], [1, 2, 3, 4, 5, 6])
         self.assertEqual([event["outcome"] for event in unread], [stage[1] for stage in stages])
         self.assertTrue(all("BLOCKER:" not in json.dumps(event) for event in unread))
 
@@ -73,16 +74,16 @@ class MultiTurnOperatorFlowTests(CliCase):
         self.assertEqual(retry.returncode, 0, retry.stderr)
         conflict = self.settle(turns[-1], "failed", "changed terminal result")
         self.assertEqual(conflict.returncode, 4)
-        self.assertEqual(len(self.ok_json("inbox", "unread", "--watchtower", "ops")), 5)
+        self.assertEqual(len(self.ok_json("inbox", "unread", "--watchtower", "ops")), 6)
 
-        self.assertEqual(self.cli("ack", "--watchtower", "ops", "--through", "5").returncode, 0)
+        self.assertEqual(self.cli("ack", "--watchtower", "ops", "--through", "6").returncode, 0)
         self.assertEqual(self.ok_json("inbox", "unread", "--watchtower", "ops"), [])
         self.assertEqual(
             [event["generation"] for event in self.ok_json("inbox", "pending", "--watchtower", "ops")],
-            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5, 6],
         )
 
-        for generation in (5, 2, 1, 3, 4):
+        for generation in (6, 2, 5, 1, 3, 4):
             event_id = unread[generation - 1]["event_id"]
             self.assertEqual(self.cli("inbox", "handle", event_id).returncode, 0)
         self.assertEqual(self.cli("inbox", "handle", unread[0]["event_id"]).returncode, 0)
@@ -98,5 +99,5 @@ class MultiTurnOperatorFlowTests(CliCase):
         self.assertEqual(self.cli("work", "close", "release-fix").returncode, 0)
         self.assertEqual(self.cli("work", "close", "release-fix").returncode, 0)
         self.assertEqual(self.ok_json("work", "show", "release-fix")["state"], "closed")
-        self.assertEqual(len(self.ok_json("turn", "list", "--work", "release-fix")), 5)
+        self.assertEqual(len(self.ok_json("turn", "list", "--work", "release-fix")), 6)
         self.assertEqual(self.ok_json("inbox", "pending", "--watchtower", "ops"), [])

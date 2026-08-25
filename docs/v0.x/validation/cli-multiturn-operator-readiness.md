@@ -13,16 +13,16 @@ sources:
   - ref: ../surfaces/cli.md
     credibility: primary
 created_at: "2026-08-25T08:00:00+08:00"
-updated_at: "2026-08-25T08:00:00+08:00"
+updated_at: "2026-08-25T08:30:00+08:00"
 ---
 
 # CLI multi-turn operator readiness
 
 ## Recommendation
 
-Pass the merged M0 and M1 CLI to operator evaluation for an operator-driven multi-turn flow. The public CLI was sufficient for creation, four role turns, one failed terminal outcome and recovery turn, payload retrieval, mailbox processing, history, and close. No Pi or Claude adapter took part.
+Recommendation: pass the merged M0 and M1 CLI to operator evaluation for an operator-driven multi-turn flow. The public CLI completed six role turns, including failed and cancelled outcomes followed by recovery turns. It also covered payload retrieval, mailbox processing, history, and close. No Pi or Claude adapter took part.
 
-This is not an M7 automation claim. The current CLI does not wake a watchtower or dispatch agents. M2 `inspect` and metadata helpers are also not on `master`. Operators can still complete this evaluation with `work show`, `turn list`, `turn show`, mailbox commands, and `artifact path`.
+This report remains `draft` until an independent reviewer accepts the evidence. The recommendation is not a release approval or an M7 automation claim. The current CLI does not wake a watchtower or dispatch agents. M2 `inspect`, `turn env`, and `turn run` are not on `master`. Operators can complete this evaluation with `work show`, `turn list`, `turn show`, mailbox commands, and `artifact path`.
 
 ## Automated evidence
 
@@ -33,7 +33,8 @@ coder completed
 reviewer failed
 reviewer recovery completed with one blocker
 coder completed with the fix
-tester completed
+tester cancelled
+tester recovery completed
 ack all delivery
 handle events out of order
 close work
@@ -49,79 +50,68 @@ python3 -m unittest discover -s tests -v
 scripts/cli-multiturn-smoke.sh
 ```
 
-The smoke script prints its state path and removes that directory on exit. Set `ZXRO_SMOKE_KEEP=1` to retain state for inspection, then remove the printed directory manually.
+The smoke script prints its state path and removes that directory on exit. `ZXRO_SMOKE_KEEP=1` retains state. `ZXRO_SMOKE_INSPECT=1` prints a durable file inventory plus the work, cancelled-turn, and mailbox records. These inspection records corroborate public output; the script never reads them to make lifecycle decisions.
 
-The focused test passed 1 of 1. The full suite passed 84 of 84 after adding it. The pre-change `master` suite passed 83 of 83, so the new coverage preserves the existing M0 and M1 checks.
+The focused test passed 1 of 1. The full suite passed 84 of 84. The pre-change `master` suite passed 83 of 83, so the new coverage preserves the existing M0 and M1 checks.
 
 ## Reproducible terminal run
 
-The manual run used the checkout's public executable. `scripts/cli-multiturn-smoke.sh` is the exact durable simulation. The command sequence below shows its main operations. Generated turn and event IDs replace the shell variables shown below.
+`scripts/cli-multiturn-smoke.sh` is the checked-in public-CLI simulation. Run all three modes from the repository root:
 
 ```sh
-ROOT=/path/to/zxro
-ZXRO="$ROOT/bin/zxro"
-export ZXRO_HOME="$(mktemp -d /tmp/zxro-cli-readiness.XXXXXX)"
+# Default mode proves the flow and removes its generated state.
+scripts/cli-multiturn-smoke.sh
 
-"$ZXRO" watchtower create ops --cwd /tmp/zxro-operator
-"$ZXRO" work create release-fix --watchtower ops
+# Retained mode permits an independent operator to query and inspect the result.
+rm -rf /tmp/zxro-cli-readiness-replay
+ZXRO_SMOKE_HOME=/tmp/zxro-cli-readiness-replay \
+ZXRO_SMOKE_KEEP=1 \
+scripts/cli-multiturn-smoke.sh
 
-T1="$("$ZXRO" turn create --work release-fix --agent manual --session coder-1 --cwd /tmp/coder-1)"
-printf 'patch ready\nfiles: 2\n' | "$ZXRO" turn settle "$T1" --source manual --status completed --message 'Patch ready for review.' --stdin
-P1="$("$ZXRO" artifact path "artifact:$T1:stdin")"
-grep -n 'files: 2' "$P1"
+bin/zxro --home /tmp/zxro-cli-readiness-replay --json work show release-fix
+bin/zxro --home /tmp/zxro-cli-readiness-replay --json turn list --work release-fix
+bin/zxro --home /tmp/zxro-cli-readiness-replay --json inbox unread --watchtower ops
+bin/zxro --home /tmp/zxro-cli-readiness-replay --json inbox pending --watchtower ops
 
-T2="$("$ZXRO" turn create --work release-fix --agent manual --session reviewer-1 --cwd /tmp/reviewer-1)"
-printf 'review process exit 17\n' | "$ZXRO" turn settle "$T2" --source manual --status failed --message 'Reviewer exited before a verdict.' --stdin
-
-T3="$("$ZXRO" turn create --work release-fix --agent manual --session reviewer-2 --cwd /tmp/reviewer-2)"
-printf 'BLOCKER: reject empty token\n' | "$ZXRO" turn settle "$T3" --source manual --status completed --message 'Review found one blocking validation bug.' --stdin
-
-T4="$("$ZXRO" turn create --work release-fix --agent manual --session coder-2 --cwd /tmp/coder-2)"
-printf 'tests: 14 passed\n' | "$ZXRO" turn settle "$T4" --source manual --status completed --message 'Validation fixed; tests pass.' --stdin
-
-"$ZXRO" --json turn list --work release-fix
-"$ZXRO" --json inbox unread --watchtower ops
-"$ZXRO" turn settle "$T4" --source manual --status completed --message 'Validation fixed; tests pass.'
-"$ZXRO" turn settle "$T4" --source manual --status failed --message 'conflicting retry'  # exits 4
-"$ZXRO" turn create --work missing --agent manual --session bad --cwd /tmp             # exits 3
-
-"$ZXRO" ack --watchtower ops --through 4
-"$ZXRO" --json inbox unread --watchtower ops
-"$ZXRO" --json inbox pending --watchtower ops
-"$ZXRO" inbox handle EVENT4
-"$ZXRO" inbox handle EVENT2
-"$ZXRO" inbox handle EVENT2
-"$ZXRO" --json inbox pending --watchtower ops
-
-# Handle the remaining event IDs returned by `inbox pending`.
-"$ZXRO" work close release-fix
-"$ZXRO" work close release-fix
-"$ZXRO" --json work show release-fix
-"$ZXRO" --json turn list --work release-fix
-"$ZXRO" --json inbox pending --watchtower ops
-rm -rf "$ZXRO_HOME"
+# Inspection mode correlates public output with durable items without using them as commands.
+rm -rf /tmp/zxro-cli-readiness-inspect
+ZXRO_SMOKE_HOME=/tmp/zxro-cli-readiness-inspect \
+ZXRO_SMOKE_KEEP=1 \
+ZXRO_SMOKE_INSPECT=1 \
+scripts/cli-multiturn-smoke.sh
+rm -rf /tmp/zxro-cli-readiness-replay /tmp/zxro-cli-readiness-inspect
 ```
+
+The script itself contains the exact create, settle, artifact, retry, ack, handle, history, and close commands. It generates six ordered outcomes:
+
+```text
+completed, failed, completed, completed, cancelled, completed
+```
+
+It resolves the first payload through `artifact path`, retries the final settlement identically, rejects a changed retry, acknowledges through generation 6, handles generations out of order, repeats one handle, and closes twice.
 
 ## Manual observations
 
-The run used `/tmp/zxro-cli-readiness.jJI555` and removed it at the end. The commands exited 0 except for the two expected failures noted above.
+Attempt 2 ran default cleanup mode and retained inspection mode. Default mode removed its generated directory and exited 0. Retained mode used `/tmp/zxro-cli-readiness-attempt2`, exited 0, and left state until explicit cleanup.
 
-After work creation, `work show` reported `release-fix` as open and owned by `ops`. Direct inspection found one watchtower record and one work record with the same IDs. Files were inspected only to confirm durability. No operation or routing decision used a private path or field.
+Public reads against the retained home reported:
 
-After the first settlement:
+- `work show release-fix` returned `closed`;
+- `turn list --work release-fix` returned six settled turns with four `completed`, one `failed`, and one `cancelled` outcome;
+- `inbox unread --watchtower ops` returned `[]` after ack through generation 6;
+- `inbox pending --watchtower ops` returned `[]` after all six events were handled;
+- the identical final settlement retry succeeded without generation 7, while the conflicting retry exited 4;
+- `artifact path` returned a verified materialization whose second line was `files: 2`.
 
-- `turn show` reported turn `ff1448d7-88de-474d-a700-ece4897d3d2a` as settled and completed.
-- It returned `artifact:ff1448d7-88de-474d-a700-ece4897d3d2a:stdin` and event `evt-b9d64dfc1dfd44b29ab4328568a14f6c`.
-- `inbox unread` returned generation 1 with the summary and artifact reference, but not the payload body.
-- The turn and artifact records existed after the settlement process exited. `artifact path` then created and returned a verified `.bin` materialization. `grep -n 'files: 2'` read the expected second line through that public path.
+Inspection mode found one watchtower record, one closed work record, six turn records, six immutable event records, six event indexes, six handled items, one mailbox record, six artifact records, and the one requested `.bin` materialization. The cancelled turn record matched the public turn outcome and summary. The mailbox record matched the empty public unread and pending views. Lifecycle commands used only public CLI output; direct file reads served only as durability checks.
 
-After all four settlements, `turn list --work release-fix` reported three completed outcomes and one failed outcome. `inbox unread` reported generations 1 through 4. The durable home contained four turn records, four artifact records, the materialized payload requested above, four event records, four direct event indexes, and mailbox high-water 4 with read ack 0. Event summaries matched `turn show`; payload text remained behind artifact references.
+The retained directory was removed with:
 
-The identical retry of turn 4 returned success and did not create generation 5. A changed retry exited 4. Creating a turn for a missing work item exited 3 and created no turn.
+```sh
+rm -rf /tmp/zxro-cli-readiness-attempt2
+```
 
-After `ack --through 4`, `inbox unread` returned an empty list while all four events remained in `inbox pending`. Handling generations 4 and 2 removed only those events. Repeating generation 2's handle returned success and created no second handled item. The mailbox showed ack 4, high-water 4, and two unresolved event IDs. Four handled markers existed only after the remaining events were handled.
-
-After two `work close` calls, `work show` reported `closed`. All four turns and events remained available, and `inbox pending` was empty. The final file inventory still contained the watchtower, work, turns, artifacts, immutable events, event indexes, and handled items. Cleanup removed `/tmp/zxro-cli-readiness.jJI555`.
+A subsequent `test ! -e /tmp/zxro-cli-readiness-attempt2` passed.
 
 ## Limits and compatibility
 

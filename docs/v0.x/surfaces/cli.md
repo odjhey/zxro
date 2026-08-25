@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-24T20:05:00+08:00
+updated_at: 2026-08-25T08:30:00+08:00
 ---
 
 # v0.x CLI
@@ -254,7 +254,9 @@ Pi `agent_settled` and Claude `Stop`/failure integrations will call this command
 
 ### `zxro turn env`
 
-Optional convenience command for the manual experiment. Print the zxro metadata environment for a turn without launching anything.
+**Unavailable on `master`.** This is a future M2 convenience command, not a current operator command. Use `zxro turn show <turn-id>` to read persisted turn metadata and set any process environment explicitly.
+
+The proposed command would print the zxro metadata environment for a turn without launching anything.
 
 ```sh
 zxro turn env <turn-id>
@@ -273,7 +275,9 @@ JSON mode returns the same key/value pairs as data. The turn artifact remains au
 
 ### `zxro turn run`
 
-Optional second-slice helper. Execute an arbitrary command with the turn's `ZXRO_*` metadata in its environment.
+**Unavailable on `master`.** This is a future M2 convenience command, not a current operator command. Run the child command directly after obtaining metadata with `zxro turn show <turn-id>`.
+
+The proposed helper would execute an arbitrary command with the turn's `ZXRO_*` metadata in its environment.
 
 ```sh
 zxro turn run <turn-id> -- acpx --cwd ~/src/app-wt/auth claude -s coder-auth "Do the work"
@@ -404,7 +408,9 @@ If a future external artifact provider cannot resolve a local path, the durable-
 
 ### `zxro inspect`
 
-Join the metadata an operator usually needs when diagnosing one work item.
+**Unavailable on `master`.** Both human and `--json` forms shown below are future M2 examples. Current operators must compose `zxro work show <work-id>`, `zxro turn list --work <work-id>`, `zxro turn show <turn-id>`, `zxro inbox unread`, `zxro inbox pending`, and `zxro artifact path` when deeper evidence is needed.
+
+The proposed command would join the metadata an operator usually needs when diagnosing one work item.
 
 ```sh
 zxro inspect auth-fix
@@ -452,10 +458,13 @@ zxro inbox unread --watchtower main
 zxro ack --watchtower main --through 1
 zxro inbox pending --watchtower main
 zxro inbox handle <event-id>
-zxro inspect smoke
+# Unavailable on master: zxro inspect smoke
+zxro work show smoke
+zxro turn list --work smoke
+zxro inbox pending --watchtower main
 ```
 
-The example deliberately separates observing delivery, acknowledging the read position, and handling the actionable event.
+The unavailable `inspect smoke` line records the future M2 example without presenting it as runnable. The available commands preserve the separation between observing delivery, acknowledging the read position, and handling the actionable event.
 
 ## Exit codes
 
