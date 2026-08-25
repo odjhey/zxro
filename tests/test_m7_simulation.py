@@ -1,6 +1,6 @@
 import json
+import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +21,10 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
     def behavior(report):
         return {
             "environment": report["environment"],
+            "repositories": [
+                {key: item[key] for key in ("label", "cwd", "is_git_repository")}
+                for item in report["repository_evidence"]
+            ],
             "turns": [
                 {
                     key: turn[key]
@@ -67,19 +71,30 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
             second_report = json.loads(second_path.read_text())
 
         self.assertEqual(first_report["result"], "passed")
+        self.assertTrue(all(first_report["contract_predicates"].values()))
         self.assertEqual(self.behavior(first_report), self.behavior(second_report))
         self.assertEqual(first_report["environment"]["target_cwds"], ["repo-a", "repo-b"])
         self.assertEqual(first_report["environment"]["watchtower_cwd"], "watchtower")
-        self.assertFalse(first_report["environment"]["network"])
-        self.assertFalse(first_report["environment"]["credentials"])
+        self.assertFalse(first_report["environment"]["network_calls"])
         self.assertFalse(first_report["environment"]["billable_calls"])
+        self.assertFalse(first_report["environment"]["provider_credentials_in_children"])
+        self.assertFalse(first_report["environment"]["provider_config_in_children"])
+        self.assertEqual(first_report["environment"]["child_environment"], "explicit-safe-whitelist")
+        self.assertEqual(first_report["repository_evidence"][0]["cwd"], "repo-a")
+        self.assertEqual(first_report["repository_evidence"][1]["cwd"], "repo-b")
+        self.assertTrue(all(item["is_git_repository"] for item in first_report["repository_evidence"]))
+        self.assertTrue(all(item["head"] for item in first_report["repository_evidence"]))
 
         turns = first_report["turns"]
         self.assertEqual([turn["stage"] for turn in turns], ["coder-a", "reviewer-a", "coder-b", "tester-b"])
         self.assertEqual([turn["target"] for turn in turns], ["repo-a", "repo-a", "repo-b", "repo-b"])
         self.assertTrue(all(turn["target_cwd_is_separate"] for turn in turns))
         self.assertTrue(all(turn["state"] == "settled" for turn in turns))
+        self.assertTrue(all(turn["retry_preserved_event_id"] for turn in turns))
         self.assertEqual([turn["runtime_evidence"]["runtime"] for turn in turns], ["fake-runtime"] * 4)
+        self.assertTrue(all(turn["runtime_evidence"]["forbidden_provider_keys"] == [] for turn in turns))
+        self.assertTrue(all(turn["runtime_evidence"]["private_config_home"] for turn in turns))
+        self.assertTrue(all(turn["runtime_evidence"]["git_repository"] for turn in turns))
 
         wake = first_report["wake_and_reconciliation"]
         self.assertEqual(len(wake[0]["dropped_wake"]), 2)
@@ -102,6 +117,45 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
         self.assertEqual(stop["pending_after_close"], 0)
         self.assertTrue(first_report["cleanup"]["fake_runtime_processes_reaped"])
         self.assertTrue(first_report["cleanup"]["temporary_home_removed"])
+
+    def test_inherited_provider_environment_is_not_passed_to_children(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "evidence.json"
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "ANTHROPIC_API_KEY": "must-not-leak",
+                    "CLAUDE_CONFIG_DIR": "/secret/claude",
+                    "ACPX_TOKEN": "must-not-leak",
+                    "PI_CONFIG_DIR": "/secret/pi",
+                    "OPENAI_API_KEY": "must-not-leak",
+                }
+            )
+            result = subprocess.run(
+                [str(ROOT / "bin" / "zxro-m7-sim"), "--evidence", str(evidence)],
+                cwd=ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(evidence.read_text())
+        self.assertFalse(report["environment"]["provider_credentials_in_children"])
+        self.assertTrue(all(turn["runtime_evidence"]["forbidden_provider_keys"] == [] for turn in report["turns"]))
+        self.assertTrue(all(turn["runtime_evidence"]["git_repository"] for turn in report["turns"]))
+
+    def test_required_contract_faults_fail_closed_without_passed_output(self):
+        for fault in ("stop-condition", "provider-environment", "repository"):
+            with self.subTest(fault=fault):
+                result = subprocess.run(
+                    [str(ROOT / "bin" / "zxro-m7-sim"), "--fault", fault],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('"result": "passed"', result.stdout)
+                self.assertIn("required simulation predicates failed", result.stderr)
 
     def test_evidence_contains_durable_settlements_and_handled_events(self):
         with tempfile.TemporaryDirectory() as temporary:

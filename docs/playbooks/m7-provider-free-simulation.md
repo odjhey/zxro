@@ -13,16 +13,16 @@ sources:
   - ref: ../v0.x/execution/implementation-plan.md
     credibility: primary
 created_at: "2026-08-25T11:45:00+08:00"
-updated_at: "2026-08-25T11:45:00+08:00"
+updated_at: "2026-08-25T13:00:00+08:00"
 ---
 
 # Provider-free M7 simulation
 
 ## Purpose
 
-This runbook exercises automatic multi-turn orchestration with the public zxro CLI. It uses a temporary `$ZXRO_HOME`, two temporary target repositories, a separate temporary watchtower project, and short-lived local fake-runtime processes.
+This runbook exercises automatic multi-turn orchestration with the public zxro CLI. It uses a temporary `$ZXRO_HOME`, two temporary Git repositories, a separate temporary watchtower project, and short-lived local fake-runtime processes.
 
-The simulation does not start Pi, Claude, acpx, a network provider, or a daemon. It does not read credentials. It is a local behavioral check, not live-provider M7 acceptance.
+The simulation does not start Pi, Claude, acpx, a network provider, or a daemon. Its child processes receive an explicit safe environment whitelist with temporary HOME and config directories, so inherited provider credentials and provider config variables are not passed to them. This is a local behavioral check, not live-provider M7 acceptance.
 
 ## Run it
 
@@ -32,7 +32,7 @@ From the repository root:
 bin/zxro-m7-sim --evidence /tmp/zxro-m7-evidence.json
 ```
 
-The command exits non-zero on a failed assertion. On success, it writes a JSON evidence file and prints its path. The temporary home, repositories, fake runtime script, and child processes are removed before the command exits.
+The command exits non-zero if any required contract predicate fails. On success, it writes a JSON evidence file and prints its path. The temporary home, Git repositories, fake runtime script, and child processes are removed before the command exits.
 
 To print the complete report instead of saving it:
 
@@ -58,6 +58,8 @@ The first settlement loses both wake notifications and is recovered by a reconci
 The report records:
 
 - the separate watchtower, `repo-a`, and `repo-b` cwd roles;
+- Git repository evidence for both disposable targets, including their initial commit heads;
+- the child environment policy and fake-runtime checks for forbidden provider-like keys;
 - four settled turns and generations 1 through 4;
 - fake-runtime evidence written inside each target repository;
 - one artifact and one handled event per turn;
@@ -86,7 +88,7 @@ for record in report["durable_evidence"]:
 PY
 ```
 
-Expected high-level results are `passed`, four turns, a closed work item, no pending attention, and both cleanup checks set to `true`.
+Expected high-level results are `passed`, every `contract_predicates` value set to `true`, four turns, a closed work item, no pending attention, and both cleanup checks set to `true`.
 
 ## What this proves
 
@@ -95,7 +97,8 @@ Expected high-level results are `passed`, four turns, a closed work item, no pen
 - Duplicate wake or reconciliation calls do not allocate duplicate turns or events.
 - Terminal settlement retries preserve one event per turn.
 - Work closure is separate from terminal settlement retry and prevents new turns.
-- Target cwd values remain separate from the watchtower cwd.
+- Target cwd values remain separate from the watchtower cwd, and both target paths are real disposable Git repositories.
+- Simulation children receive no provider credential or provider config variables from the invoking environment.
 - The local provider leaves inspectable durable records without requiring an external service.
 
 ## What remains blocked

@@ -26,28 +26,86 @@ STAGES = (
     ("tester-b", "repo-b", "Verified the completed work."),
 )
 
-# The simulator must not accidentally pass provider credentials to its fake
-# child. The zxro CLI does not need any credential to use its local provider.
-_PROVIDER_ENV_MARKERS = (
+# Simulation children receive a whitelist, not a filtered copy of the parent
+# environment. This blocks provider credentials and config paths even when an
+# operator launches the simulation from a configured agent shell.
+_SAFE_INHERITED_ENV = ("PATH", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT")
+_PROVIDER_ENV_TOKENS = (
     "ANTHROPIC",
-    "OPENAI",
-    "GOOGLE_API",
-    "AZURE_OPENAI",
-    "ACPX",
-    "PI_",
     "CLAUDE",
+    "OPENAI",
+    "AZURE_OPENAI",
+    "GOOGLE_",
+    "GEMINI",
+    "ACPX",
+    "ACP_",
+    "PI_",
+    "BEADS_",
+    "MAIL_",
+    "API_KEY",
+    "API_TOKEN",
+    "AUTH_TOKEN",
+    "ACCESS_TOKEN",
+    "SECRET_KEY",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "AWS_",
+    "MISTRAL",
+    "COHERE",
+    "PERPLEXITY",
+    "TOGETHER",
+    "VERTEX",
+    "BEDROCK",
+    "OLLAMA",
+    "API_BASE",
+    "BASE_URL",
 )
+
+class SimulationContractError(RuntimeError):
+    pass
+
+
+def provider_like_key(key: str) -> bool:
+    upper = key.upper()
+    return any(token in upper for token in _PROVIDER_ENV_TOKENS)
+
 
 _FAKE_RUNTIME = r'''#!/usr/bin/env python3
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 stage, target_label = sys.argv[1:3]
 required = ("ZXRO_HOME", "ZXRO_TURN_ID", "ZXRO_WORK_ID", "ZXRO_WATCHTOWER_ID")
 if any(not os.environ.get(name) for name in required):
     raise SystemExit("fake runtime received incomplete ZXRO metadata")
+
+def provider_key(key):
+    upper = key.upper()
+    return any(token in upper for token in (
+        "ANTHROPIC", "CLAUDE", "OPENAI", "AZURE_OPENAI", "GOOGLE_", "GEMINI",
+        "ACPX", "ACP_", "PI_", "BEADS_", "MAIL_", "API_KEY", "API_TOKEN",
+        "AUTH_TOKEN", "ACCESS_TOKEN", "SECRET_KEY", "GITHUB_TOKEN", "GH_TOKEN",
+        "AWS_", "MISTRAL", "COHERE", "PERPLEXITY", "TOGETHER", "VERTEX",
+        "BEDROCK", "OLLAMA", "API_BASE", "BASE_URL",
+    ))
+
+forbidden = sorted(key for key in os.environ if provider_key(key))
+if forbidden:
+    raise SystemExit("fake runtime received provider-like environment keys: " + ",".join(forbidden))
+home = Path(os.environ["HOME"]).resolve()
+config_home = Path(os.environ["XDG_CONFIG_HOME"]).resolve()
+git_check = subprocess.run(
+    ["git", "rev-parse", "--is-inside-work-tree"],
+    cwd=Path.cwd(),
+    env=os.environ.copy(),
+    text=True,
+    capture_output=True,
+)
+if git_check.returncode != 0 or git_check.stdout.strip() != "true":
+    raise SystemExit("fake runtime target is not a Git repository")
 record = {
     "runtime": "fake-runtime",
     "stage": stage,
@@ -55,6 +113,9 @@ record = {
     "turn_id": os.environ["ZXRO_TURN_ID"],
     "work_id": os.environ["ZXRO_WORK_ID"],
     "watchtower_id": os.environ["ZXRO_WATCHTOWER_ID"],
+    "forbidden_provider_keys": forbidden,
+    "private_config_home": config_home.is_relative_to(home),
+    "git_repository": True,
 }
 out = Path.cwd() / "m7-runtime-evidence" / f"{stage}.json"
 out.parent.mkdir(parents=True, exist_ok=True)
@@ -64,12 +125,26 @@ print(json.dumps({"stage": stage, "target": target_label}, sort_keys=True))
 
 
 def clean_environment(home: Path, *, turn_id: str | None = None) -> dict[str, str]:
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if not any(marker in key.upper() for marker in _PROVIDER_ENV_MARKERS)
-    }
-    environment["ZXRO_HOME"] = str(home)
+    process_home = home.parent / "process-home"
+    config_home = process_home / "config"
+    data_home = process_home / "data"
+    cache_home = process_home / "cache"
+    for directory in (process_home, config_home, data_home, cache_home):
+        directory.mkdir(parents=True, exist_ok=True)
+    environment = {key: os.environ[key] for key in _SAFE_INHERITED_ENV if key in os.environ}
+    environment.update(
+        {
+            "HOME": str(process_home),
+            "USERPROFILE": str(process_home),
+            "XDG_CONFIG_HOME": str(config_home),
+            "XDG_DATA_HOME": str(data_home),
+            "XDG_CACHE_HOME": str(cache_home),
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_TERMINAL_PROMPT": "0",
+            "ZXRO_HOME": str(home),
+        }
+    )
     if turn_id:
         environment.update(
             {
@@ -78,6 +153,9 @@ def clean_environment(home: Path, *, turn_id: str | None = None) -> dict[str, st
                 "ZXRO_WATCHTOWER_ID": "m7-sim-watchtower",
             }
         )
+    leaked = sorted(key for key in environment if provider_like_key(key))
+    if leaked:
+        raise SimulationContractError("provider-like key entered child environment: " + ", ".join(leaked))
     return environment
 
 
@@ -98,6 +176,62 @@ def invoke(home: Path, *args: str, input_bytes: bytes | None = None, check: bool
     if result.stdout:
         value = json.loads(result.stdout)
     return result, value
+
+
+def run_git(home: Path, target: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=target,
+        env=clean_environment(home),
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def required_predicates(report: dict) -> dict[str, bool]:
+    turns = report.get("turns", [])
+    stages = [(item.get("stage"), item.get("target")) for item in turns]
+    environment = report.get("environment", {})
+    stop = report.get("stop_conditions", {})
+    wake = report.get("wake_and_reconciliation", [])
+    repositories = report.get("repository_evidence", [])
+    records = [item.get("json", {}) for item in report.get("durable_evidence", [])]
+    events = [item for item in records if item.get("type") == "turn_settled"]
+    handled = [item for item in report.get("durable_evidence", []) if item.get("path", "").startswith("inbox-handled/")]
+    mailbox = next((item for item in records if item.get("watchtower_id") == "m7-sim-watchtower" and "ack" in item), {})
+    return {
+        "bounded_turn_count": len(turns) == MAX_TURNS and stop.get("turn_count") == MAX_TURNS and stop.get("bounded_by") == MAX_TURNS,
+        "workflow_order": stages == [(stage, target) for stage, target, _ in STAGES] and all(item.get("state") == "settled" and item.get("outcome") == "completed" for item in turns),
+        "cwd_separation": environment.get("watchtower_cwd") == "watchtower" and environment.get("target_cwds") == ["repo-a", "repo-b"] and all(item.get("target_cwd_is_separate") is True for item in turns),
+        "disposable_git_repositories": len(repositories) == 2 and all(item.get("is_git_repository") is True and item.get("head") for item in repositories),
+        "wake_reconciliation": len(wake) == MAX_TURNS and len(wake[0].get("dropped_wake", [])) == 2 and wake[0].get("poll_after_dropped_wake", {}).get("handled_expected_turn") is True and all(item.get("stage_released_after_handling") is True for item in wake) and all(item.get("duplicate_wake_count") == 2 for item in wake[1:]),
+        "settlement_idempotency": len(events) == MAX_TURNS and len({item.get("event_id") for item in events}) == MAX_TURNS and all(item.get("retry_preserved_event_id") is True for item in turns),
+        "closed_work_stop": stop.get("final_work_state") == "closed" and stop.get("close_result") == "closed" and stop.get("repeated_close_state") == "closed" and stop.get("new_turn_after_close_rejected") is True and stop.get("terminal_retry_after_close") is True and stop.get("unread_after_close") == 0 and stop.get("pending_after_close") == 0,
+        "provider_free_children": environment.get("child_environment") == "explicit-safe-whitelist" and environment.get("provider_credentials_in_children") is False and environment.get("provider_config_in_children") is False and all(item.get("runtime_evidence", {}).get("forbidden_provider_keys") == [] and item.get("runtime_evidence", {}).get("private_config_home") is True and item.get("runtime_evidence", {}).get("git_repository") is True for item in turns),
+        "durable_evidence": [item.get("generation") for item in events] == list(range(1, MAX_TURNS + 1)) and len(handled) == MAX_TURNS and mailbox.get("ack") == MAX_TURNS and mailbox.get("highest") == MAX_TURNS and mailbox.get("unresolved") == [],
+        "cleanup": report.get("cleanup", {}).get("fake_runtime_processes_reaped") is True and report.get("cleanup", {}).get("temporary_home_removed") is True,
+    }
+
+
+def validate_contract(report: dict) -> dict[str, bool]:
+    predicates = required_predicates(report)
+    report["contract_predicates"] = predicates
+    failed = [name for name, passed in predicates.items() if passed is not True]
+    if failed:
+        raise SimulationContractError("required simulation predicates failed: " + ", ".join(failed))
+    return predicates
+
+
+def apply_fault(report: dict, fault: str | None) -> None:
+    if fault == "stop-condition":
+        report["stop_conditions"]["pending_after_close"] = 1
+    elif fault == "provider-environment":
+        report["environment"]["provider_credentials_in_children"] = True
+    elif fault == "repository":
+        report["repository_evidence"][0]["is_git_repository"] = False
 
 
 def run_fake_runtime(
@@ -176,7 +310,7 @@ def reconcile(home: Path, expected_turn: str) -> dict:
     }
 
 
-def run_simulation() -> dict:
+def run_simulation(fault: str | None = None) -> dict:
     processes: list[subprocess.Popen[bytes]] = []
     with tempfile.TemporaryDirectory(prefix="zxro-m7-sim-") as temporary:
         root = Path(temporary)
@@ -188,8 +322,23 @@ def run_simulation() -> dict:
         for directory in (watchtower, target_a, target_b):
             directory.mkdir(parents=True)
         (watchtower / "AGENTS.md").write_text("deterministic watchtower instructions\n")
-        (target_a / "README.md").write_text("target repo a\n")
-        (target_b / "README.md").write_text("target repo b\n")
+        repository_evidence = []
+        for label, target, text in (
+            ("repo-a", target_a, "target repo a\n"),
+            ("repo-b", target_b, "target repo b\n"),
+        ):
+            run_git(home, target, "init", "--quiet")
+            (target / "README.md").write_text(text)
+            run_git(home, target, "-c", "user.name=zxro-simulation", "-c", "user.email=zxro-simulation@example.invalid", "add", "README.md")
+            run_git(home, target, "-c", "user.name=zxro-simulation", "-c", "user.email=zxro-simulation@example.invalid", "commit", "--quiet", "-m", "initial disposable repository")
+            repository_evidence.append(
+                {
+                    "label": label,
+                    "cwd": label,
+                    "is_git_repository": run_git(home, target, "rev-parse", "--is-inside-work-tree") == "true",
+                    "head": run_git(home, target, "rev-parse", "--verify", "HEAD"),
+                }
+            )
         fake_runtime = root / "fake-runtime.py"
         fake_runtime.write_text(_FAKE_RUNTIME)
 
@@ -248,6 +397,10 @@ def run_simulation() -> dict:
                 "--stdin",
                 input_bytes=payload,
             )
+            _, first_delivery = invoke(home, "inbox", "unread", "--watchtower", "m7-sim-watchtower")
+            if len(first_delivery) != 1:
+                raise RuntimeError("first settlement did not publish exactly one event")
+            first_event_id = first_delivery[0]["event_id"]
             # The retry is deliberately identical. It must not allocate an event.
             invoke(
                 home,
@@ -261,8 +414,10 @@ def run_simulation() -> dict:
                 "--message",
                 summary,
             )
+            _, retry_delivery = invoke(home, "inbox", "unread", "--watchtower", "m7-sim-watchtower")
             _, settled = invoke(home, "turn", "show", turn_id)
             event_id = settled["settlement"]["event_id"]
+            retry_preserved_event_id = len(retry_delivery) == 1 and retry_delivery[0]["event_id"] == first_event_id == event_id
 
             # The first event loses both wake notifications and is recovered by
             # polling. Later events receive duplicate notifications, and both
@@ -307,6 +462,7 @@ def run_simulation() -> dict:
                     "artifact_count": len(settled.get("artifact_refs", [])),
                     "turn_id": turn_id,
                     "event_id": event_id,
+                    "retry_preserved_event_id": retry_preserved_event_id,
                     "runtime_stdout": runtime_output.decode().strip(),
                     "runtime_evidence": json.loads(
                         (target / "m7-runtime-evidence" / f"{stage}.json").read_text()
@@ -354,7 +510,7 @@ def run_simulation() -> dict:
         all_reaped_before_cleanup = all(process.poll() is not None for process in processes)
         report = {
             "schema": "zxro-m7-provider-free-simulation/v1",
-            "result": "passed",
+            "result": "pending",
             "claims": [
                 "The local CLI can coordinate bounded automatic multi-turn work.",
                 "Dropped and duplicate wake notifications do not lose or duplicate settlement work.",
@@ -372,12 +528,14 @@ def run_simulation() -> dict:
                 "target_cwds": ["repo-a", "repo-b"],
                 "runtime": "fake-runtime subprocess",
                 "provider": "built-in local file provider",
-                "network": False,
-                "credentials": False,
+                "network_calls": False,
                 "billable_calls": False,
-                "provider_env_filtered": True,
+                "child_environment": "explicit-safe-whitelist",
+                "provider_credentials_in_children": False,
+                "provider_config_in_children": False,
                 "max_turns": MAX_TURNS,
             },
+            "repository_evidence": repository_evidence,
             "turns": turn_evidence,
             "wake_and_reconciliation": wake_evidence,
             "stop_conditions": {
@@ -402,6 +560,9 @@ def run_simulation() -> dict:
         raise RuntimeError("fake runtime process was not reaped")
     if not report["cleanup"]["temporary_home_removed"]:
         raise RuntimeError("temporary simulation home was not removed")
+    apply_fault(report, fault)
+    validate_contract(report)
+    report["result"] = "passed"
     return report
 
 
@@ -412,10 +573,15 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="write the complete inspectable evidence JSON to this path",
     )
+    parser.add_argument(
+        "--fault",
+        choices=("stop-condition", "provider-environment", "repository"),
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args(argv)
     try:
-        report = run_simulation()
-    except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+        report = run_simulation(args.fault)
+    except (OSError, RuntimeError, SimulationContractError, json.JSONDecodeError) as exc:
         print(f"m7 simulation failed: {exc}", file=sys.stderr)
         return 1
     if args.evidence:
