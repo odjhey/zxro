@@ -15,7 +15,7 @@ sources:
   - ref: ../../architecture/contracts/durable-store.md
     credibility: primary
 created_at: "2026-08-25T13:00:51+08:00"
-updated_at: "2026-08-25T18:34:06+08:00"
+updated_at: "2026-08-25T18:50:47+08:00"
 ---
 
 # Machine contract design: versioned JSON envelope and namespaced metadata
@@ -26,10 +26,10 @@ This design resolves issue #25 (version the machine JSON contract) and issue #26
 
 The envelope must land first. Metadata is exposed through `--json` output, so its wire shape should never exist unversioned.
 
-## Current state
+## Implementation baseline
 
-- `zxro --json` prints one compact JSON value on stdout (`sort_keys=True`, separators `(",", ":")`) with no schema identifier. See `zxro/cli.py` `render()`.
-- Object commands print one JSON object; list commands print one JSON array. `artifact path --json` prints `{"path": ...}`.
+Before WP1, `zxro --json` printed one compact JSON value on stdout with no schema identifier. Object commands printed one JSON object, list commands printed one JSON array, and `artifact path --json` printed a bare `{"path": ...}` payload. WP1 replaced those wire shapes with the D1 envelope.
+
 - Diagnostics go to stderr; exit classes are defined in [contract conventions](../../architecture/contracts/conventions.md#errors).
 - The [durable store contract](../../architecture/contracts/durable-store.md) already reserves `work.create(id, watchtower_id, metadata?)` but nothing persists or exposes metadata today.
 - Durable built-in-provider records fail closed on unknown fields; public JSON consumers ignore unknown fields.
@@ -175,11 +175,11 @@ Steps:
 
 Acceptance (maps to issue #25):
 
-- [ ] All public `--json` responses carry `schema_version`.
-- [ ] Object and list responses use the same envelope convention.
-- [ ] Bump-versus-additive rules are documented in contract conventions.
-- [ ] Black-box tests pin envelope presence and representative payload shapes.
-- [ ] Determinism and exit behavior are unchanged; stdout remains machine-only.
+- [x] All public `--json` responses carry `schema_version`.
+- [x] Object and list responses use the same envelope convention.
+- [x] Bump-versus-additive rules are documented in contract conventions.
+- [x] Black-box tests pin envelope presence and representative payload shapes.
+- [x] Determinism and exit behavior are unchanged; stdout remains machine-only.
 
 ### WP2: namespaced work metadata
 

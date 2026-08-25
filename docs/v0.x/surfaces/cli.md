@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: "2026-08-25T18:34:06+08:00"
+updated_at: "2026-08-25T18:50:47+08:00"
 ---
 
 # v0.x CLI
@@ -298,7 +298,7 @@ zxro inbox unread --watchtower main
 zxro --json inbox unread --watchtower main
 ```
 
-Each event is a bounded routing envelope. Example:
+Each event is a bounded routing envelope. The payload-only example below is one item inside the public result envelope's `data` array:
 
 ```json
 {
