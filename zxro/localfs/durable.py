@@ -241,6 +241,9 @@ class LocalDurableLoop:
                         recovered_stdin = self._artifact_record(access, turn.id, "stdin")
                     except NotFoundError:
                         pass
+                    else:
+                        if Artifact.parse_ref(recovered_stdin.ref) != (turn.id, "stdin"):
+                            raise UnsafeStateError("recovered stdin artifact does not match turn")
                 if existing_stdin is None and len(turn.artifacts) >= 32 and (payload is not None or recovered_stdin is not None):
                     raise ValidationError("turn artifact limit exceeded: maximum is 32")
             box = self._mailbox(access, turn.watchtower_id)
