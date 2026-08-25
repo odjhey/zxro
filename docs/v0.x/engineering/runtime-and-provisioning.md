@@ -6,7 +6,7 @@ tags: [v0.x, engineering, runtime]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T16:41:00+08:00
+updated_at: 2026-08-25T09:00:00+08:00
 ---
 
 # v0.x runtime and provisioning
@@ -118,8 +118,11 @@ v0.x observability is intentionally local:
 - CLI exit code;
 - stderr diagnostic;
 - optional JSON stdout;
-- provider current-state records;
-- `zxro inspect <work-id>` for a joined human-readable view.
+- public current-state reads through `zxro work show`, `zxro turn list`, and `zxro turn show`;
+- bounded mailbox reads through `zxro inbox unread` and `zxro inbox pending`;
+- explicit evidence resolution through `zxro artifact path`.
+
+The built-in provider's files may corroborate durability during diagnosis, but operators must not use their private format as the command interface. The joined `zxro inspect <work-id>` view is future M2 scope and is unavailable on `master`.
 
 No metrics, traces, network health endpoint, or background health checks are required.
 
