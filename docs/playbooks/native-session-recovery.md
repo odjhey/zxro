@@ -14,7 +14,7 @@ sources:
     credibility: primary
 stale_after: 2026-10-01
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-25T07:03:00+08:00
+updated_at: 2026-08-25T09:00:00+08:00
 ---
 
 # Native session recovery
@@ -38,7 +38,7 @@ Record:
 - acpx session name;
 - optional `native_session_id` if zxro already captured one.
 
-If the turn ID is unknown, use the M0 lookup commands. `inspect` is not available on current master:
+If the turn ID is unknown, start from the work item with commands available on `master`:
 
 ```sh
 zxro work show <work-id>
@@ -46,7 +46,7 @@ zxro turn list --work <work-id>
 zxro turn show <turn-id>
 ```
 
-After deferred M2b adds `inspect`, `zxro inspect <work-id>` may provide the same lookup as a convenience. Recovery must not depend on it.
+`zxro inspect <work-id>` is a future M2 command and is unavailable on `master`.
 
 ## Ask acpx first
 
@@ -193,13 +193,15 @@ For break-glass takeover:
 
 Recovery succeeds when the native client shows the expected conversation history and target cwd without modifying zxro durable identity.
 
-After recovery, re-check with the current M0/M1 commands:
+After recovery, re-check with commands available on `master`:
 
 ```sh
+zxro turn show <turn-id>
 zxro work show <work-id>
 zxro turn list --work <work-id>
-zxro turn show <turn-id>
 ```
+
+Do not use the future `zxro inspect <work-id>` example for this verification. It is unavailable on `master`.
 
 Compare the before and after output. The work ID, turn ID, runtime, agent, session name, cwd, and optional native session ID must not change.
 
@@ -207,7 +209,7 @@ Compare the before and after output. The work ID, turn ID, runtime, agent, sessi
 
 The command review on 2026-08-25 used:
 
-- zxro master `7a3db5acd7785bcd3946604ef2282ea887b4f7ce`;
+- zxro master `a191ae7d00ed2d1974ab27581bda80b6346c8cde`;
 - acpx 0.13.1 through `npx --yes acpx@0.13.1`;
 - Pi 0.84.3;
 - Claude Code 2.1.241.

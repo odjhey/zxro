@@ -6,7 +6,7 @@ tags: [v0.x, scope]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T16:31:00+08:00
+updated_at: 2026-08-25T09:00:00+08:00
 ---
 
 # v0.x goal and scope
@@ -47,7 +47,8 @@ Once that contract is boring and testable, Pi and Claude integrations may call t
 - [ ] `work close`, read ack, and event handling remain independent operations.
 - [ ] Routine mailbox output is bounded by new or unresolved event context and does not inline old reports, transcripts, logs, diffs, or raw hook payloads.
 - [ ] Event and turn summaries are bounded; larger content is stored as referenced per-turn artifacts.
-- [ ] `work show`, `turn show`, and `inspect` expose metadata and references without replaying artifact bodies.
+- [ ] Current `work show`, `turn list`, and `turn show` commands expose metadata and references without replaying artifact bodies.
+- [ ] Future M2 `inspect`, once implemented, preserves the same bounded behavior; it is unavailable on `master`.
 - [ ] A caller can deliberately resolve an artifact and inspect only the slice it needs.
 - [ ] A crash after terminal-state commit but before mailbox publication can be retried into exactly one matching event.
 - [ ] A mailbox event is never visible when its referenced terminal turn result is missing.

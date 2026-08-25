@@ -5,12 +5,13 @@ type: index
 tags: [v0.x, validation]
 status: current
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T15:13:40+08:00
+updated_at: 2026-08-25T08:00:00+08:00
 ---
 
 # v0.x Validation
 
 - [Release readiness](./release-readiness.md)
+- [CLI multi-turn operator readiness](./cli-multiturn-operator-readiness.md)
 
 Validation documents define the evidence required to claim that a v0.x increment works and is safe to release.
 

@@ -6,7 +6,7 @@ tags: [v0.x, execution]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T21:40:00+08:00
+updated_at: 2026-08-25T09:30:00+08:00
 ---
 
 # v0.x implementation plan
@@ -29,8 +29,13 @@ watchtower create
   -> ack observed delivery
   -> inbox pending
   -> handle one event
-  -> inspect
+  -> work show
+  -> turn list --work <work-id>
+  -> turn show <turn-id>
+  -> artifact path <artifact-ref> when deeper evidence is needed
 ```
+
+Every command in this first-slice loop is available on `master`. The joined `inspect` command is future M2 scope and is unavailable on `master`.
 
 Do not add Pi or Claude integration until this loop is stable.
 
@@ -84,18 +89,21 @@ Provider evaluation may happen in parallel with implementation. It must not bloc
 
 ## Initial command build order
 
+The M0 and M1 commands in this order are available on `master`:
+
 1. `zxro watchtower create|show|list`
-2. `zxro work create|show|list`
+2. `zxro work create|show|list|close`
 3. `zxro turn create|show|list`
 4. `zxro turn settle`
 5. `zxro inbox unread`
 6. `zxro ack`
 7. `zxro inbox pending`
 8. `zxro inbox handle`
-9. `zxro inspect`
-10. Optional generic metadata helpers such as `zxro turn env` or `zxro turn run` only after the core loop is usable.
+9. `zxro artifact path`
 
-The command contract is specified in [v0.x CLI](../surfaces/cli.md).
+`zxro inspect`, `zxro turn env`, and `zxro turn run` remain future M2 commands. They are unavailable on `master` and are not part of the hand-runnable M0/M1 loop.
+
+The command contract and future examples are specified in [v0.x CLI](../surfaces/cli.md).
 
 ## Settlement implementation order
 
