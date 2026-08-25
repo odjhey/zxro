@@ -54,13 +54,34 @@ class Artifact:
         return asdict(self)
 
     @staticmethod
-    def parse_ref(ref):
+    def parse_owner_ref(ref):
         parts = ref.split(":") if isinstance(ref, str) else []
-        if len(parts) != 3 or parts[0] != "artifact":
-            from .errors import ValidationError
-            raise ValidationError(f"invalid artifact reference: {ref!r}")
+        from .errors import ValidationError
         from .ids import validate_id, validate_turn_id
-        return validate_turn_id(parts[1]), validate_id(parts[2], "artifact kind")
+        if len(parts) == 3 and parts[0] == "artifact":
+            return "turn", validate_turn_id(parts[1]), validate_id(parts[2], "artifact kind")
+        if len(parts) == 4 and parts[0] == "artifact":
+            scope = validate_id(parts[1], "artifact owner scope")
+            owner = validate_turn_id(parts[2]) if scope == "turn" else validate_id(parts[2], "artifact owner id")
+            return scope, owner, validate_id(parts[3], "artifact kind")
+        raise ValidationError(f"invalid artifact reference: {ref!r}")
+
+    @staticmethod
+    def parse_ref(ref):
+        scope, owner, kind = Artifact.parse_owner_ref(ref)
+        if scope != "turn":
+            from .errors import ValidationError
+            raise ValidationError(f"artifact is not turn-owned: {ref!r}")
+        return owner, kind
+
+    @staticmethod
+    def record_name(scope, owner, kind):
+        from .ids import validate_id, validate_turn_id
+        scope = validate_id(scope, "artifact owner scope")
+        owner = validate_turn_id(owner) if scope == "turn" else validate_id(owner, "artifact owner id")
+        kind = validate_id(kind, "artifact kind")
+        # Keep the published turn layout stable while giving scoped owners a separate namespace.
+        return f"{owner}--{kind}.json" if scope == "turn" else f"{scope}--{owner}--{kind}.json"
 
     @classmethod
     def from_dict(cls, value):
@@ -81,6 +102,16 @@ class Artifact:
             from .errors import UnsafeStateError
             raise UnsafeStateError("invalid artifact record")
         return record
+
+
+@dataclass(frozen=True)
+class ArtifactMetadata:
+    ref: str
+    kind: str
+    bytes: int
+
+    def to_dict(self):
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -165,6 +196,7 @@ class Turn:
     verdict: str | None = None
     needs: str | None = None
     artifact_refs: tuple[str, ...] = ()
+    artifacts: tuple[ArtifactMetadata, ...] = ()
     settlement: Settlement | None = None
 
     def to_dict(self):
@@ -172,7 +204,11 @@ class Turn:
         value["artifact_refs"] = list(self.artifact_refs)
         if self.settlement is not None:
             value["settlement"] = self.settlement.to_dict()
-        return {key: item for key, item in value.items() if item is not None and not (key == "artifact_refs" and not item)}
+        value["artifacts"] = [item.to_dict() for item in self.artifacts]
+        return {
+            key: item for key, item in value.items()
+            if item is not None and not (key in {"artifact_refs", "artifacts"} and not item)
+        }
 
 
 class Registry(Protocol):
@@ -206,6 +242,7 @@ class MailboxCapability(Protocol):
 
 
 class ArtifactCapability(Protocol):
+    def artifact_put(self, turn_id: str, kind: str, payload: bytes) -> ArtifactMetadata: ...
     def artifact_path(self, ref: str) -> dict: ...
 
 

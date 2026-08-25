@@ -39,6 +39,17 @@ class M1ProviderConformance:
             self.m1.settle(turn.id, "test", "completed", "waiting", None, "blocked", "different input")
         with self.assertRaises(self.conflict_error):
             self.m1.settle(turn.id, "test", "completed", "waiting", None, "partial", None)
+    def test_multiple_artifacts_freeze_at_settlement(self):
+        turn = self.create_turn()
+        first = self.m1.artifact_put(turn.id, "review", b"review")
+        second = self.m1.artifact_put(turn.id, "test-log", b"tests")
+        settled, event = self.m1.settle(turn.id, "test", "completed", "done", None)
+        self.assertEqual(settled.artifact_refs, (first.ref, second.ref))
+        self.assertEqual(event.artifact_refs, settled.artifact_refs)
+        self.assertEqual(self.m1.artifact_path(first.ref)["bytes"], 6)
+        with self.assertRaises(self.conflict_error):
+            self.m1.artifact_put(turn.id, "late", b"late")
+
 
     def test_unread_ack_pending_and_out_of_order_idempotent_handle(self):
         events = [self.m1.settle(self.create_turn().id, "test", "completed", f"done {index}", None)[1] for index in range(1, 4)]

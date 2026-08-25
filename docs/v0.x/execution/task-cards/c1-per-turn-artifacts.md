@@ -6,7 +6,7 @@ tags: [v0.x, execution, task-cards, artifacts]
 status: draft
 generated: "Claude Fable 5 agent, 2026-08-25"
 created_at: "2026-08-25T14:25:09+08:00"
-updated_at: "2026-08-25T14:25:09+08:00"
+updated_at: "2026-08-25T19:17:39+08:00"
 ---
 
 # C1 — Multiple artifacts per turn
@@ -23,13 +23,23 @@ A caller attaches independently addressable evidence to a running turn with `zxr
 - Runs in parallel with lanes A, B, and D. Use the A1 envelope-tolerant test helper for JSON assertions.
 - The storage work must leave room for an owner scope in references (C2 introduces `artifact:work:<work-id>:brief`); do not hard-code turn ownership into the reference parser or on-disk layout.
 
+## Approved interface decision
+
+The operator approved these rules for C1:
+
+- preserve `artifact_refs` unchanged;
+- add bounded `artifacts` metadata entries shaped as `{ref,kind,bytes}` only to `turn show`;
+- keep mailbox events references-only;
+- reserve kind `stdin` for `turn settle --stdin`;
+- count settlement stdin toward the 32-artifact limit.
+
 ## In scope
 
-- `artifact put` for `running` turns; `turn settle --stdin` keeps writing its payload artifact through the same path.
+- `artifact put` for `running` turns; `turn settle --stdin` keeps writing its payload artifact through the same provider-neutral path.
 - `kind` follows existing identifier rules and is unique per turn; a duplicate fails with exit class 4, no overwrite.
 - Rejection of `artifact put` on settled turns (evidence set frozen) with exit class 4.
 - Per-payload bound matching settlement today (16 MiB durable-record limit, roughly 8 MiB payload); per-turn cap of 32 artifacts at exit class 2.
-- References and byte counts in `turn show` and settlement events; `artifact path` remains the retrieval step with existing digest and safety checks.
+- References and byte counts in `turn show`; settlement events retain only `artifact_refs`. `artifact path` remains the retrieval step with existing digest and safety checks.
 - Tests: multiple kinds on one turn, duplicate kind, put after settle, cap, reference visibility, digest verification, and the Scenario C bounded-read regression (growing an old artifact does not grow `inbox unread` or `work show` output).
 
 ## Out of scope
@@ -53,10 +63,10 @@ A caller attaches independently addressable evidence to a running turn with `zxr
 
 ## Acceptance criteria
 
-- [ ] One turn holds several artifacts of distinct kinds, each independently resolvable.
-- [ ] Evidence set is immutable after settlement.
-- [ ] Scenario C regression passes: routine read output size is independent of stored artifact bytes.
-- [ ] All failure modes hit their documented exit classes deterministically.
+- [x] One turn holds several artifacts of distinct kinds, each independently resolvable.
+- [x] Evidence set is immutable after settlement.
+- [x] Scenario C regression passes: routine read output size is independent of stored artifact bytes.
+- [x] All failure modes hit their documented exit classes deterministically.
 
 ## Verification
 
@@ -69,7 +79,7 @@ bin/zxro turn show <turn-id>   # two references, byte counts, no bodies
 
 ## Documentation impact
 
-- [ ] Durable store contract and CLI spec updated in this PR.
+- [x] Durable store contract and CLI spec updated in this PR.
 - [ ] ZR4 marked delivered in the delivery plan.
 
 ## Human gate

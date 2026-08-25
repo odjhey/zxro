@@ -13,7 +13,7 @@ sources:
   - ref: ../../architecture/contracts/session-binding.md
     credibility: primary
 created_at: "2026-08-25T13:10:00+08:00"
-updated_at: "2026-08-25T18:34:06+08:00"
+updated_at: "2026-08-25T19:17:39+08:00"
 ---
 
 # ZR1-ZR4 delivery plan
@@ -66,7 +66,8 @@ Decisions:
 - `kind` follows the existing identifier rules and is unique per turn, so the existing reference form `artifact:<turn-id>:<kind>` stays stable. A duplicate kind fails with exit class 4; there is no overwrite;
 - artifacts attach to `running` turns, and `turn settle --stdin` keeps writing its payload artifact through the same path. After settlement the turn's evidence set is frozen; a late external fact is ZR5 or work-level metadata territory (issue #26), not a mutation of settled evidence;
 - per-payload bounds match settlement today (the built-in provider's 16 MiB durable-record limit, roughly 8 MiB of payload). A per-turn cap of 32 artifacts keeps envelopes and `turn show` output bounded; exceeding it fails with exit class 2;
-- `turn show` and settlement events list references and byte counts only. `artifact path` remains the deliberate retrieval step;
+- preserve `artifact_refs` as the references-only collection. `turn show` also returns a bounded `artifacts` collection with `{ref,kind,bytes}` entries. Settlement mailbox events remain references-only, and `artifact path` remains the deliberate retrieval step;
+- reserve kind `stdin` for `turn settle --stdin`. Settlement stdin uses the same provider-neutral artifact-write path as `artifact put` and counts toward the 32-artifact limit;
 - external references per turn (a PR URL, a CI run ID) are not a new mechanism: once issue #26's namespaced metadata lands, extending it to turn records is the intended shape. This package delivers artifacts only and records that decision.
 
 Tests: multiple kinds on one turn, duplicate kind rejection, put after settle rejection, per-turn cap, reference visibility in `turn show` and settlement events, byte/digest verification through `artifact path`, and Scenario C's bounded-read check: growing an old artifact must not grow `inbox unread` or `work show` output.

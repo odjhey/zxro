@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: "2026-08-25T19:15:39+08:00"
+updated_at: "2026-08-25T19:17:39+08:00"
 ---
 
 # v0.x CLI
@@ -193,7 +193,7 @@ Show one turn's zxro identities, crew target, session address, lifecycle state, 
 zxro turn show 550e8400-e29b-41d4-a716-446655440000
 ```
 
-This command is the preferred zxro-side starting point for both deeper evidence inspection and native session recovery. It must not inline artifact contents or a full provider hook payload.
+This command is the preferred zxro-side starting point for both deeper evidence inspection and native session recovery. It preserves `artifact_refs` and adds at most 32 `artifacts` entries shaped as `{ref,kind,bytes}`. It must not inline artifact contents or a full provider hook payload.
 
 ### `zxro turn list`
 
@@ -384,6 +384,18 @@ Rules:
 A watchtower can therefore read a burst once, ack its delivery position, then work through `inbox pending` in priority order.
 
 ## Artifact commands
+
+### `zxro artifact put`
+
+Attach evidence to a running turn from stdin:
+
+```sh
+zxro artifact put <turn-id> --kind review --stdin
+```
+
+The kind follows the common identifier rules and must be unique within the turn. A duplicate kind or a settled turn fails with exit class 4. An unknown turn fails with exit class 3. Invalid kinds, oversized stdin, and a 33rd artifact fail with exit class 2 without changing the turn or artifact records. Kind `stdin` is reserved for `turn settle --stdin`, which uses the same provider-neutral write operation and counts toward the 32-artifact limit.
+
+The command returns `{ref,kind,bytes}`. It never returns the body. Successful references keep the opaque form `artifact:<turn-id>:<kind>`.
 
 ### `zxro artifact path`
 
