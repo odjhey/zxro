@@ -245,6 +245,33 @@ class ArtifactPutCliTests(CliCase):
         self.assertEqual(shown["artifact_refs"], [f"artifact:{self.turn}:stdin"])
         self.assertEqual(self.cli("artifact", "path", shown["artifact_refs"][0]).returncode, 0)
 
+    def test_omitted_orphan_retry_at_full_cap_is_atomic(self):
+        settle_args = (
+            "turn", "settle", self.turn, "--source", "manual", "--status", "completed",
+            "--message", "done", "--stdin",
+        )
+        crashed = self.binary_cli(*settle_args, body=b"orphaned", env={"ZXRO_FAULT_EXIT_AFTER": "artifact-commit"})
+        self.assertEqual(crashed.returncode, 86)
+        for index in range(32):
+            self.assertEqual(self.put(f"attached-{index}", b"x").returncode, 0)
+
+        before = {
+            path.relative_to(self.home): path.read_bytes()
+            for path in self.home.rglob("*") if path.is_file()
+        }
+        retry = self.cli(
+            "turn", "settle", self.turn, "--source", "manual", "--status", "completed", "--message", "done",
+        )
+        self.assertEqual(retry.returncode, 2, retry.stderr)
+        after = {
+            path.relative_to(self.home): path.read_bytes()
+            for path in self.home.rglob("*") if path.is_file()
+        }
+        self.assertEqual(after, before)
+        shown = self.shown()
+        self.assertEqual(shown["state"], "running")
+        self.assertEqual(len(shown["artifact_refs"]), 32)
+
     def test_settlement_stdin_metadata_commit_gap_is_resumable(self):
         settle_args = (
             "turn", "settle", self.turn, "--source", "manual", "--status", "completed",

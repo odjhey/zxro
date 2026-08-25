@@ -251,6 +251,8 @@ class LocalDurableLoop:
                     except NotFoundError:
                         artifact = None
                     if artifact is not None:
+                        if len(turn.artifacts) >= 32:
+                            raise ValidationError("turn artifact limit exceeded: maximum is 32")
                         metadata = ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
                         turn = Turn(**{
                             **turn.to_dict(),
