@@ -6,7 +6,7 @@ tags: [v0.x, execution, delivery, cli]
 status: draft
 generated: "Claude Fable 5, 2026-08-24"
 created_at: "2026-08-24T17:06:13+08:00"
-updated_at: "2026-08-24T21:40:00+08:00"
+updated_at: "2026-08-25T18:48:31+08:00"
 ---
 
 # CLI-first delivery plan
@@ -65,7 +65,7 @@ tests/
   conformance/test_builtin_provider.py
   test_localfs_invariants.py
   test_concurrency.py  test_crash_gap.py  test_context_cost.py
-.github/workflows/ci.yml  # unittest discover on ubuntu and macos, Python 3.11 and 3.12
+.github/workflows/ci.yml  # unittest discover on ubuntu and macos, Python 3.11
 ```
 
 Boundary rule from [testing and agent workflow](../engineering/testing-and-agent-workflow.md): CLI tests exercise commands through `subprocess`; the conformance suite targets the internal provider boundary so the same cases can later run against adapter compositions unchanged. Only `test_localfs_invariants.py` may hard-code built-in file paths.
