@@ -4,7 +4,7 @@ import unicodedata
 from pathlib import Path
 
 from zxro.contract import Artifact, Settlement, Turn
-from zxro.errors import NotFoundError, UnsafeStateError, ValidationError
+from zxro.errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from zxro.ids import lexical_absolute, safe_string, validate_event_id, validate_id, validate_turn_id
 from .ioutil import atomic_create, list_records, mutation, read_json, reading
 
@@ -21,6 +21,8 @@ class LocalTurnStore:
         self.work.get(work_id)
         with mutation(self.home) as access:
             owner = self.work.get_from(access, work_id)
+            if owner.state == "closed":
+                raise ConflictError(f"cannot create a turn for closed work: {work_id}")
             record = Turn(str(uuid.uuid4()), work_id, owner.watchtower_id, "acpx", agent, session, cwd, "running", native_session_id)
             atomic_create(access, "turns", f"{record.id}.json", record.to_dict())
         return record

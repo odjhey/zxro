@@ -14,6 +14,7 @@ updated_at: 2026-08-25T13:10:00+08:00
 - [ZR1-ZR4 delivery plan](./rozoro-requirements-plan.md)
 - [CLI-first delivery plan](./cli-first-delivery-plan.md)
 - [CLI-first Web UI plan](./web-ui-plan.md)
+- [Machine contract design](./machine-contract-design.md)
 - [Human decision gates](./human-decision-gates.md)
 - [Task cards](./task-cards/README.md)
 

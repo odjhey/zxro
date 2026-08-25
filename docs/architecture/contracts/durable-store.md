@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: 2026-08-24T23:58:00+08:00
+updated_at: 2026-08-25T11:50:00+08:00
 ---
 
 # Durable store contract
@@ -276,10 +276,11 @@ turn.create(work_id, agent, session, cwd, native_session_id?) -> turn
 
 The operation must:
 
-1. verify the work item exists;
-2. resolve and persist the owning `watchtower_id`;
-3. generate or accept a unique turn ID;
-4. persist the running turn before returning success.
+1. verify the work item exists and is open;
+2. reject a new turn for closed work without creating a turn record;
+3. resolve and persist the owning `watchtower_id`;
+4. generate or accept a unique turn ID;
+5. persist the running turn before returning success.
 
 ### Get
 

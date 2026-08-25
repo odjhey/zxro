@@ -68,6 +68,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [ZR1-ZR4 delivery plan](./v0.x/execution/rozoro-requirements-plan.md) | plan | Designs, work packages, and acceptance criteria for structured routing verdicts, durable briefs, late session binding, and multiple per-turn artifacts |
 | [CLI-first delivery plan](./v0.x/execution/cli-first-delivery-plan.md) | plan | Three stacked PRs with parallel test/docs tracks, repository layout, locked implementation decisions, and test-to-contract mapping for M0–M2 |
 | [CLI-first Web UI plan](./v0.x/execution/web-ui-plan.md) | plan | Local view-only UI through public CLI reads, parity gates, future read contracts, security boundaries, and evidence-linked analysis |
+| [Machine contract design](./v0.x/execution/machine-contract-design.md) | plan | Versioned `--json` envelope, bump rules, namespaced work metadata bounds and commands, and two work packages for issues #25 and #26 |
 | [Human decision gates](./v0.x/execution/human-decision-gates.md) | guide | Decisions requiring human approval |
 | [Task cards](./v0.x/execution/task-cards/README.md) | index | Task-card index and usage |
 | [M1 durable settlement](./v0.x/execution/task-cards/m1-durable-settlement.md) | checklist | M1 scope, compatibility decisions, and executable acceptance evidence |
@@ -89,6 +90,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [Playbooks](./playbooks/README.md) | index | Operational playbook index |
 | [Documentation update](./playbooks/documentation-update.md) | guide | Keeping architecture docs aligned with changes |
 | [Native session recovery](./playbooks/native-session-recovery.md) | guide | Last-resort Pi/Claude session lookup and direct resume without confusing acpx and native IDs |
+| [Provider-free M7 simulation](./playbooks/m7-provider-free-simulation.md) | guide | Deterministic local multi-turn orchestration runbook without agent providers or credentials |
 | [Reports](./reports/README.md) | index | Dated assessments and findings |
 | [2026-08-25: Optional provider evaluation](./reports/2026-08-25-optional-provider-evaluation.md) | report | Beads and BSD `mailx` evidence, decisions, and implementation gates against the M0/M1 durable-store contract |
 | [2026-08-24: Rozoro lessons for zxro](./reports/2026-08-24-rozoro-lessons.md) | report | Operational lessons to copy, adapt, or deliberately not port from Rozoro |
