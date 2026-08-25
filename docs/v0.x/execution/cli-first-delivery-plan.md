@@ -65,7 +65,7 @@ tests/
   conformance/test_builtin_provider.py
   test_localfs_invariants.py
   test_concurrency.py  test_crash_gap.py  test_context_cost.py
-.github/workflows/ci.yml  # unittest discover on ubuntu and macos, Python 3.11 and 3.12
+.github/workflows/ci.yml  # unittest discover on ubuntu and macos, Python 3.11
 ```
 
 Boundary rule from [testing and agent workflow](../engineering/testing-and-agent-workflow.md): CLI tests exercise commands through `subprocess`; the conformance suite targets the internal provider boundary so the same cases can later run against adapter compositions unchanged. Only `test_localfs_invariants.py` may hard-code built-in file paths.
