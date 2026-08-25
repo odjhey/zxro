@@ -203,7 +203,10 @@ def required_predicates(report: dict) -> dict[str, bool]:
     events = [item for item in records if item.get("type") == "turn_settled"]
     durable_turns = [item.get("json", {}) for item in evidence if item.get("path", "").startswith("turns/")]
     durable_artifacts = [item.get("json", {}) for item in evidence if item.get("path", "").startswith("artifacts/") and "json" in item]
-    artifact_refs = {item.get("ref") for item in durable_artifacts}
+    artifacts_by_ref = {item.get("ref"): item for item in durable_artifacts}
+    durable_turn_by_id = {item.get("id"): item for item in durable_turns}
+    events_by_turn = {item.get("turn_id"): item for item in events}
+    public_refs = [ref for turn in turns for ref in turn.get("public_artifact_refs", [])]
     handled = [item for item in evidence if item.get("path", "").startswith("inbox-handled/")]
     mailbox = next((item for item in records if item.get("watchtower_id") == "m7-sim-watchtower" and "ack" in item), {})
     return {
@@ -214,7 +217,7 @@ def required_predicates(report: dict) -> dict[str, bool]:
         "disposable_git_repositories": len(repositories) == 2 and all(item.get("is_git_repository") is True and item.get("head") for item in repositories),
         "wake_reconciliation": len(wake) == MAX_TURNS and len(wake[0].get("dropped_wake", [])) == 2 and wake[0].get("poll_after_dropped_wake", {}).get("handled_expected_turn") is True and all(item.get("stage_released_after_handling") is True for item in wake) and all(item.get("duplicate_wake_count") == 2 for item in wake[1:]),
         "settlement_idempotency": len(events) == MAX_TURNS and len({item.get("event_id") for item in events}) == MAX_TURNS and all(item.get("retry_preserved_event_id") is True for item in turns),
-        "artifact_evidence": len(durable_turns) == MAX_TURNS and len(durable_artifacts) >= MAX_TURNS and all(isinstance(record.get("artifact_refs"), list) and record["artifact_refs"] and all(ref in artifact_refs for ref in record["artifact_refs"]) for record in durable_turns) and all(isinstance(item.get("content_hex"), str) and item.get("content_hex") and isinstance(item.get("bytes"), int) and item["bytes"] > 0 for item in durable_artifacts),
+        "artifact_evidence": len(durable_turns) == MAX_TURNS and len(durable_artifacts) == MAX_TURNS and len(public_refs) == MAX_TURNS and len(set(public_refs)) == MAX_TURNS and all(isinstance(turn.get("public_artifact_refs"), list) and turn["public_artifact_refs"] and durable_turn_by_id.get(turn.get("turn_id"), {}).get("artifact_refs") == turn["public_artifact_refs"] and events_by_turn.get(turn.get("turn_id"), {}).get("artifact_refs") == turn["public_artifact_refs"] and all(artifacts_by_ref.get(ref, {}).get("ref") == ref and artifacts_by_ref[ref].get("turn_id") == turn.get("turn_id") and isinstance(artifacts_by_ref[ref].get("content_hex"), str) and artifacts_by_ref[ref].get("content_hex") and isinstance(artifacts_by_ref[ref].get("bytes"), int) and artifacts_by_ref[ref]["bytes"] > 0 for ref in turn["public_artifact_refs"]) for turn in turns),
         "closed_work_stop": stop.get("final_work_state") == "closed" and stop.get("close_result") == "closed" and stop.get("repeated_close_state") == "closed" and stop.get("new_turn_after_close_rejected") is True and stop.get("terminal_retry_after_close") is True and stop.get("unread_after_close") == 0 and stop.get("pending_after_close") == 0,
         "provider_free_children": environment.get("child_environment") == "explicit-safe-whitelist" and environment.get("provider_credentials_in_children") is False and environment.get("provider_config_in_children") is False and all(item.get("runtime_evidence", {}).get("forbidden_provider_keys") == [] and item.get("runtime_evidence", {}).get("private_config_home") is True and item.get("runtime_evidence", {}).get("git_repository") is True for item in turns),
         "durable_evidence": [item.get("generation") for item in events] == list(range(1, MAX_TURNS + 1)) and len(handled) == MAX_TURNS and mailbox.get("ack") == MAX_TURNS and mailbox.get("highest") == MAX_TURNS and mailbox.get("unresolved") == [],
@@ -250,6 +253,14 @@ def apply_fault(report: dict, fault: str | None) -> None:
         for item in report["durable_evidence"]:
             if item.get("path", "").startswith(("turns/", "inbox-events/")) and "json" in item:
                 item["json"]["artifact_refs"] = []
+    elif fault == "swapped-refs":
+        report["turns"][0]["public_artifact_refs"], report["turns"][1]["public_artifact_refs"] = report["turns"][1]["public_artifact_refs"], report["turns"][0]["public_artifact_refs"]
+    elif fault == "wrong-artifact-owner":
+        artifact_records = [item for item in report["durable_evidence"] if item.get("path", "").startswith("artifacts/") and "json" in item]
+        artifact_records[0]["json"]["turn_id"] = report["turns"][1]["turn_id"]
+    elif fault == "empty-public-refs":
+        for item in report["turns"]:
+            item["public_artifact_refs"] = []
 
 
 def run_fake_runtime(
@@ -480,6 +491,8 @@ def run_simulation(fault: str | None = None) -> dict:
                     "outcome": settled["outcome"],
                     "summary": settled["summary"],
                     "artifact_count": len(settled.get("artifact_refs", [])),
+                    "artifact_refs": list(settled.get("artifact_refs", [])),
+                    "public_artifact_refs": list(settled.get("artifact_refs", [])),
                     "turn_id": turn_id,
                     "event_id": event_id,
                     "retry_preserved_event_id": retry_preserved_event_id,
@@ -595,7 +608,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--fault",
-        choices=("stop-condition", "provider-environment", "repository", "durable-cwd", "artifact-refs"),
+        choices=("stop-condition", "provider-environment", "repository", "durable-cwd", "artifact-refs", "swapped-refs", "wrong-artifact-owner", "empty-public-refs"),
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args(argv)

@@ -93,6 +93,9 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
         self.assertEqual(len({turn["durable_cwd"] for turn in turns}), 2)
         self.assertTrue(all(turn["state"] == "settled" for turn in turns))
         self.assertTrue(all(turn["retry_preserved_event_id"] for turn in turns))
+        public_refs = [ref for turn in turns for ref in turn["public_artifact_refs"]]
+        self.assertEqual(len(public_refs), 4)
+        self.assertEqual(len(set(public_refs)), 4)
         self.assertEqual([turn["runtime_evidence"]["runtime"] for turn in turns], ["fake-runtime"] * 4)
         self.assertTrue(all(turn["runtime_evidence"]["forbidden_provider_keys"] == [] for turn in turns))
         self.assertTrue(all(turn["runtime_evidence"]["private_config_home"] for turn in turns))
@@ -147,7 +150,7 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
         self.assertTrue(all(turn["runtime_evidence"]["git_repository"] for turn in report["turns"]))
 
     def test_required_contract_faults_fail_closed_without_passed_output(self):
-        for fault in ("stop-condition", "provider-environment", "repository", "durable-cwd", "artifact-refs"):
+        for fault in ("stop-condition", "provider-environment", "repository", "durable-cwd", "artifact-refs", "swapped-refs", "wrong-artifact-owner", "empty-public-refs"):
             with self.subTest(fault=fault):
                 result = subprocess.run(
                     [str(ROOT / "bin" / "zxro-m7-sim"), "--fault", fault],
@@ -178,6 +181,7 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
         self.assertEqual(len(artifacts), 4)
         artifact_refs = {artifact["ref"] for artifact in artifacts}
         self.assertTrue(all(turn["artifact_refs"] and set(turn["artifact_refs"]).issubset(artifact_refs) for turn in turns))
+        self.assertTrue(all(turn["artifact_refs"] == turn["public_artifact_refs"] for turn in report["turns"]))
         self.assertTrue(all(artifact["content_hex"] and artifact["bytes"] > 0 for artifact in artifacts))
         self.assertEqual(len(handled), 4)
         mailbox = next(item["json"] for item in records if item["path"] == "inbox/m7-sim-watchtower.json")

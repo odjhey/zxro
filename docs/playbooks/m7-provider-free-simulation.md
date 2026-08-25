@@ -60,7 +60,7 @@ The report records:
 - the separate watchtower, `repo-a`, and `repo-b` cwd roles;
 - Git repository evidence for both disposable targets, including their initial commit heads;
 - the durable CLI turn cwd values, checked against the target paths used to create each turn;
-- required artifact references and inspectable artifact records for every settled turn;
+- required public turn-show artifact references and inspectable artifact records for every settled turn, with per-turn ownership checks;
 - the child environment policy and fake-runtime checks for forbidden provider-like keys;
 - four settled turns and generations 1 through 4;
 - fake-runtime evidence written inside each target repository;
@@ -98,7 +98,7 @@ Expected high-level results are `passed`, every `contract_predicates` value set 
 - Dropped wake notifications are recoverable because durable settlement is reconciled from the mailbox.
 - Duplicate wake or reconciliation calls do not allocate duplicate turns or events.
 - Terminal settlement retries preserve one event per turn.
-- Every settled turn keeps a durable target cwd and an inspectable artifact reference.
+- Every settled turn keeps a durable target cwd and a public artifact reference that resolves to an inspectable artifact owned by that turn.
 - Work closure is separate from terminal settlement retry and prevents new turns.
 - Target cwd values remain separate from the watchtower cwd, and both target paths are real disposable Git repositories.
 - Simulation children receive no provider credential or provider config variables from the invoking environment.
