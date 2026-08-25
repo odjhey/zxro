@@ -14,7 +14,7 @@ sources:
     credibility: primary
 stale_after: 2026-10-01
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-24T15:33:00+08:00
+updated_at: 2026-08-25T09:00:00+08:00
 ---
 
 # Native session recovery
@@ -38,11 +38,15 @@ Record:
 - acpx session name;
 - optional `native_session_id` if zxro already captured one.
 
-If the turn ID is unknown, start from the work item:
+If the turn ID is unknown, start from the work item with commands available on `master`:
 
 ```sh
-zxro inspect <work-id>
+zxro work show <work-id>
+zxro turn list --work <work-id>
+zxro turn show <turn-id>
 ```
+
+`zxro inspect <work-id>` is a future M2 command and is unavailable on `master`.
 
 ## Ask acpx first
 
@@ -159,12 +163,15 @@ For break-glass takeover:
 
 Recovery succeeds when the native client shows the expected conversation history and target cwd without modifying zxro durable identity.
 
-After recovery, re-check:
+After recovery, re-check with commands available on `master`:
 
 ```sh
 zxro turn show <turn-id>
-zxro inspect <work-id>
+zxro work show <work-id>
+zxro turn list --work <work-id>
 ```
+
+Do not use the future `zxro inspect <work-id>` example for this verification. It is unavailable on `master`.
 
 ## Related
 

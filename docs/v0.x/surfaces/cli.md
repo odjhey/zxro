@@ -135,7 +135,7 @@ The response may include:
 - unresolved current references or blocker counts when zxro has them;
 - related mailbox metadata.
 
-It must not inline prior turn reports, raw hook payloads, transcripts, logs, diffs, or other artifact contents. Historical metadata belongs in `zxro inspect`; evidence stays behind artifact references.
+It must not inline prior turn reports, raw hook payloads, transcripts, logs, diffs, or other artifact contents. On `master`, use `zxro turn list --work <work-id>` and `zxro turn show <turn-id>` for historical metadata. The combined `zxro inspect` view is future M2 scope. Evidence stays behind artifact references.
 
 ### `zxro work list`
 

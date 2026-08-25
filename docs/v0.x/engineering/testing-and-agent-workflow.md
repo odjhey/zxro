@@ -6,7 +6,7 @@ tags: [v0.x, engineering, testing, agents]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T21:40:00+08:00
+updated_at: 2026-08-25T09:00:00+08:00
 ---
 
 # v0.x testing and agent workflow
@@ -80,7 +80,8 @@ At minimum, verify:
 - separate zxro homes or equivalent provider namespaces do not collide;
 - event and turn summaries reject or deterministically handle content beyond the 1,000-character v0.x bound;
 - a large settlement payload is stored as an artifact or external evidence and is not copied into the inbox event;
-- `work show`, `turn show`, `turn list`, `inbox unread`, `inbox pending`, and `inspect` do not inline artifact contents;
+- current `work show`, `turn show`, `turn list`, `inbox unread`, and `inbox pending` commands do not inline artifact contents;
+- the future M2 `inspect` command, once implemented, must preserve the same bound;
 - machine output remains deterministic and errors use stable non-zero behavior.
 
 The conformance suite should target an internal provider interface or a provider-neutral fixture, not hard-code `~/.zxro/work/*.json` paths except in tests specifically for the built-in file provider.
@@ -116,7 +117,7 @@ The fixture proves this sequence:
 4. Run `inbox unread` and verify that only generation N+1 appears.
 5. Run `inbox pending` and verify it returns only bounded unresolved event envelopes, including any older unhandled events.
 6. Verify that no artifact body appears in either mailbox view.
-7. Run `work show`, `turn show`, and `inspect` and verify that they return metadata and bounded summaries only.
+7. Run `work show`, `turn list`, and `turn show` and verify that they return metadata and bounded summaries only. The future M2 `inspect` command is unavailable on `master`.
 8. Resolve one artifact deliberately, then inspect a slice in the manual smoke test.
 
 The point is not a microbenchmark. The contract is structural: `unread` output scales with new delivery, while `pending` scales with unresolved bounded events. Neither scales with old artifact bytes.
