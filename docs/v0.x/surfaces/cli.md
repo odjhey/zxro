@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-25T08:30:00+08:00
+updated_at: 2026-08-25T11:50:00+08:00
 ---
 
 # v0.x CLI
@@ -154,7 +154,7 @@ Mark a logical work item closed after the watchtower or operator accepts the out
 zxro work close auth-fix
 ```
 
-Closing work does not delete turns, inbox events, or native agent sessions. It is independent from mailbox read ack and event handling.
+Closing work does not delete turns, inbox events, or native agent sessions. It is independent from mailbox read ack and event handling. New turns for closed work are rejected. Retrying an already settled turn remains allowed so a caller can repair an interrupted publication.
 
 ## Turn commands
 
