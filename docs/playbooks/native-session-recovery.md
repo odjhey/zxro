@@ -14,12 +14,14 @@ sources:
     credibility: primary
 stale_after: 2026-10-01
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-25T09:00:00+08:00
+updated_at: 2026-08-25T16:40:13+08:00
 ---
 
 # Native session recovery
 
 Use this playbook only when the normal zxro/acpx path cannot continue a crew conversation and an operator needs to inspect or resume it directly in Pi or Claude Code.
+
+This procedure applies only to turns already driven through acpx; ZXRO does not require acpx for its durable CLI.
 
 Native session recovery is diagnostic. Do not rewrite zxro artifacts or native transcript files by hand unless a separate recovery procedure explicitly requires it.
 
