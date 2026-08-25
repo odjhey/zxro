@@ -12,7 +12,7 @@ class JsonEnvelopeTests(CliCase):
         envelope = json.loads(result.stdout)
         self.assertEqual(set(envelope), {"schema_version", "data"})
         self.assertEqual(envelope["schema_version"], 1)
-        self.assertIsInstance(envelope["schema_version"], int)
+        self.assertIs(type(envelope["schema_version"]), int)
         self.assertIsInstance(envelope["data"], expected_type)
         self.assertEqual(result.stdout, json.dumps(envelope, sort_keys=True, separators=(",", ":")) + "\n")
         return envelope["data"]
