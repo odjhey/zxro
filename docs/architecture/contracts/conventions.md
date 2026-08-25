@@ -6,7 +6,7 @@ tags: [architecture, contracts, conventions]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T20:05:00+08:00
+updated_at: 2026-08-25T13:00:51+08:00
 ---
 
 # Contract conventions and primitives
@@ -26,6 +26,8 @@ Durable timestamps use ISO 8601 with the local UTC offset and second precision. 
 The built-in provider writes UTF-8 JSON. Public `--json` output is one JSON value on stdout. Diagnostics use stderr.
 
 A missing optional field means the value is absent. Writers omit absent optional values rather than emitting `null`. Durable built-in-provider records fail closed on unknown fields because an older binary cannot prove their meaning. Public JSON consumers should ignore unknown fields so additive CLI output remains compatible.
+
+Public `--json` output carries no schema version yet. A versioned envelope and its bump rules are designed but not implemented; see the [machine contract design](../../v0.x/execution/machine-contract-design.md). When that design lands, its compatibility policy replaces this paragraph.
 
 ## Errors
 
