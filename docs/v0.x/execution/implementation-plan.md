@@ -6,7 +6,7 @@ tags: [v0.x, execution]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-25T09:30:00+08:00
+updated_at: 2026-08-25T09:30:01+08:00
 ---
 
 # v0.x implementation plan
@@ -157,13 +157,15 @@ Provider adapters and harness integrations must not invent provider-specific dur
 
 ## Completion evidence
 
-- [ ] Core CLI tests pass with `python3 -m unittest discover -s tests -v`.
-- [ ] Built-in provider passes the durable-store conformance suite.
-- [ ] Concurrency tests prove ordered generations, stable event IDs, and no lost successful writes.
-- [ ] Read ack can advance past an unhandled event while `inbox pending` still returns it.
-- [ ] Events can be handled out of generation order and repeated handle is idempotent.
-- [ ] Crash-gap test proves a terminal turn can be reconciled into one mailbox event after interruption between commit and publish.
-- [ ] Manual artifact-loop walkthrough succeeds in a temporary home.
+M0 and M1 merged in PR [#7](https://github.com/odjhey/zxro/pull/7). PR [#17](https://github.com/odjhey/zxro/pull/17) then added and independently accepted the public-CLI multi-turn proof at exact head [`c0a8c49f49836ef3b182883a522c50b917d007a1`](https://github.com/odjhey/zxro/commit/c0a8c49f49836ef3b182883a522c50b917d007a1). The proof merged as [`a191ae7d00ed2d1974ab27581bda80b6346c8cde`](https://github.com/odjhey/zxro/commit/a191ae7d00ed2d1974ab27581bda80b6346c8cde); its [post-merge CI run](https://github.com/odjhey/zxro/actions/runs/32795552021) passed all four jobs.
+
+- [x] Core CLI tests pass with `python3 -m unittest discover -s tests -v`.
+- [x] Built-in provider passes the durable-store conformance suite.
+- [x] Concurrency tests prove ordered generations, stable event IDs, and no lost successful writes.
+- [x] Read ack can advance past an unhandled event while `inbox pending` still returns it.
+- [x] Events can be handled out of generation order and repeated handle is idempotent.
+- [x] Crash-gap test proves a terminal turn can be reconciled into one mailbox event after interruption between commit and publish.
+- [x] Manual artifact-loop walkthrough succeeds in a temporary home.
 - [ ] Native session recovery works for disposable Pi and Claude sessions.
 - [ ] Optional adapters, when added, pass the same required semantics without changing public commands.
 - [ ] Pi and Claude integrations, when added, call documented CLI commands only.
