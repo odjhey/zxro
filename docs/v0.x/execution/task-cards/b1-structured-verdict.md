@@ -6,7 +6,7 @@ tags: [v0.x, execution, task-cards, settlement, mailbox]
 status: draft
 generated: "Claude Fable 5 agent, 2026-08-25"
 created_at: "2026-08-25T14:25:09+08:00"
-updated_at: "2026-08-25T15:53:42+08:00"
+updated_at: "2026-08-25T19:15:39+08:00"
 ---
 
 # B1 — Structured routing verdict
@@ -68,10 +68,10 @@ The hook extracts this with an exact match from the final assistant message (the
 
 ## Acceptance criteria
 
-- [ ] Scenario B: a completed execution reports `verdict=blocked` and the fact is readable from `inbox pending` without parsing the summary.
-- [ ] Verdict-less settlement behavior is byte-identical to today.
-- [ ] Retry with different verdict or needs fails deterministically; identical retry is idempotent through the crash gap.
-- [ ] New JSON fields are additive; no schema bump.
+- [x] Scenario B: a completed execution reports `verdict=blocked` and the fact is readable from `inbox pending` without parsing the summary.
+- [x] Verdict-less settlements omit both fields and retain the existing durable shape.
+- [x] Retry with different verdict or needs fails deterministically; identical retry is idempotent through the crash gap.
+- [x] New JSON fields are additive; no schema bump before A1 lands.
 
 ## Verification
 
@@ -84,12 +84,14 @@ bin/zxro --json inbox pending --watchtower <id>   # verdict field present
 
 ## Documentation impact
 
-- [ ] Durable store contract, CLI spec, and conventions updated in this PR.
-- [ ] ZR1 marked delivered in the delivery plan; implementation plan MR row evidence updated.
+- [x] Durable store contract, CLI spec, and conventions updated in this PR.
+- [ ] ZR1 marked delivered in the delivery plan after merge; implementation plan MR row evidence remains pending the complete MR milestone.
 
 ## Human gate
 
-Cleared: the maintainer approved the verdict vocabulary `done | partial | blocked` on 2026-08-25 after adversarial review of alternatives (who-acts-next taxonomies, free strings, watchtower-defined lists, `unknown`, `failed`, `unable`, `ready`). Recommended pre-implementation validation remains available: classify ten real settlement situations using only what the settling process knew at the time; if two classifiers disagree on more than one, reopen the gate.
+Cleared: the maintainer approved the verdict vocabulary `done | partial | blocked` on 2026-08-25 after adversarial review of alternatives. The binding coupling rule is: `blocked` requires non-empty `--needs`; `--needs` is rejected with `done`, `partial`, or an omitted verdict. This decision replaced the card's earlier wording that treated both inputs as independently optional.
+
+The verdict remains a producer claim about work against the brief or summary. It does not close work, handle events, report liveness, or assign an actor.
 
 ## Related
 

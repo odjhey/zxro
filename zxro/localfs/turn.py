@@ -64,8 +64,8 @@ class LocalTurnStore:
     @staticmethod
     def _decode(data):
         required = {"id", "work_id", "watchtower_id", "runtime", "agent", "session", "cwd", "state"}
-        optional = {"native_session_id", "outcome", "summary", "artifact_refs", "settlement"}
-        string_fields = required | ({"native_session_id", "outcome", "summary"} & set(data))
+        optional = {"native_session_id", "outcome", "summary", "verdict", "needs", "artifact_refs", "settlement"}
+        string_fields = required | ({"native_session_id", "outcome", "summary", "verdict", "needs"} & set(data))
         if set(data) - required - optional or not required <= set(data) or any(not isinstance(data.get(key), str) for key in string_fields):
             raise UnsafeStateError("invalid turn record schema")
         try:
@@ -81,7 +81,7 @@ class LocalTurnStore:
             raise UnsafeStateError(f"invalid turn record: {exc}") from exc
         if data["runtime"] != "acpx" or data["state"] not in {"running", "settled"} or normalized_cwd != data["cwd"]:
             raise UnsafeStateError("invalid turn invariant")
-        if data["state"] == "running" and set(data) & {"outcome", "summary", "artifact_refs", "settlement"}:
+        if data["state"] == "running" and set(data) & {"outcome", "summary", "verdict", "needs", "artifact_refs", "settlement"}:
             raise UnsafeStateError("running turn has settlement fields")
         if data["state"] == "settled":
             if not {"outcome", "summary", "settlement"} <= set(data) or not isinstance(data.get("artifact_refs", []), list) or not isinstance(data["settlement"], dict):
@@ -94,6 +94,14 @@ class LocalTurnStore:
                 safe_string(settlement.summary, "summary")
                 if len(settlement.summary) > 1000 or unicodedata.normalize("NFC", settlement.summary) != settlement.summary:
                     raise ValueError("invalid summary normalization or length")
+                if settlement.verdict not in {None, "done", "partial", "blocked"}:
+                    raise ValueError("invalid verdict")
+                if (settlement.verdict == "blocked") != (settlement.needs is not None):
+                    raise ValueError("needs must accompany blocked verdict")
+                if settlement.needs is not None:
+                    safe_string(settlement.needs, "needs")
+                    if len(settlement.needs) > 1000 or unicodedata.normalize("NFC", settlement.needs) != settlement.needs:
+                        raise ValueError("invalid needs normalization or length")
                 validate_event_id(settlement.event_id)
                 settled_at = datetime.fromisoformat(settlement.settled_at)
                 if settled_at.utcoffset() is None:
@@ -108,6 +116,8 @@ class LocalTurnStore:
                     raise ValueError("invalid artifact references")
                 if data["outcome"] != settlement.outcome or data["summary"] != settlement.summary:
                     raise ValueError("settlement fields disagree")
+                if data.get("verdict") != settlement.verdict or data.get("needs") != settlement.needs:
+                    raise ValueError("settlement verdict fields disagree")
                 if bool(artifact_refs) != (settlement.payload_sha256 is not None):
                     raise ValueError("settlement payload fields disagree")
                 data["settlement"] = settlement

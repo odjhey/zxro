@@ -33,9 +33,12 @@ class Settlement:
     payload_sha256: str | None
     event_id: str
     settled_at: str
+    verdict: str | None = None
+    needs: str | None = None
 
     def to_dict(self):
-        return asdict(self)
+        value = asdict(self)
+        return {key: item for key, item in value.items() if key not in {"verdict", "needs"} or item is not None}
 
 
 @dataclass(frozen=True)
@@ -93,14 +96,19 @@ class MailboxEvent:
     summary: str
     artifact_refs: tuple[str, ...]
     created_at: str
+    verdict: str | None = None
+    needs: str | None = None
 
     def to_dict(self):
-        value = asdict(self); value["artifact_refs"] = list(self.artifact_refs); return value
+        value = asdict(self)
+        value["artifact_refs"] = list(self.artifact_refs)
+        return {key: item for key, item in value.items() if item is not None}
 
     @classmethod
     def from_dict(cls, value):
-        required = set(cls.__dataclass_fields__)
-        if set(value) != required or not isinstance(value.get("artifact_refs"), list):
+        optional = {"verdict", "needs"}
+        required = set(cls.__dataclass_fields__) - optional
+        if set(value) - optional != required or not isinstance(value.get("artifact_refs"), list):
             from .errors import UnsafeStateError
             raise UnsafeStateError("invalid mailbox event schema")
         from .errors import ValidationError
@@ -114,6 +122,15 @@ class MailboxEvent:
             safe_string(value["summary"], "summary")
             if len(value["summary"]) > 1000 or unicodedata.normalize("NFC", value["summary"]) != value["summary"]:
                 raise ValueError("invalid summary normalization or length")
+            verdict, needs = value.get("verdict"), value.get("needs")
+            if verdict not in {None, "done", "partial", "blocked"}:
+                raise ValueError("invalid verdict")
+            if (verdict == "blocked") != (needs is not None):
+                raise ValueError("needs must accompany blocked verdict")
+            if needs is not None:
+                safe_string(needs, "needs")
+                if len(needs) > 1000 or unicodedata.normalize("NFC", needs) != needs:
+                    raise ValueError("invalid needs normalization or length")
             created_at = datetime.fromisoformat(value["created_at"])
             if created_at.utcoffset() is None:
                 raise ValueError
@@ -141,12 +158,16 @@ class Turn:
     native_session_id: str | None = None
     outcome: str | None = None
     summary: str | None = None
+    verdict: str | None = None
+    needs: str | None = None
     artifact_refs: tuple[str, ...] = ()
     settlement: Settlement | None = None
 
     def to_dict(self):
         value = asdict(self)
         value["artifact_refs"] = list(self.artifact_refs)
+        if self.settlement is not None:
+            value["settlement"] = self.settlement.to_dict()
         return {key: item for key, item in value.items() if item is not None and not (key == "artifact_refs" and not item)}
 
 
@@ -170,7 +191,7 @@ class TurnStore(Protocol):
 
 
 class SettlementCapability(Protocol):
-    def settle(self, turn_id: str, source: str, outcome: str, message: str, payload: bytes | None) -> tuple[Turn, MailboxEvent]: ...
+    def settle(self, turn_id: str, source: str, outcome: str, message: str, payload: bytes | None, verdict: str | None = None, needs: str | None = None) -> tuple[Turn, MailboxEvent]: ...
 
 
 class MailboxCapability(Protocol):

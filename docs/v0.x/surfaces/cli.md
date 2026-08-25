@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: "2026-08-25T18:50:47+08:00"
+updated_at: "2026-08-25T19:15:39+08:00"
 ---
 
 # v0.x CLI
@@ -214,7 +214,9 @@ Record the terminal outcome of one delegated turn and publish exactly one action
 zxro turn settle <turn-id> \
   --source manual \
   --status completed \
-  --message "Implementation finished; focused tests pass."
+  --message "Implementation finished; operator approval remains." \
+  --verdict blocked \
+  --needs "operator approval"
 ```
 
 Hook-oriented form:
@@ -235,6 +237,8 @@ Supported status values for v0.x:
 
 `--message` is the bounded routing summary. It must not exceed 1,000 Unicode characters after normalization.
 
+`--verdict` is optional and accepts `done`, `partial`, or `blocked`. It is the producer's claim about work against the brief or summary, separate from the execution outcome in `--status`. `blocked` requires a non-empty `--needs` value. `--needs` is rejected with `done`, `partial`, or no verdict. Needs text is NFC-normalized and limited to 1,000 Unicode characters. Omitted verdicts write neither field. A verdict does not close work, handle an event, report runtime liveness, or assign the next actor.
+
 `--stdin` stores the producer payload needed for later diagnosis as a turn artifact. Provider-specific payloads must not change the common inbox envelope, and raw stdin must not be copied into that envelope. The built-in provider rejects stdin when its hex-encoded artifact record would exceed the 16 MiB durable-record limit (roughly 8 MiB of payload), before committing settlement.
 
 Settlement rules:
@@ -242,8 +246,8 @@ Settlement rules:
 - A successful first settlement writes the result and any payload artifact before publishing the inbox event.
 - The event receives a stable `event_id` and a mailbox generation.
 - The new event begins unhandled.
-- Repeating an identical outcome and normalized message is idempotent and must return the existing logical settlement without creating another event or generation. A retry may omit stdin; if supplied, its bytes must match the first payload, and a payload cannot be added later.
-- A conflicting outcome, message, or supplied payload fails deterministically.
+- Repeating an identical outcome, normalized message, verdict, and normalized needs is idempotent and must return the existing logical settlement without creating another event or generation. A retry may omit stdin; if supplied, its bytes must match the first payload, and a payload cannot be added later.
+- A conflicting outcome, message, verdict, needs, or supplied payload fails deterministically.
 - Settling an unknown turn fails without creating an inbox event.
 - The inbox event contains bounded routing context and artifact references, never the full payload.
 - The command reports success only after both terminal turn state and event publication are durable.
