@@ -6,7 +6,7 @@ tags: [v0.x, execution]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-25T09:30:00+08:00
+updated_at: 2026-08-25T13:10:00+08:00
 ---
 
 # v0.x implementation plan
@@ -64,6 +64,7 @@ Avoid premature plugin infrastructure. A small internal Python protocol or adapt
 |---|---|---|---|---|
 | M0: contract + built-in CRUD | Watchtower, work, and turn behavior implements the provider-neutral contract through the local file adapter | Python 3.11+ | Black-box CLI tests plus durable-store conformance cases | zxro |
 | M1: durable mailbox | Settling a turn commits its durable result before one idempotent ordered event; unread/ack track delivery while pending/handle track attention independently | M0 | Duplicate-settle, crash-gap, ordering, read-ack, out-of-order-handle, and malformed-state tests | zxro |
+| MR: Rozoro-derived semantics | ZR1 structured routing verdict, ZR2 durable brief reference, ZR3 late session binding, and ZR4 multiple per-turn artifacts complete the durable work layer per the [ZR1-ZR4 delivery plan](./rozoro-requirements-plan.md) | M1 | Rozoro-shaped scenario tests from the [requirements report](../../reports/2026-08-25-rozoro-derived-requirements.md) | zxro |
 | M2: operator ergonomics | `inspect` and metadata helpers make manual diagnosis practical without loading artifact bodies | M1 | Manual shell walkthrough without reading zxro source | zxro |
 | M3: recovery | Operators can recover Pi or Claude native sessions from zxro/acpx metadata or official native pickers | M0 | Follow the recovery playbook on disposable sessions | zxro docs |
 | M4: optional store adapters | Candidate work/mail providers can replace one capability without changing zxro CLI behavior | M1 | Run the same conformance suite against each adapter; document operational dependencies | adapter |
@@ -79,11 +80,14 @@ flowchart LR
     B --> C[Operator ergonomics]
     A --> D[Native recovery]
     B --> P[Optional provider adapters]
-    B --> E[Pi extension]
-    B --> F[Claude hook]
+    B --> R[Rozoro-derived semantics ZR1-ZR4]
+    R --> E[Pi extension]
+    R --> F[Claude hook]
     E --> G[Watchtower loop]
     F --> G
 ```
+
+MR sits between the durable mailbox and the harness integrations so Pi and Claude hooks settle turns with structured verdicts from their first version instead of retrofitting them. Work-package designs, dependencies, and acceptance criteria live in the [ZR1-ZR4 delivery plan](./rozoro-requirements-plan.md).
 
 Provider evaluation may happen in parallel with implementation. It must not block the built-in provider. If a candidate fits later, write an adapter and run the conformance suite instead of changing the public CLI.
 
@@ -138,7 +142,7 @@ Do not encode handled state by rewriting the immutable event or by moving the re
 
 Documentation, CLI implementation, black-box tests, and off-the-shelf provider evaluation may proceed together once contract semantics are fixed.
 
-Pi and Claude integration work may proceed in parallel after M1 because both integrations terminate at the same `zxro turn settle` CLI contract.
+Pi and Claude integration work may proceed in parallel after MR because both integrations terminate at the same `zxro turn settle` CLI contract, and that contract gains its structured verdict fields in MR.
 
 Provider adapters and harness integrations must not invent provider-specific durable schemas in the public CLI. Provider details stay behind adapters or in explicitly typed optional metadata.
 
@@ -157,13 +161,15 @@ Provider adapters and harness integrations must not invent provider-specific dur
 
 ## Completion evidence
 
-- [ ] Core CLI tests pass with `python3 -m unittest discover -s tests -v`.
-- [ ] Built-in provider passes the durable-store conformance suite.
-- [ ] Concurrency tests prove ordered generations, stable event IDs, and no lost successful writes.
-- [ ] Read ack can advance past an unhandled event while `inbox pending` still returns it.
-- [ ] Events can be handled out of generation order and repeated handle is idempotent.
-- [ ] Crash-gap test proves a terminal turn can be reconciled into one mailbox event after interruption between commit and publish.
-- [ ] Manual artifact-loop walkthrough succeeds in a temporary home.
+M0 merged in PR [#6](https://github.com/odjhey/zxro/pull/6) as [`7dbb53336ff111106d986b38d084f3314b86a0f2`](https://github.com/odjhey/zxro/commit/7dbb53336ff111106d986b38d084f3314b86a0f2). M1 merged in PR [#7](https://github.com/odjhey/zxro/pull/7) as [`7a3db5acd7785bcd3946604ef2282ea887b4f7ce`](https://github.com/odjhey/zxro/commit/7a3db5acd7785bcd3946604ef2282ea887b4f7ce). PR [#17](https://github.com/odjhey/zxro/pull/17) then added and independently accepted the public-CLI multi-turn proof at exact head [`c0a8c49f49836ef3b182883a522c50b917d007a1`](https://github.com/odjhey/zxro/commit/c0a8c49f49836ef3b182883a522c50b917d007a1). The proof merged as [`a191ae7d00ed2d1974ab27581bda80b6346c8cde`](https://github.com/odjhey/zxro/commit/a191ae7d00ed2d1974ab27581bda80b6346c8cde); its [post-merge CI run](https://github.com/odjhey/zxro/actions/runs/32795552021) passed all four jobs.
+
+- [x] Core CLI tests pass with `python3 -m unittest discover -s tests -v`.
+- [x] Built-in provider passes the durable-store conformance suite.
+- [x] Concurrency tests prove ordered generations, stable event IDs, and no lost successful writes.
+- [x] Read ack can advance past an unhandled event while `inbox pending` still returns it.
+- [x] Events can be handled out of generation order and repeated handle is idempotent.
+- [x] Crash-gap test proves a terminal turn can be reconciled into one mailbox event after interruption between commit and publish.
+- [x] Manual artifact-loop walkthrough succeeds in a temporary home.
 - [ ] Native session recovery works for disposable Pi and Claude sessions.
 - [ ] Optional adapters, when added, pass the same required semantics without changing public commands.
 - [ ] Pi and Claude integrations, when added, call documented CLI commands only.
@@ -173,6 +179,7 @@ Provider adapters and harness integrations must not invent provider-specific dur
 ## Related
 
 - [Execution index](./README.md)
+- [ZR1-ZR4 delivery plan](./rozoro-requirements-plan.md)
 - [Durable store contract](../../architecture/contracts/durable-store.md)
 - [Decision 0002](../../decisions/0002-separate-delivery-from-attention.md)
 - [v0.x CLI](../surfaces/cli.md)

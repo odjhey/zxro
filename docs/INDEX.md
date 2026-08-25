@@ -6,7 +6,7 @@ tags: [docs, meta, toc]
 status: current
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-25T09:00:00+08:00
+updated_at: 2026-08-25T14:25:09+08:00
 ---
 
 # Docs index
@@ -65,10 +65,19 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [Technology stack](./v0.x/scope/technology-stack.md) | reference | Python 3.11+ stdlib core, built-in local provider, optional storage adapters, unittest, and acpx boundary |
 | [Execution](./v0.x/execution/README.md) | index | Execution document index |
 | [Implementation plan](./v0.x/execution/implementation-plan.md) | plan | Contract-first built-in provider, delivery/read/attention mailbox, optional adapters, then Pi/Claude integration and watchtower loop |
+| [ZR1-ZR4 delivery plan](./v0.x/execution/rozoro-requirements-plan.md) | plan | Designs, work packages, and acceptance criteria for structured routing verdicts, durable briefs, late session binding, and multiple per-turn artifacts |
 | [CLI-first delivery plan](./v0.x/execution/cli-first-delivery-plan.md) | plan | Three stacked PRs with parallel test/docs tracks, repository layout, locked implementation decisions, and test-to-contract mapping for M0–M2 |
+| [CLI-first Web UI plan](./v0.x/execution/web-ui-plan.md) | plan | Local view-only UI through public CLI reads, parity gates, future read contracts, security boundaries, and evidence-linked analysis |
+| [Machine contract design](./v0.x/execution/machine-contract-design.md) | plan | Versioned `--json` envelope, bump rules, namespaced work metadata bounds and commands, and two work packages for issues #25 and #26 |
 | [Human decision gates](./v0.x/execution/human-decision-gates.md) | guide | Decisions requiring human approval |
 | [Task cards](./v0.x/execution/task-cards/README.md) | index | Task-card index and usage |
 | [M1 durable settlement](./v0.x/execution/task-cards/m1-durable-settlement.md) | checklist | M1 scope, compatibility decisions, and executable acceptance evidence |
+| [A1 versioned JSON envelope](./v0.x/execution/task-cards/a1-versioned-json-envelope.md) | checklist | Envelope wrapping for all public `--json` output plus the published compatibility policy |
+| [A2 namespaced work metadata](./v0.x/execution/task-cards/a2-namespaced-work-metadata.md) | checklist | Bounded namespaced metadata on work records with the `work meta` command family; stacked on A1 |
+| [B1 structured verdict](./v0.x/execution/task-cards/b1-structured-verdict.md) | checklist | Optional `--verdict`/`--needs` on settlement, retry identity, and mailbox envelope exposure |
+| [C1 per-turn artifacts](./v0.x/execution/task-cards/c1-per-turn-artifacts.md) | checklist | `artifact put` with kind-unique references, frozen evidence at settlement, and bounded-read regression |
+| [C2 work brief](./v0.x/execution/task-cards/c2-work-brief.md) | checklist | Set-once work-scoped brief artifact with create-time and later-set paths; stacked on C1 |
+| [D1 turn bind](./v0.x/execution/task-cards/d1-turn-bind.md) | checklist | Late native-session-ID binding with idempotent, fail-closed semantics |
 | [Task-card template](./v0.x/execution/task-cards/task-card-template.md) | plan | Copyable implementation task card |
 | [Surfaces](./v0.x/surfaces/README.md) | index | Product-interface index |
 | [v0.x CLI](./v0.x/surfaces/cli.md) | spec | Current durable CRUD, settlement, mailbox, and artifact resolution plus unavailable future M2 inspection and metadata helpers |
@@ -87,6 +96,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [Playbooks](./playbooks/README.md) | index | Operational playbook index |
 | [Documentation update](./playbooks/documentation-update.md) | guide | Keeping architecture docs aligned with changes |
 | [Native session recovery](./playbooks/native-session-recovery.md) | guide | Last-resort Pi/Claude session lookup and direct resume without confusing acpx and native IDs |
+| [Provider-free M7 simulation](./playbooks/m7-provider-free-simulation.md) | guide | Deterministic local multi-turn orchestration runbook without agent providers or credentials |
 | [Reports](./reports/README.md) | index | Dated assessments and findings |
 | [2026-08-25: Optional provider evaluation](./reports/2026-08-25-optional-provider-evaluation.md) | report | Beads and BSD `mailx` evidence, decisions, and implementation gates against the M0/M1 durable-store contract |
 | [2026-08-24: Rozoro lessons for zxro](./reports/2026-08-24-rozoro-lessons.md) | report | Operational lessons to copy, adapt, or deliberately not port from Rozoro |
