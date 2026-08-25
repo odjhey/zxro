@@ -23,15 +23,15 @@ sources:
   - ref: ../engineering/runtime-and-provisioning.md
     credibility: primary
 created_at: "2026-08-25T09:35:45+08:00"
-updated_at: "2026-08-25T10:29:39+08:00"
+updated_at: "2026-08-25T10:39:41+08:00"
 ---
 
 # CLI-first Web UI plan
 
 ## Plan provenance
 
-- `attempt_count: 7`
-- `caused_by: standard reviewer findings on a7337bae`
+- `attempt_count: 8`
+- `caused_by: standard reviewer retention contradiction at f89ac16`
 - Baseline: merged `origin/master` at `a191ae7`, including M0, M1, and the public-CLI multi-turn readiness evidence.
 - Verification during planning: `python3 -m unittest discover -s tests -v` passed 84 of 84 tests against that baseline.
 
@@ -576,7 +576,7 @@ The proposed commands below do not exist on `master`.
 - Security and privacy: default events omit argv values, cwd, home path, prompt/summary/artifact content, stdin, environment, session/native IDs, and raw records. Resource correlation uses process-local keyed fingerprints by default. `--log-sensitive` may include raw ZXRO IDs and masked path tails, but never credentials, prompts, payloads, artifact bodies, cookies, authorization data, or raw environment values.
 - Dependencies: only a core logging contract, a clock abstraction for tests, redaction helpers, and sink primitives including safe concurrent append/rotation. G19 does not depend on G6, a durable-schema change, a UI package, or a provider adapter.
 - Priority: P0 core CLI prerequisite and ZXRO-wide opportunity before Web UI implementation. It benefits shell operators, hooks, CI, M5/M6 producers, and later M7 work independently from the UI.
-- Acceptance test: every merged command class emits schema-valid ordered events only when enabled; threshold matrices pass; stdout bytes and command-result JSON remain exact; normal logging-off stderr remains compatible; human and JSONL formats carry equivalent event meaning; flags and environment precedence are deterministic; each healthy stream has contiguous sequence and exactly one final `invocation.completed` whose `process_exit_code` matches the process; stage events use only result/error codes; elapsed time is non-negative; malformed/conflicting/unsafe cases have stable names; no fixture secret or path appears; exact rotation, retention, and permissions pass; logging failure cannot alter command behavior or durable state.
+- Acceptance test: every merged command class emits schema-valid ordered events only when enabled; threshold matrices pass; stdout bytes and command-result JSON remain exact; normal logging-off stderr remains compatible; human and JSONL formats carry equivalent event meaning; flags and environment precedence are deterministic; each healthy stream has contiguous sequence and exactly one final `invocation.completed` whose `process_exit_code` matches the process; stage events use only result/error codes; elapsed time is non-negative; malformed/conflicting/unsafe cases have stable names; no fixture secret or path appears; exact five-file rotation, file-granular activity-triggered age pruning, and permissions pass; logging failure cannot alter command behavior or durable state.
 
 ### G20. Web UI request, refresh, child-process, and index diagnostics
 
@@ -930,7 +930,7 @@ Default sinks:
 - Core CLI with structured logging enabled: JSONL or human logs on stderr unless `--log-file PATH` selects an explicit owner-only file.
 - Web UI: redacted warning/error stderr plus an in-memory ring capped at 1,000 events and 2 MiB of serialized event bytes. Before inserting an event, evict the oldest until both limits hold. Track and display the evicted count. The Web UI has no disk retention by default.
 
-For `--log-file PATH`, `PATH` is the active file and `PATH.1` through `PATH.4` are the only backups. The active file plus four backups is a hard maximum of five files. Each file is capped at 5 MiB; rotate before an append would cross the cap, delete `PATH.4`, and shift the other backups atomically under the logging sink's concurrency control. On every sink open and before every append, prune files whose newest event is older than seven days. During active use, size or age may remove an event first. Because zxro has no daemon, the seven-day rule is activity-enforced, not a wall-clock deletion guarantee while no process opens the sink; an old file may remain at rest until the next sink open. One event must fit the per-event bound and may never create a sixth file.
+For `--log-file PATH`, `PATH` is the active file and `PATH.1` through `PATH.4` are the only backups. The active file plus four backups is a hard maximum of five files. Each file is capped at 5 MiB; rotate before an append would cross the cap, delete `PATH.4`, and shift the other backups atomically under the logging sink's concurrency control. Retention is file-granular and activity-triggered. On every sink open and before every append, remove each whole file whose newest event is older than seven days. Individual events in a retained mixed-age file may be older than seven days. ZXRO has no daemon, so no file changes while the sink is inactive; stale files remain until the next sink open or append applies the rule. One event must fit the per-event bound and may never create a sixth file.
 
 Opt-in file retention belongs outside `$ZXRO_HOME`, under an owner-specific state directory partitioned by non-reversible home fingerprint. Set parent directories to `0700`, files to `0600`, reject symlinks and group/world-writable paths, and never share a file between homes.
 
@@ -968,7 +968,7 @@ Required tests include:
 - refresh retry, stale fallback, index failure, redaction failure, and log-sink failure;
 - synthetic token, prompt, summary, path, session, environment, cookie, and artifact content leakage checks across stderr, files, API, HTML, and browser state;
 - sensitive-detail enable/expiry and its unconditional drop list;
-- active `PATH`, only `PATH.1` through `PATH.4`, 5-MiB per-file cap, activity-enforced seven-day pruning on every open and append, the documented no-daemon inactivity caveat, maximum five files, safe concurrent append/rotation, owner-only modes, symlink rejection, and separate home partitions;
+- active `PATH`, only `PATH.1` through `PATH.4`, 5-MiB per-file cap, and maximum five files; file-granular age tests remove a whole file on open or append only when its newest event is older than seven days, retain mixed-age files even when they contain older events, and leave files unchanged while inactive; concurrency, owner-only modes, symlink rejection, and separate home partitions;
 - Web ring enforcement at 1,000 events and 2 MiB, oldest eviction, visible evicted count, and no default disk file;
 - sink-open, append, redaction, formatting, and rotation failures preserving the underlying command exit and never retrying a mutation;
 - exact stdout and exit-code parity with logging on and off;
@@ -1085,10 +1085,10 @@ Exit: reviewers agree that no direct localfs fallback is permitted, logs never r
 ### W1. Minimal logging foundation
 
 - Specify and implement G19 in separate future core CLI work before any Web UI logging code.
-- Freeze global flags, scoped environment equivalents, precedence, destinations, human/JSONL formats, inclusive thresholds, one terminal completion, per-invocation sequence, stage versus process result codes, exact five-file retention, sink-failure behavior, the common event envelope, initial event names, redaction rules, correlation inputs, and stdout/stderr compatibility.
+- Freeze global flags, scoped environment equivalents, precedence, destinations, human/JSONL formats, inclusive thresholds, one terminal completion, per-invocation sequence, stage versus process result codes, exact five-file rotation, activity-triggered file-granular age pruning with no per-event maximum, sink-failure behavior, the common event envelope, initial event names, redaction rules, correlation inputs, and stdout/stderr compatibility.
 - Exercise every merged read and mutation command class while proving no-secret, no-retry, and no-durable-behavior-change guarantees.
 
-Exit: exact-head CI proves the core CLI flag contract independently from G6 and the Web UI, including success, exit 2 through 5, thresholds, terminal event, sequence, redaction, sink failure, rotation, and correlation. This plan does not perform that implementation.
+Exit: exact-head CI proves the core CLI flag contract independently from G6 and the Web UI, including success, exit 2 through 5, thresholds, terminal event, sequence, redaction, sink failure, five-file rotation, file-granular age pruning, and correlation. This plan does not perform that implementation.
 
 ### W2. Read-purity and parity prerequisites
 
@@ -1173,7 +1173,7 @@ The MVP is acceptable when:
 |---|---|---|
 | CLI logging default | Disabled for ordinary invocations; opt-in human or JSONL stderr, with explicit file destination available | W1 |
 | CLI logging configuration | Global flags override only documented `ZXRO_LOG_*` variables; no discovered config file in the first version | W1 |
-| CLI file retention | Active `PATH` plus `PATH.1` through `PATH.4`, each at most 5 MiB; prune events older than seven days on every sink open and append, with no wall-clock deletion guarantee during inactivity; sink failure never changes command exit | W1 |
+| CLI file retention | Hard maximum of active `PATH` plus `PATH.1` through `PATH.4`, each at most 5 MiB; on sink open and before append, remove a whole file only when its newest event is older than seven days; mixed-age files may retain older events, and inactivity changes nothing; sink failure never changes command exit | W1 |
 | UI use of core logging | Fixed `info` plus `jsonl` flags and server-generated correlation on approved reads; strip inherited `ZXRO_LOG_*` | W3 |
 | UI log retention | No disk by default; 1,000-event/2-MiB in-memory ring with oldest eviction and visible evicted count | W3 |
 | Sensitive diagnostics | Off by default, process-lifetime opt-in, unconditional content/credential exclusions remain | W1 |
