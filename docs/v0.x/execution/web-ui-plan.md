@@ -23,15 +23,15 @@ sources:
   - ref: ../engineering/runtime-and-provisioning.md
     credibility: primary
 created_at: "2026-08-25T09:35:45+08:00"
-updated_at: "2026-08-25T09:50:01+08:00"
+updated_at: "2026-08-25T10:12:39+08:00"
 ---
 
 # CLI-first Web UI plan
 
 ## Plan provenance
 
-- `attempt_count: 5`
-- `caused_by: operator clarified logging must serve the core CLI under an opt-in flag, not only the Web UI`
+- `attempt_count: 6`
+- `caused_by: independent reviewer detailed G19/G6, refresh and logging contract defects; separate scout verified M2 env/bind/run wording inconsistency`
 - Baseline: merged `origin/master` at `a191ae7`, including M0, M1, and the public-CLI multi-turn readiness evidence.
 - Verification during planning: `python3 -m unittest discover -s tests -v` passed 84 of 84 tests against that baseline.
 
@@ -73,14 +73,15 @@ The built-in local provider currently stores watchtowers, work, turns, artifacts
 
 The following are not merged and must not appear as working UI features:
 
-- M2 `inspect`, `turn env`, and `turn run`;
-- the proposed `turn bind` enrichment command;
+- M2 `inspect` and read-only `turn env`;
+- M2 mutating, idempotent `turn bind` enrichment;
+- child-launching `turn run`, deferred separately beyond M2;
 - optional Beads or mailbox adapters;
 - Pi or Claude completion producers;
 - M7 watchtower wake, prioritization, routing, or dispatch automation;
 - hosted or remote ZXRO operation.
 
-M2 work on other branches does not change this baseline. This Web UI plan does not implement issue #12 or depend on it.
+M2 work on other branches does not change this baseline. This Web UI plan does not implement issue #12 or depend on it. All four commands are unavailable on `master`, and none is a Web UI operation. A future UI may consume bounded `inspect --json` output after parity and purity review; the MVP simply does not depend on it. `turn env` would only format `ZXRO_*` metadata, `turn bind` would mutate a turn's late native-session provenance, and `turn run` would launch a child process beyond M2.
 
 ### Frozen provider posture
 
@@ -229,7 +230,7 @@ Show capability-specific failures without laundering unsafe state into partial f
 - exit 5: unsafe or malformed durable state;
 - timeout, output limit, invalid JSON, or executable mismatch.
 
-If `turn list` fails, the UI may continue to show an independently successful watchtower list, but it must mark all turn-derived cards unavailable. It must not retain some records from the failed response. Last-known data is shown only as a separate stale snapshot with its original observation time.
+If `turn list` or any other required read fails, the UI publishes no new current snapshot. Independently successful results from that attempt appear only as bounded diagnostics marked partial. Resource views continue to show the complete prior snapshot as stale with its original observation time and stale age, or show current data unavailable when no prior successful snapshot exists.
 
 ## CLI-to-view capability matrix
 
@@ -251,9 +252,10 @@ If `turn list` fails, the UI may continue to show an independently successful wa
 | `work close` | Closed work record from a mutation | Current work state | Mutation, forbidden | UI reads the result later through `work show|list` |
 | `turn create|settle` | Created or settled turn record | Turn state and evidence | Mutation, forbidden | Test fixtures may seed state outside the running UI; the app never invokes these verbs |
 | `watchtower create`, `work create` | Created record | Registry/work state | Mutation, forbidden | Same fixture-only rule |
-| `inspect` | None on `master` | Joined work diagnosis | Unavailable M2 | No route, button, fallback, or dependency |
-| `turn env`, `turn run` | None on `master` | Runtime helpers | Unavailable M2 | Not part of a view-only product |
-| `turn bind` | None on `master` | Session enrichment | Unavailable future command | Display existing native ID only; no enrichment action |
+| `inspect` | None on `master` | Bounded joined work diagnosis and counts | Unavailable M2 | No MVP dependency or fallback; a future UI may consume its JSON after parity and purity review |
+| `turn env` | None on `master` | Read-only `ZXRO_*` metadata formatting | Unavailable M2 | Not needed by current views; never evaluate shell output |
+| `turn bind` | None on `master` | Mutating, idempotent late native-session enrichment | Unavailable M2 | View-only UI never invokes it; display later public results only |
+| `turn run` | None on `master` | Child process launch with turn metadata | Deferred beyond M2 | Never a view-only UI operation |
 
 ### Parity acceptance suite
 
@@ -292,7 +294,7 @@ The proposed commands below do not exist on `master`.
 | G3 | Useful enhancement | Core CLI | Available immutable event, ack, and handled data | First useful history milestone | P1 |
 | G4 | Useful enhancement | Core CLI | Available mailbox state | First useful history milestone | P1 |
 | G5 | Useful enhancement | Core CLI | Available records, new consistency token | Post-MVP optimization | P2 |
-| G6 | Useful enhancement | Core CLI | Existing public schemas | Current prerequisite | P0 |
+| G6 | Useful enhancement | Core CLI | Existing public schemas plus G19 logging schema | After G19, before Web UI | P0 |
 | G7 | Useful enhancement | Optional extension | Available loaded metadata | MVP | P1 |
 | G8 | Useful enhancement | Optional extension | Artifact access depends on G2 | Post-MVP | P2 |
 | G9 | Useful enhancement | Core CLI | New durable timestamps | Future schema | P2 |
@@ -398,8 +400,8 @@ The proposed commands below do not exist on `master`.
   Capabilities return command, output, and logging schema revisions without probing mutating commands. With structured logging disabled, JSON errors use stderr and contain `schema_version`, stable `code`, exit class, and bounded message. With G19 JSONL enabled, stderr contains one schema-valid JSON event per line and the final invocation event carries the same error object.
 - Schema and versioning: these commands establish explicit revisions for new envelopes. Existing unversioned record outputs remain compatible and additive.
 - Security and privacy: version output must not include environment variables, home contents, or executable search paths. Errors must not dump raw records or artifact content.
-- Dependencies: contract-conventions update and stable error identifiers.
-- Priority: P0 core CLI prerequisite for reliable adapter negotiation. MVP may pin one CLI version, but it still needs a deterministic unsupported-capability screen.
+- Dependencies: the G19 logging event schema must be defined first so G6 can consume and advertise its version, plus a contract-conventions update and stable error identifiers. G19 does not depend on G6.
+- Priority: P0 core CLI prerequisite after G19 and before reliable adapter negotiation. MVP may pin one CLI version, but it still needs a deterministic unsupported-capability screen.
 - Acceptance test: exercise exit codes 2 through 5, malformed JSON state, missing home, and unsupported future capabilities. Stdout remains one JSON value only on success. Error-only mode emits one bounded JSON value on stderr; G19 mode emits schema-valid JSONL with an equivalent final error object.
 
 ### G7. Snapshot search and filters
@@ -562,19 +564,19 @@ The proposed commands below do not exist on `master`.
     [--home PATH] [--json] <command> ...
   ```
 
-  `off` is the default and preserves current behavior. With logging enabled and no `--log-file`, logs use stderr. `human` produces bounded one-line diagnostics for operators. `jsonl` produces one JSON object per line for wrappers. A single `json` format is intentionally absent because one invocation may emit several events. Stdout is never a log destination. `--json` continues to control command results only.
+  `off` is the default and emits no structured events. Thresholds are inclusive: `error` admits error events, `warning` admits warning and error, `info` admits info/warning/error, and `debug` admits every defined level. With logging enabled and no `--log-file`, logs use stderr. `human` produces bounded one-line diagnostics for operators. `jsonl` produces one JSON object per line for wrappers. A single `json` format is intentionally absent because one invocation may emit several events. Stdout is never a log destination. `--json` continues to control command results only.
 
   Carefully scoped environment equivalents are useful for hooks and CI: `ZXRO_LOG_LEVEL`, `ZXRO_LOG_FORMAT`, `ZXRO_LOG_FILE`, and `ZXRO_CORRELATION_ID`. Explicit flags override these variables, which override defaults. Do not honor generic `DEBUG`, `LOG_LEVEL`, or provider variables. Do not provide an environment equivalent for `--log-sensitive`. The first version should not discover a config file because config search would add another path and trust boundary.
 
   Validate logging flags and environment values before provider access. Correlation IDs are bounded opaque strings with a closed character set. A log file is explicit, must resolve outside the active `$ZXRO_HOME`, and must pass owner, permission, file-type, parent-directory, and symlink checks. File-backed logs use the fixed retention defaults in this plan unless a later contract adds bounded retention flags.
 
   Required events cover every public CLI command, not only reads. They include invocation start/completion, command dispatch, provider read or mutation start/completion/failure, state validation failure, lock wait where applicable, settlement publication stages, and artifact verification. Each completion includes exit code and elapsed milliseconds. A mutation log may report that the command returned success or failed at a named stage. It cannot replace the durable record as proof of commit.
-- Output and exit behavior: with logging off, successful stderr remains empty and failures keep the current bounded human diagnostic. With `--log-format jsonl` to stderr, every stderr line follows the log schema and the final invocation event carries the public error object when the command fails. With `--log-file`, normal command stderr keeps its current behavior while structured events go to the file. Invalid logging configuration exits 2 before state access. A runtime sink, append, rotation, formatting, or redaction failure disables that sink, emits at most one bounded fallback warning when possible, and never changes the underlying command exit code, retries a mutation, or redirects logs to stdout or `$ZXRO_HOME`.
-- Schema and versioning: every event contains `log_schema_version`, stable `event_name`, `event_version`, `timestamp`, `level`, `invocation_id`, optional validated correlation fields, and a typed `attributes` object. Event names use a stable namespace such as `zxro.cli.invocation.completed` and `zxro.state.validation.failed`. Additive attributes are allowed. Renaming an event or changing attribute meaning requires a new event version.
+- Output and exit behavior: with logging off, successful stderr remains empty and failures keep the current bounded human diagnostic. With `--log-format jsonl` to stderr, every stderr line follows the log schema. Every invocation with a level other than `off` constructs exactly one terminal `zxro.cli.invocation.completed` event, even when its success level would otherwise fall below the threshold. The terminal event is the final and highest-sequence event and carries `process_exit_code` plus overall `result_code` or `error_code`. A healthy enabled sink receives it exactly once. Stage events never carry `process_exit_code`; they use `result_code` on success or stable `error_code` on failure. With `--log-file`, normal command stderr keeps its current behavior while structured events go to the file. Invalid logging configuration exits 2 before state access. A runtime sink, append, rotation, formatting, or redaction failure disables that sink, emits at most one bounded fallback warning when possible, and never changes the underlying command exit code, retries a mutation, or redirects logs to stdout or `$ZXRO_HOME`.
+- Schema and versioning: every event contains `log_schema_version`, stable `event_name`, `event_version`, `timestamp`, `level`, `invocation_id`, per-invocation `sequence`, optional validated correlation fields, and a typed `attributes` object. Sequence starts at 1 and increments by 1 after threshold filtering, so a healthy stream has no gaps and the terminal event has the largest value. Event names use a stable namespace such as `zxro.cli.invocation.completed` and `zxro.state.validation.failed`. Additive attributes are allowed. Renaming an event or changing attribute meaning requires a new event version.
 - Security and privacy: default events omit argv values, cwd, home path, prompt/summary/artifact content, stdin, environment, session/native IDs, and raw records. Resource correlation uses process-local keyed fingerprints by default. `--log-sensitive` may include raw ZXRO IDs and masked path tails, but never credentials, prompts, payloads, artifact bodies, cookies, authorization data, or raw environment values.
-- Dependencies: G6 capability/version negotiation, a core logging contract, a clock abstraction for tests, redaction helpers, and safe concurrent file append/rotation. No durable-schema change, UI package, or provider adapter is required.
+- Dependencies: only a core logging contract, a clock abstraction for tests, redaction helpers, and sink primitives including safe concurrent append/rotation. G19 does not depend on G6, a durable-schema change, a UI package, or a provider adapter.
 - Priority: P0 core CLI prerequisite and ZXRO-wide opportunity before Web UI implementation. It benefits shell operators, hooks, CI, M5/M6 producers, and later M7 work independently from the UI.
-- Acceptance test: every merged command class emits schema-valid ordered events only when enabled; stdout bytes and command-result JSON remain exact; normal logging-off stderr remains compatible; human and JSONL formats carry equivalent event meaning; flags and environment precedence are deterministic; final exit event matches the process exit; elapsed time is non-negative; malformed/conflicting/unsafe cases have stable names; no fixture secret or path appears; file retention and permissions pass; logging failure cannot alter command behavior or durable state.
+- Acceptance test: every merged command class emits schema-valid ordered events only when enabled; threshold matrices pass; stdout bytes and command-result JSON remain exact; normal logging-off stderr remains compatible; human and JSONL formats carry equivalent event meaning; flags and environment precedence are deterministic; each healthy stream has contiguous sequence and exactly one final `invocation.completed` whose `process_exit_code` matches the process; stage events use only result/error codes; elapsed time is non-negative; malformed/conflicting/unsafe cases have stable names; no fixture secret or path appears; exact rotation, retention, and permissions pass; logging failure cannot alter command behavior or durable state.
 
 ### G20. Web UI request, refresh, child-process, and index diagnostics
 
@@ -605,8 +607,8 @@ The proposed commands below do not exist on `master`.
 ## Smallest sequence that preserves CLI-first parity
 
 1. **Document and enforce the command allowlist.** Safe merged reads are watchtower, work, turn, and unread list/show commands. Ship no UI action that can reach another verb.
-2. **Add the G19 minimal CLI logging foundation.** Stable opt-in diagnostics must exist before the UI wraps subprocesses. Preserve current stdout, stderr, exit, and durable behavior when logging is off.
-3. **Add G6 capability negotiation.** The UI must know which read and logging contracts exist without probing state or provider files.
+2. **Add the G19 minimal CLI logging foundation.** Stable opt-in diagnostics must exist before capability advertisement or UI subprocess wrapping. Preserve current stdout, stderr, exit, and durable behavior when logging is off.
+3. **Add G6 capability negotiation.** After G19 freezes its schema, G6 consumes and advertises that version. The UI must know which read and logging contracts exist without probing state or provider files.
 4. **Add G1 and G2 in the core CLI.** Pure pending and artifact metadata remove the two strict parity blockers. Do not implement them inside the Web UI.
 5. **Build G20 before feature views.** Prove request, refresh, child-process, parsing, redaction, and index diagnostics against synthetic failures.
 6. **Build the smallest valuable Web UI slice.** Show current watchtowers, work, turns, unread and pending events, turn provenance, artifact metadata, local search, honest aggregates, integrity state, and manual refresh for one home.
@@ -619,7 +621,7 @@ This sequence keeps the CLI authoritative, avoids a localfs dependency, and deli
 
 ## Smallest valuable vertical slice
 
-The smallest valuable slice is a current-state explorer after G19, G20, G1, G2 metadata, and G6 are ready:
+The smallest valuable slice is a current-state explorer after G19, G6, G1, G2 metadata, and the G20 consumer instrumentation are ready:
 
 - one explicit home per process;
 - overview counts with denominators;
@@ -679,7 +681,7 @@ GET /api/v1/artifacts/<encoded-ref>/stat
 GET /api/v1/artifacts/<encoded-ref>/chunks?offset=...&limit=...
 ```
 
-Every response uses an envelope like:
+Every successful response uses an envelope like:
 
 ```json
 {
@@ -687,6 +689,9 @@ Every response uses an envelope like:
   "snapshot_id": "ui-local-digest",
   "observed_at": "2026-08-25T09:35:45+08:00",
   "freshness": "fresh",
+  "stale_age_ms": null,
+  "consistency": "observational",
+  "refresh_failure": null,
   "source": {
     "interface": "zxro-cli",
     "commands": ["watchtower.list", "work.list", "turn.list"]
@@ -696,26 +701,33 @@ Every response uses an envelope like:
 }
 ```
 
-`snapshot_id` in the pre-G5 UI is only a digest of one completed ingestion pass. It is not a provider transaction token. `freshness` is one of `fresh`, `stale`, `unstable`, or `degraded`. Errors use a versioned envelope and never include raw artifact bytes.
+Before G5, `snapshot_id` is a SHA-256 digest of the API version, negotiated capability/schema versions, ordered command labels, and canonical successful result digests. It is not a provider transaction token. `consistency: observational` means two bounded observations agreed; it does not mean a writer could not commit immediately after observation.
+
+A failed refresh never publishes a new snapshot. If an earlier successful snapshot exists, `/api/v1/snapshot` returns that exact `snapshot_id`, `observed_at`, and data with `freshness: stale`, `stale_age_ms` measured from the retained snapshot's `observed_at`, and one bounded `refresh_failure`. If no successful snapshot exists, data is unavailable rather than partial. `unstable` and `degraded` are refresh failure kinds shown in diagnostics, not freshness labels attached to partial current data. Errors use a versioned envelope and never include raw artifact bytes.
 
 The server exposes GET and HEAD only. It returns 405 for POST, PUT, PATCH, DELETE, and WebSocket upgrade requests. There is no generic command endpoint.
 
 ### Refresh consistency
 
-For the first slice:
+Pre-G5 refresh is observational, not transactional. One refresh freezes its capability set after a capability preflight, includes the capability result in both passes, and freezes the per-watchtower command roster immediately after pass A's `watchtower list`. The base plan requires `capabilities`, `watchtower list`, `work list`, `turn list`, and `inbox unread` plus G1 pure pending for every watchtower ID in that frozen roster. A negotiated mailbox-status projection becomes required when the snapshot schema includes it. Every required command output is an anchor; there is no smaller weak-anchor subset. Artifact chunks, deliberate artifact stat, search, and other lazy detail reads are not part of the base snapshot and cannot alter it.
 
-1. read capabilities;
-2. collect all approved list and mailbox reads;
-3. repeat bounded anchor reads;
-4. compare canonical JSON digests;
-5. retry the full pass at most twice if anchors changed;
-6. publish one complete snapshot or retain the prior snapshot as stale.
+Each refresh uses at most three attempts, the initial attempt plus two retries. One attempt follows this exact protocol:
 
-Never merge records from two failed passes. Default to manual refresh plus a conservative, opt-in polling interval such as 30 seconds. Do not watch provider directories.
+1. Run every required command in a fixed order as pass A. Require exit 0, one bounded JSON result, the negotiated schema, and valid ownership/reference relationships.
+2. Canonicalize each result as UTF-8 JSON with sorted object keys, compact separators, and preserved array order. Hash the command label, non-secret argument identity, and canonical result with SHA-256. Hash the ordered vector of those digests.
+3. Run the identical command plan as pass B. If pass A's watchtower IDs no longer match pass B, the vector differs and the attempt is unstable; do not add or remove commands mid-attempt.
+4. Apply the same parse, schema, relationship, and digest checks to pass B.
+5. Succeed only when every required read in both passes succeeds and the complete ordered digest vectors match exactly.
+6. Build all current-view indexes and aggregates from pass B only. Index or aggregate failure fails the attempt.
+7. Set `observed_at` after the final pass-B check and derive `snapshot_id` from the successful vector. Publish the new snapshot atomically to the UI only after every required read, consistency check, index, and aggregate succeeds.
+
+A read, parse, schema, relationship, index, or aggregate failure ends the current attempt as degraded. A digest mismatch ends it as unstable. Retry the whole protocol, never one command, up to the limit. After the limit, retain the prior successful snapshot as stale. Bounded failure details contain only failure kind, attempt, stage, command label, stable error code, occurrence time, and redaction/truncation flags. Raw stderr, partial records, and artifact content stay out.
+
+Partial pass results exist only as redacted diagnostics marked `partial: true`. They never become `/api/v1/snapshot` data and never feed resource views, search indexes, timelines, counts, ratios, or analysis cards. Never merge passes or attempts. Default to manual refresh plus a conservative, opt-in polling interval such as 30 seconds. Do not watch provider directories.
 
 ### Index and cache
 
-Build exact indexes in memory by watchtower, work, turn, event, state, outcome, agent, and session. Search only fields declared in the UI schema. Do not index artifact bodies by default.
+Build exact indexes in memory by watchtower, work, turn, event, state, outcome, agent, and session only after a complete refresh passes the protocol above. Search only fields declared in the successful snapshot's UI schema. Do not index artifact bodies or partial refresh results.
 
 MVP has no disk cache, service worker, browser local storage, or cross-restart history. The prior in-memory snapshot may remain visible after a failed refresh, clearly marked stale. If later evidence justifies a disk cache, place it outside `$ZXRO_HOME`, use owner-only permissions, key it by a non-reversible home identifier, and never store artifact bodies or secrets without a separate decision.
 
@@ -746,6 +758,7 @@ G19 and G20 share this language-neutral envelope:
   "level": "info",
   "process": "web",
   "invocation_id": "inv-opaque",
+  "sequence": 7,
   "correlation": {
     "request_id": "req-opaque",
     "refresh_id": "ref-opaque",
@@ -755,7 +768,8 @@ G19 and G20 share this language-neutral envelope:
   "duration_ms": 12.4,
   "attributes": {
     "command": "turn.list",
-    "exit_code": 0,
+    "result_code": "success",
+    "child_process_exit_code": 0,
     "stdout_bytes": 824,
     "stderr_bytes": 0
   }
@@ -765,7 +779,8 @@ G19 and G20 share this language-neutral envelope:
 Rules:
 
 - Timestamp is RFC 3339 UTC with millisecond precision. Duration uses a monotonic clock and never derives from wall-clock subtraction.
-- Levels are `debug`, `info`, `warning`, and `error`. `info` records lifecycle completion, `warning` records degraded but usable behavior, and `error` records a failed requested operation. Debug is opt-in.
+- Levels are `debug`, `info`, `warning`, and `error`, filtered by G19's inclusive threshold rule. The required terminal completion bypasses filtering when logging is enabled. `info` records normal lifecycle, `warning` records degraded but usable behavior, and `error` records a failed requested operation.
+- `sequence` is contiguous within one healthy invocation stream and orders events without relying on timestamps.
 - `event_name` and `event_version` define semantics. Human prose is optional and never a parser contract.
 - Unknown additive attributes are ignored. Required attributes cannot change meaning within an event version.
 - IDs generated for diagnostics are opaque and process-scoped unless a caller supplies a validated correlation ID.
@@ -815,7 +830,7 @@ zxro.web.redaction.applied
 zxro.web.logging.sink.failed
 ```
 
-Do not emit one event per record during normal refresh. Aggregate counts and timing by command or stage. Debug mode may add bounded per-resource diagnostics, still without content.
+Do not emit one event per record during normal refresh. Aggregate counts and timing by command or stage. Debug mode may add bounded per-resource diagnostics, still without content. Core stage events use `result_code` or `error_code`; only `zxro.cli.invocation.completed` uses `process_exit_code`.
 
 ### Correlation model
 
@@ -888,10 +903,12 @@ Pattern redaction is incomplete. Documentation and UI copy must say so. Tests us
 Default sinks:
 
 - Core CLI with logging disabled: current stderr behavior only.
-- Core CLI with structured logging enabled: JSONL on stderr unless `--log-file` selects an explicit owner-only file.
-- Web UI: bounded in-memory ring plus redacted warning/error stderr.
+- Core CLI with structured logging enabled: JSONL or human logs on stderr unless `--log-file PATH` selects an explicit owner-only file.
+- Web UI: redacted warning/error stderr plus an in-memory ring capped at 1,000 events and 2 MiB of serialized event bytes. Before inserting an event, evict the oldest until both limits hold. Track and display the evicted count. The Web UI has no disk retention by default.
 
-Opt-in file retention belongs outside `$ZXRO_HOME`, under an owner-specific state directory partitioned by non-reversible home fingerprint. Recommended defaults are five files of at most 5 MiB each and a seven-day age cap, whichever removes data first. Set parent directories to `0700`, files to `0600`, reject symlinks and group/world-writable paths, use atomic rotation, and never share a file between homes.
+For `--log-file PATH`, `PATH` is the active file and `PATH.1` through `PATH.4` are the only backups. The active file plus four backups is a hard maximum of five files. Each file is capped at 5 MiB; rotate before an append would cross the cap, delete `PATH.4`, and shift the other backups atomically under the logging sink's concurrency control. At sink startup and rotation, delete files older than seven days. Size and age rules both apply, so whichever removes an event first defines retention. One event must fit the per-event bound and may never create a sixth file.
+
+Opt-in file retention belongs outside `$ZXRO_HOME`, under an owner-specific state directory partitioned by non-reversible home fingerprint. Set parent directories to `0700`, files to `0600`, reject symlinks and group/world-writable paths, and never share a file between homes.
 
 The UI must not discover another home's logs. Deleting or rotating logs cannot touch durable state. A missing or unwritable log directory cannot trigger creation under `$ZXRO_HOME` as fallback. No system log, cloud log, analytics service, or external collector is enabled in the MVP.
 
@@ -917,7 +934,9 @@ Required tests include:
 - human and JSONL semantic parity, with no log bytes on stdout and no command-result bytes in log events;
 - schema validation and golden events for every stable event name;
 - event-version compatibility and unknown additive attributes;
-- level filtering with required error completion retained;
+- exact `off|error|warning|info|debug` threshold matrices, with terminal completion retained for every enabled level;
+- contiguous per-invocation sequence and exactly one final `invocation.completed` carrying the real `process_exit_code`;
+- stage-event `result_code|error_code` rules and rejection of stage `process_exit_code`;
 - UTC timestamps, monotonic non-negative durations, and injected-clock determinism;
 - request, refresh, CLI invocation, resource, mailbox, session, and artifact correlation;
 - subprocess success, exit 2 through 5, signal, timeout, invalid JSON, invalid schema, and output cap;
@@ -925,7 +944,8 @@ Required tests include:
 - refresh retry, stale fallback, index failure, redaction failure, and log-sink failure;
 - synthetic token, prompt, summary, path, session, environment, cookie, and artifact content leakage checks across stderr, files, API, HTML, and browser state;
 - sensitive-detail enable/expiry and its unconditional drop list;
-- rotation by size and age, safe concurrent append, owner-only modes, symlink rejection, explicit file destination, and separate home partitions;
+- active `PATH`, only `PATH.1` through `PATH.4`, 5-MiB per-file cap, seven-day pruning, maximum five files, safe concurrent append/rotation, owner-only modes, symlink rejection, and separate home partitions;
+- Web ring enforcement at 1,000 events and 2 MiB, oldest eviction, visible evicted count, and no default disk file;
 - sink-open, append, redaction, formatting, and rotation failures preserving the underlying command exit and never retrying a mutation;
 - exact stdout and exit-code parity with logging on and off;
 - unchanged `$ZXRO_HOME` path set and content digest after diagnostic emission and G21 checks;
@@ -989,6 +1009,9 @@ Add the Web UI as an optional local command or package entry only after its read
 - Missing home, malformed JSON, wrong ownership, unsafe permission, symlink, record mismatch, and output-limit cases.
 - Multi-watchtower and two-home isolation tests.
 - Concurrent settlement during refresh, with no torn snapshot presented as fresh.
+- Exact pass-A/pass-B canonical digest vectors, watchtower-set changes, full-attempt retry, and the initial-plus-two-retry limit.
+- Required read, parse, schema, relationship, index, and aggregate failures retaining the exact prior snapshot with correct stale age and bounded failure details.
+- No-prior failure returning unavailable data, plus poison tests proving partial results never enter views, indexes, timelines, counts, ratios, or analysis.
 - XSS fixtures in every string field, including summaries, session names, cwd, and stderr.
 - Artifact size, binary content, invalid encoding, digest mismatch, and deliberate-fetch tests after G2.
 - Redaction tests that verify placeholders, counts, and no raw value in HTML, API responses, logs, or cache.
@@ -1020,7 +1043,7 @@ Run a manual screen-reader and keyboard pass before MVP acceptance. Add pinned a
 
 The MVP is a foreground local process started with one explicit home. It opens a tokenized loopback URL, serves until interrupted, and writes no ZXRO state. There is no daemon, launch agent, container, hosted service, TLS endpoint, remote bind, user account system, or multi-tenant mode.
 
-Operational output follows G20 and the logging plan. The default stderr sink reports redacted startup, warnings, failures, and shutdown. Detailed structured events stay in the bounded in-memory diagnostics ring unless an operator enables owner-only file retention outside `$ZXRO_HOME`. A health endpoint may report server and CLI capability status but no home counts or identifiers.
+Operational output follows G20 and the logging plan. The default stderr sink reports redacted startup, warnings, failures, and shutdown. Detailed structured events stay in the 1,000-event/2-MiB oldest-evicting in-memory ring. The Web UI writes no diagnostic file by default. A health endpoint may report server and CLI capability status but no home counts or identifiers.
 
 Upgrade and rollback replace only Web UI code. Durable migrations do not belong to the MVP. If a future core read contract changes durable schemas, its own compatibility plan precedes UI adoption.
 
@@ -1029,7 +1052,7 @@ Upgrade and rollback replace only Web UI code. Durable migrations do not belong 
 ### W0. Documentation and contract review
 
 - Accept this CLI-first boundary and gap register.
-- Confirm that G1, G2, G6, G19, and G21 belong in the core CLI.
+- Confirm that G19 is the first core prerequisite, G6 consumes its schema, and G1, G2, and G21 also belong in the core CLI.
 - Confirm that G20 is required before Web UI feature work.
 - Decide whether a developer-only browser test dependency is acceptable.
 
@@ -1038,15 +1061,14 @@ Exit: reviewers agree that no direct localfs fallback is permitted, logs never r
 ### W1. Minimal logging foundation
 
 - Specify and implement G19 in separate future core CLI work before any Web UI logging code.
-- Freeze global flags, scoped environment equivalents, precedence, destinations, human/JSONL formats, file retention, sink-failure behavior, the common event envelope, initial event names, levels, redaction rules, correlation inputs, and stdout/stderr compatibility.
+- Freeze global flags, scoped environment equivalents, precedence, destinations, human/JSONL formats, inclusive thresholds, one terminal completion, per-invocation sequence, stage versus process result codes, exact five-file retention, sink-failure behavior, the common event envelope, initial event names, redaction rules, correlation inputs, and stdout/stderr compatibility.
 - Exercise every merged read and mutation command class while proving no-secret, no-retry, and no-durable-behavior-change guarantees.
-- Reuse G19 in G20, then add the bounded in-memory ring and accessible Web diagnostics components before feature pages.
 
-Exit: exact-head CI proves the core CLI flag contract independently from the Web UI, then proves Web reuse for success, exit 2 through 5, timeout, malformed output, redaction, sink failure, and correlation. This plan does not perform that implementation.
+Exit: exact-head CI proves the core CLI flag contract independently from G6 and the Web UI, including success, exit 2 through 5, thresholds, terminal event, sequence, redaction, sink failure, rotation, and correlation. This plan does not perform that implementation.
 
 ### W2. Read-purity and parity prerequisites
 
-- Specify and implement G6, G1, and G2 in separate future work.
+- After G19 freezes its logging schema, specify and implement G6 so it advertises that schema, then implement G1 and G2 in separate future work.
 - Extend provider conformance tests with no-write assertions.
 - Keep existing CLI output compatible.
 
@@ -1054,6 +1076,7 @@ Exit: exact-head CI proves capability negotiation, pure pending, and artifact me
 
 ### W3. Smallest valuable slice
 
+- After W2, reuse G19 through G20 and add the exact 1,000-event/2-MiB oldest-evicting in-memory ring plus accessible Web diagnostics components.
 - Implement the one-home local server and internal read API.
 - Add overview, watchtower, work, turn, unread, pending, artifact metadata, search, integrity, diagnostics, and honest aggregate views.
 - Add parity, logging, security, isolation, and accessibility evidence.
@@ -1088,6 +1111,10 @@ The MVP is acceptable when:
 - [ ] Structured logs have stable names and versions, complete correlation, bounded timings, and tested redaction without changing stdout, exit codes, retries, or durable records.
 - [ ] The UI invokes G19 only through fixed flags on approved read argv, strips inherited logging configuration, and keeps result stdout separate from diagnostic stderr.
 - [ ] The application cannot construct or invoke a mutation command.
+- [ ] `/api/v1/snapshot` publishes new data only after all required two-pass reads, digest checks, relationships, indexes, and aggregates succeed.
+- [ ] Failed refresh retains the exact prior snapshot as stale with correct stale age and bounded failure details; without a prior snapshot, current data is unavailable.
+- [ ] Partial refresh results are diagnostics-only and never enter views, indexes, timelines, counts, ratios, or analysis.
+- [ ] Pre-G5 copy and diagnostics say observational, not transactional, and tests exercise digest mismatch plus the full three-attempt limit.
 - [ ] Repeated startup, refresh, navigation, search, and evidence metadata reads leave every home path and record byte unchanged.
 - [ ] One process can observe only its explicit home.
 - [ ] Malformed, unsafe, conflicting, missing, stale, unstable, and unknown states have distinct visible treatment.
@@ -1106,7 +1133,7 @@ The MVP is acceptable when:
 |---|---|---|
 | A read-like CLI command mutates state | A view changes ack, attention, or artifact files | Purity classification, argv allowlist, G1/G2, home-digest tests |
 | UI becomes coupled to localfs | Provider swaps and schema changes break it | CLI-only adapter and no private imports or paths |
-| Multi-command refresh tears | False joins and misleading counts | Guarded refresh now, G5 later if needed |
+| Multi-command refresh tears | False joins and misleading counts | Exact two-pass digest vectors, whole-attempt retry, no partial publication, G5 later if needed |
 | Summary text is treated as structured truth | False decisions, blockers, roles, or causality | Explicit unknowns and evidence-linked search signals |
 | Artifact previews leak secrets | Sensitive content reaches DOM, cache, or logs | Deliberate bounded reads, no-store, no indexing, masking and redaction |
 | Loopback server leaks through browser attacks | Another site reads local state | Capability token, SameSite cookie, Host/Origin checks, no CORS, CSP |
@@ -1122,13 +1149,13 @@ The MVP is acceptable when:
 |---|---|---|
 | CLI logging default | Disabled for ordinary invocations; opt-in human or JSONL stderr, with explicit file destination available | W1 |
 | CLI logging configuration | Global flags override only documented `ZXRO_LOG_*` variables; no discovered config file in the first version | W1 |
-| CLI file retention | Five 5 MiB owner-only files and seven-day maximum outside `$ZXRO_HOME`; sink failure never changes command exit | W1 |
-| UI use of core logging | Fixed `info` plus `jsonl` flags and server-generated correlation on approved reads; strip inherited `ZXRO_LOG_*` | W1 |
-| UI log retention | In-memory ring by default; owner-only rotating files outside `$ZXRO_HOME` only when opted in | W1 |
+| CLI file retention | Active `PATH` plus `PATH.1` through `PATH.4`, each at most 5 MiB and at most seven days, outside `$ZXRO_HOME`; sink failure never changes command exit | W1 |
+| UI use of core logging | Fixed `info` plus `jsonl` flags and server-generated correlation on approved reads; strip inherited `ZXRO_LOG_*` | W3 |
+| UI log retention | No disk by default; 1,000-event/2-MiB in-memory ring with oldest eviction and visible evicted count | W3 |
 | Sensitive diagnostics | Off by default, process-lifetime opt-in, unconditional content/credential exclusions remain | W1 |
 | Web UI packaging | Optional local Python stdlib command/package, not a daemon | W3 |
 | Browser state | No local storage, service worker, or disk cache | W3 |
-| Refresh | Manual plus opt-in 30-second polling | W3 |
+| Refresh | Manual plus opt-in 30-second polling; three-attempt two-pass observational protocol and stale fallback | W3 |
 | Artifact body access | Disabled until deliberate G2 range reads and privacy review | W4 |
 | Path and native ID display | Mask by default, click to reveal in current page only | W3 |
 | Redaction | Server-side before every sink, with visible replacement counts and no claim of completeness | W1 |
