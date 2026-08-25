@@ -23,15 +23,15 @@ sources:
   - ref: ../engineering/runtime-and-provisioning.md
     credibility: primary
 created_at: "2026-08-25T09:35:45+08:00"
-updated_at: "2026-08-25T09:46:07+08:00"
+updated_at: "2026-08-25T09:50:01+08:00"
 ---
 
 # CLI-first Web UI plan
 
 ## Plan provenance
 
-- `attempt_count: 4`
-- `caused_by: operator identified weak logging and requested a good logging/observability plan`
+- `attempt_count: 5`
+- `caused_by: operator clarified logging must serve the core CLI under an opt-in flag, not only the Web UI`
 - Baseline: merged `origin/master` at `a191ae7`, including M0, M1, and the public-CLI multi-turn readiness evidence.
 - Verification during planning: `python3 -m unittest discover -s tests -v` passed 84 of 84 tests against that baseline.
 
@@ -100,7 +100,7 @@ No merged module defines structured diagnostic events, event names, a log schema
 
 Immutable mailbox events and turn settlements are durable domain records. They are not logs. A future logging system must not replace, repair, infer, or mutate those records. Logs may explain what one process observed or failed to do. Durable state remains authoritative for what ZXRO committed.
 
-This gap is large enough to address before Web UI implementation. The minimum is an opt-in, structured CLI diagnostic stream plus a structured Web UI logger and diagnostics view. Defaults for ordinary CLI users must remain compatible, including empty stderr on successful commands unless logging is explicitly enabled.
+This is a ZXRO-wide core CLI gap, not a Web UI feature. Humans, hooks, CI, future runtime integrations, and the Web UI need the same opt-in logging contract. Implement the core CLI foundation first. The Web UI later reuses it and adds request/refresh events at its own boundary. Defaults for ordinary CLI users must remain compatible, including empty stderr on successful commands unless logging is explicitly enabled.
 
 ## Operator questions and honest answers
 
@@ -305,8 +305,8 @@ The proposed commands below do not exist on `master`.
 | G16 | Useful enhancement | Core CLI | New artifact media/privacy metadata | Future schema | P2 |
 | G17 | Speculative | Optional extension | External runtime status | Deferred with runtime integration | P3 |
 | G18 | Speculative | Optional extension | Future M7 policy and workflow events | Deferred M7 or later | P3 |
-| G19 | Useful enhancement | Core CLI | Process observations, no durable-schema change | Pre-Web-UI foundation | P0 |
-| G20 | Useful enhancement | Optional extension | UI and child-process observations, no durable-schema change | Pre-Web-UI foundation | P0 |
+| G19 | Useful enhancement and prerequisite | Core CLI | Process observations, no durable-schema change | Pre-Web-UI core foundation | P0 |
+| G20 | Useful enhancement and consumer instrumentation | Optional extension | UI and child-process observations, no durable-schema change | Reuse G19 before feature views | P0 |
 | G21 | Useful enhancement | Core CLI | Available durable validation results | First diagnostics milestone | P1 |
 
 ### G1. Physically read-only pending attention
@@ -395,12 +395,12 @@ The proposed commands below do not exist on `master`.
   zxro --json-errors <existing read command>
   ```
 
-  Capabilities return command, output, and logging schema revisions without probing mutating commands. With structured logging disabled, JSON errors use stderr and contain `schema_version`, stable `code`, exit class, and bounded message. With G19 enabled, stderr is NDJSON and the final invocation event carries the same error object.
+  Capabilities return command, output, and logging schema revisions without probing mutating commands. With structured logging disabled, JSON errors use stderr and contain `schema_version`, stable `code`, exit class, and bounded message. With G19 JSONL enabled, stderr contains one schema-valid JSON event per line and the final invocation event carries the same error object.
 - Schema and versioning: these commands establish explicit revisions for new envelopes. Existing unversioned record outputs remain compatible and additive.
 - Security and privacy: version output must not include environment variables, home contents, or executable search paths. Errors must not dump raw records or artifact content.
 - Dependencies: contract-conventions update and stable error identifiers.
 - Priority: P0 core CLI prerequisite for reliable adapter negotiation. MVP may pin one CLI version, but it still needs a deterministic unsupported-capability screen.
-- Acceptance test: exercise exit codes 2 through 5, malformed JSON state, missing home, and unsupported future capabilities. Stdout remains one JSON value only on success. Error-only mode emits one bounded JSON value on stderr; G19 mode emits schema-valid NDJSON with an equivalent final error object.
+- Acceptance test: exercise exit codes 2 through 5, malformed JSON state, missing home, and unsupported future capabilities. Stdout remains one JSON value only on success. Error-only mode emits one bounded JSON value on stderr; G19 mode emits schema-valid JSONL with an equivalent final error object.
 
 ### G7. Snapshot search and filters
 
@@ -547,30 +547,43 @@ The proposed commands below do not exist on `master`.
 - Priority: P3 speculative and deferred.
 - Acceptance test: defined by M7. The Web UI remains view-only even if M7 exists later.
 
-### G19. Structured core CLI diagnostics
+### G19. ZXRO-wide structured core CLI diagnostics
 
 - Operator question: "What did this CLI invocation read or attempt, where did it fail, and how long did each stage take?"
-- Proposed contract:
+- Proposed global contract:
 
   ```text
-  zxro --log-format ndjson --log-level info --correlation-id <opaque-id> <command> ...
+  zxro \
+    [--log-level off|error|warning|info|debug] \
+    [--log-format human|jsonl] \
+    [--log-file PATH] \
+    [--correlation-id OPAQUE_ID] \
+    [--log-sensitive] \
+    [--home PATH] [--json] <command> ...
   ```
 
-  When enabled, stderr is newline-delimited JSON diagnostic events. Ordinary invocations retain current stderr behavior. Required events cover invocation start/completion, command dispatch, provider read start/completion/failure, state validation failure, lock wait where applicable, and artifact verification. Each completion includes exit code and elapsed milliseconds. Events report observations only and never claim a durable commit beyond the authoritative command result.
+  `off` is the default and preserves current behavior. With logging enabled and no `--log-file`, logs use stderr. `human` produces bounded one-line diagnostics for operators. `jsonl` produces one JSON object per line for wrappers. A single `json` format is intentionally absent because one invocation may emit several events. Stdout is never a log destination. `--json` continues to control command results only.
+
+  Carefully scoped environment equivalents are useful for hooks and CI: `ZXRO_LOG_LEVEL`, `ZXRO_LOG_FORMAT`, `ZXRO_LOG_FILE`, and `ZXRO_CORRELATION_ID`. Explicit flags override these variables, which override defaults. Do not honor generic `DEBUG`, `LOG_LEVEL`, or provider variables. Do not provide an environment equivalent for `--log-sensitive`. The first version should not discover a config file because config search would add another path and trust boundary.
+
+  Validate logging flags and environment values before provider access. Correlation IDs are bounded opaque strings with a closed character set. A log file is explicit, must resolve outside the active `$ZXRO_HOME`, and must pass owner, permission, file-type, parent-directory, and symlink checks. File-backed logs use the fixed retention defaults in this plan unless a later contract adds bounded retention flags.
+
+  Required events cover every public CLI command, not only reads. They include invocation start/completion, command dispatch, provider read or mutation start/completion/failure, state validation failure, lock wait where applicable, settlement publication stages, and artifact verification. Each completion includes exit code and elapsed milliseconds. A mutation log may report that the command returned success or failed at a named stage. It cannot replace the durable record as proof of commit.
+- Output and exit behavior: with logging off, successful stderr remains empty and failures keep the current bounded human diagnostic. With `--log-format jsonl` to stderr, every stderr line follows the log schema and the final invocation event carries the public error object when the command fails. With `--log-file`, normal command stderr keeps its current behavior while structured events go to the file. Invalid logging configuration exits 2 before state access. A runtime sink, append, rotation, formatting, or redaction failure disables that sink, emits at most one bounded fallback warning when possible, and never changes the underlying command exit code, retries a mutation, or redirects logs to stdout or `$ZXRO_HOME`.
 - Schema and versioning: every event contains `log_schema_version`, stable `event_name`, `event_version`, `timestamp`, `level`, `invocation_id`, optional validated correlation fields, and a typed `attributes` object. Event names use a stable namespace such as `zxro.cli.invocation.completed` and `zxro.state.validation.failed`. Additive attributes are allowed. Renaming an event or changing attribute meaning requires a new event version.
-- Security and privacy: default events omit argv values, cwd, home path, prompt/summary/artifact content, stdin, environment, session/native IDs, and raw records. Resource correlation uses process-local keyed fingerprints by default. An explicit sensitive-detail mode may include raw ZXRO IDs and masked path tails, but never credentials, prompts, payloads, or artifact bodies.
-- Dependencies: G6 capability/version negotiation, a logging contract, a clock abstraction for tests, and redaction helpers. No durable-schema change or provider adapter is required.
-- Priority: P0 core CLI foundation before Web UI implementation.
-- Acceptance test: successful and failing commands emit schema-valid ordered events only when enabled; stdout parity remains exact; final exit event matches the process exit; elapsed time is non-negative; malformed/conflicting/unsafe cases have stable names; no fixture secret or path appears; logging failure cannot alter command behavior or durable state.
+- Security and privacy: default events omit argv values, cwd, home path, prompt/summary/artifact content, stdin, environment, session/native IDs, and raw records. Resource correlation uses process-local keyed fingerprints by default. `--log-sensitive` may include raw ZXRO IDs and masked path tails, but never credentials, prompts, payloads, artifact bodies, cookies, authorization data, or raw environment values.
+- Dependencies: G6 capability/version negotiation, a core logging contract, a clock abstraction for tests, redaction helpers, and safe concurrent file append/rotation. No durable-schema change, UI package, or provider adapter is required.
+- Priority: P0 core CLI prerequisite and ZXRO-wide opportunity before Web UI implementation. It benefits shell operators, hooks, CI, M5/M6 producers, and later M7 work independently from the UI.
+- Acceptance test: every merged command class emits schema-valid ordered events only when enabled; stdout bytes and command-result JSON remain exact; normal logging-off stderr remains compatible; human and JSONL formats carry equivalent event meaning; flags and environment precedence are deterministic; final exit event matches the process exit; elapsed time is non-negative; malformed/conflicting/unsafe cases have stable names; no fixture secret or path appears; file retention and permissions pass; logging failure cannot alter command behavior or durable state.
 
 ### G20. Web UI request, refresh, child-process, and index diagnostics
 
 - Operator question: "Why is this page stale or degraded, which CLI read failed, and was the problem parsing, indexing, timeout, or unsafe state?"
-- Proposed extension: a structured Web UI logger and accessible diagnostics page. Event families cover server lifecycle, HTTP request completion, refresh start/completion/failure, child CLI start/completion/timeout/output-limit, JSON decode/schema failure, snapshot instability/retry, index build timing/failure, redaction counts, and stale-snapshot fallback.
+- Proposed extension: a G19 consumer plus Web UI boundary instrumentation and an accessible diagnostics page. It does not implement or redefine core CLI logging. Web event families cover server lifecycle, HTTP request completion, refresh start/completion/failure, child CLI start/completion/timeout/output-limit, JSON decode/schema failure, snapshot instability/retry, index build timing/failure, redaction counts, and stale-snapshot fallback.
 - Schema and versioning: reuse the G19 envelope where practical and add Web event names such as `zxro.web.refresh.failed` and `zxro.web.cli_child.completed`. Correlate `request_id -> refresh_id -> cli_invocation_id`, then attach available opaque work, turn, runtime/session, mailbox generation/event, and artifact fingerprints. Route templates, not raw URLs or query strings, identify requests.
 - Security and privacy: capture child exit code, signal, elapsed time, stdout/stderr byte counts, truncation, and stable error code. Do not log stdout bodies. Store only a bounded, redacted stderr summary or digest unless sensitive detail is explicitly enabled. Never log search text, summaries, prompts, artifact chunks, tokens, cookies, full paths, environment values, or raw session IDs.
 - Dependencies: G19, G6, UI redaction policy, bounded in-memory ring storage, and accessible diagnostics components.
-- Priority: P0 optional extension foundation before Web UI feature work.
+- Priority: P0 Web UI consumer work after the P0 core CLI G19 prerequisite and before Web UI feature views.
 - Acceptance test: inject child exit codes 2 through 5, timeout, invalid JSON, oversized output, malformed state, concurrent refresh, and index failure. The diagnostics view must identify the failing stage and correlations without exposing fixture secrets, changing `$ZXRO_HOME`, or hiding the prior snapshot's stale time.
 
 ### G21. Read-only integrity diagnostics command
@@ -635,6 +648,17 @@ zxro --home <absolute-selected-home> --json work list
 zxro --home <absolute-selected-home> --json turn list
 zxro --home <absolute-selected-home> --json inbox unread --watchtower <loaded-id>
 ```
+
+After G19 merges, the UI adds fixed logging flags to those same approved reads:
+
+```text
+zxro --home <absolute-selected-home> --json \
+  --log-level info --log-format jsonl \
+  --correlation-id <server-generated-refresh-child-id> \
+  watchtower list
+```
+
+The server captures command-result JSON from stdout and core diagnostic JSONL from stderr. It does not pass `--log-file`; the UI owns any opt-in retention after redaction. It removes inherited `ZXRO_LOG_*` variables and builds logging values from trusted startup configuration, never an HTTP request. Logging flags cannot alter the command verb or add a mutation. The same argv allowlist and home-digest tests apply with logging on and off.
 
 Add only negotiated pure commands. IDs passed to detail reads must come from a successfully loaded CLI record and still pass public ID validation. Set stdin to null, use a minimal inherited environment, cap output bytes and runtime, and preserve exit code plus bounded stderr for diagnostics.
 
@@ -701,11 +725,17 @@ MVP has no disk cache, service worker, browser local storage, or cross-restart h
 
 Durable records answer what ZXRO committed. Structured logs answer what one process observed, attempted, timed, or rejected. A missing log never invalidates a durable record. A log that claims success cannot create settlement, publication, acknowledgement, handled state, work closure, or artifact evidence.
 
-Logging is best effort and fail-open only with respect to diagnostics. If formatting, rotation, or a log sink fails, the CLI or UI reports a bounded logging warning through the remaining sink and continues the underlying read with unchanged semantics. It must not retry a mutation, repair state, or change an exit code merely to satisfy logging.
+Logging is best effort and fail-open only with respect to diagnostics. If formatting, rotation, or a log sink fails, the CLI or UI reports a bounded logging warning through the remaining sink and continues the underlying command with unchanged semantics. It must not retry a mutation, repair state, or change an exit code merely to satisfy logging.
+
+### Core first, consumers second
+
+G19 is the logging implementation. It belongs to the core CLI and covers every command class. It is useful before any Web UI exists. Hooks, CI, human troubleshooting, and future integrations consume the same flags and event schema.
+
+G20 does not define a competing logger. It reuses the G19 envelope, invokes safe CLI commands with G19 enabled, and adds events only for HTTP, refresh, parsing, indexing, and browser-facing diagnostics that the core CLI cannot observe. Provider adapters may add namespaced attributes through the core logger, but no optional adapter owns the contract.
 
 ### Common event envelope
 
-G19 and G20 should share this language-neutral envelope:
+G19 and G20 share this language-neutral envelope:
 
 ```json
 {
@@ -752,6 +782,10 @@ zxro.cli.command.dispatched
 zxro.provider.read.started
 zxro.provider.read.completed
 zxro.provider.read.failed
+zxro.provider.mutation.started
+zxro.provider.mutation.completed
+zxro.provider.mutation.failed
+zxro.settlement.publication.stage_completed
 zxro.state.validation.failed
 zxro.lock.wait.completed
 zxro.artifact.verification.completed
@@ -854,7 +888,7 @@ Pattern redaction is incomplete. Documentation and UI copy must say so. Tests us
 Default sinks:
 
 - Core CLI with logging disabled: current stderr behavior only.
-- Core CLI with structured logging enabled: NDJSON on stderr, no file.
+- Core CLI with structured logging enabled: JSONL on stderr unless `--log-file` selects an explicit owner-only file.
 - Web UI: bounded in-memory ring plus redacted warning/error stderr.
 
 Opt-in file retention belongs outside `$ZXRO_HOME`, under an owner-specific state directory partitioned by non-reversible home fingerprint. Recommended defaults are five files of at most 5 MiB each and a seven-day age cap, whichever removes data first. Set parent directories to `0700`, files to `0600`, reject symlinks and group/world-writable paths, use atomic rotation, and never share a file between homes.
@@ -878,6 +912,9 @@ Use semantic tables or lists, not a color-only console. New error events use an 
 
 Required tests include:
 
+- default-off compatibility and deterministic flag-over-environment precedence for every approved `ZXRO_LOG_*` variable;
+- invalid level, format, file, and correlation configuration exiting 2 before home creation or provider access;
+- human and JSONL semantic parity, with no log bytes on stdout and no command-result bytes in log events;
 - schema validation and golden events for every stable event name;
 - event-version compatibility and unknown additive attributes;
 - level filtering with required error completion retained;
@@ -888,7 +925,8 @@ Required tests include:
 - refresh retry, stale fallback, index failure, redaction failure, and log-sink failure;
 - synthetic token, prompt, summary, path, session, environment, cookie, and artifact content leakage checks across stderr, files, API, HTML, and browser state;
 - sensitive-detail enable/expiry and its unconditional drop list;
-- rotation by size and age, owner-only modes, symlink rejection, and separate home partitions;
+- rotation by size and age, safe concurrent append, owner-only modes, symlink rejection, explicit file destination, and separate home partitions;
+- sink-open, append, redaction, formatting, and rotation failures preserving the underlying command exit and never retrying a mutation;
 - exact stdout and exit-code parity with logging on and off;
 - unchanged `$ZXRO_HOME` path set and content digest after diagnostic emission and G21 checks;
 - keyboard, screen-reader labeling, contrast, grouping, and live-region behavior for the diagnostics panel.
@@ -999,12 +1037,12 @@ Exit: reviewers agree that no direct localfs fallback is permitted, logs never r
 
 ### W1. Minimal logging foundation
 
-- Specify and implement G19 in separate future core work.
-- Freeze the common event envelope, initial event names, levels, redaction rules, correlation inputs, and stdout/stderr compatibility behavior.
-- Prove no-secret and no-durable-mutation behavior with synthetic fixtures.
-- Build the G20 logger, bounded in-memory ring, and diagnostics components before feature pages.
+- Specify and implement G19 in separate future core CLI work before any Web UI logging code.
+- Freeze global flags, scoped environment equivalents, precedence, destinations, human/JSONL formats, file retention, sink-failure behavior, the common event envelope, initial event names, levels, redaction rules, correlation inputs, and stdout/stderr compatibility.
+- Exercise every merged read and mutation command class while proving no-secret, no-retry, and no-durable-behavior-change guarantees.
+- Reuse G19 in G20, then add the bounded in-memory ring and accessible Web diagnostics components before feature pages.
 
-Exit: exact-head CI proves structured CLI and Web diagnostic events for success, exit 2 through 5, timeout, malformed output, redaction, sink failure, and correlation. This plan does not perform that implementation.
+Exit: exact-head CI proves the core CLI flag contract independently from the Web UI, then proves Web reuse for success, exit 2 through 5, timeout, malformed output, redaction, sink failure, and correlation. This plan does not perform that implementation.
 
 ### W2. Read-purity and parity prerequisites
 
@@ -1044,9 +1082,11 @@ The MVP is acceptable when:
 
 - [ ] It uses the public ZXRO CLI as its only durable-state interface.
 - [ ] It provides field-level parity for every approved merged read command.
-- [ ] G19 and the G20 diagnostics foundation pass their staged acceptance criteria before Web UI feature work.
+- [ ] G19 passes as a core CLI contract across every command class before G20 or Web UI feature work.
+- [ ] G20 reuses G19 rather than defining another CLI logger or event contract.
 - [ ] G1, G2 metadata, and G6 are merged before the product claims strict parity.
-- [ ] Structured logs have stable names and versions, complete correlation, bounded timings, and tested redaction without changing stdout, exit codes, or durable records.
+- [ ] Structured logs have stable names and versions, complete correlation, bounded timings, and tested redaction without changing stdout, exit codes, retries, or durable records.
+- [ ] The UI invokes G19 only through fixed flags on approved read argv, strips inherited logging configuration, and keeps result stdout separate from diagnostic stderr.
 - [ ] The application cannot construct or invoke a mutation command.
 - [ ] Repeated startup, refresh, navigation, search, and evidence metadata reads leave every home path and record byte unchanged.
 - [ ] One process can observe only its explicit home.
@@ -1080,7 +1120,10 @@ The MVP is acceptable when:
 
 | Decision | Recommended default | Needed by |
 |---|---|---|
-| CLI logging default | Disabled for ordinary invocations; opt-in NDJSON stderr for wrappers | W1 |
+| CLI logging default | Disabled for ordinary invocations; opt-in human or JSONL stderr, with explicit file destination available | W1 |
+| CLI logging configuration | Global flags override only documented `ZXRO_LOG_*` variables; no discovered config file in the first version | W1 |
+| CLI file retention | Five 5 MiB owner-only files and seven-day maximum outside `$ZXRO_HOME`; sink failure never changes command exit | W1 |
+| UI use of core logging | Fixed `info` plus `jsonl` flags and server-generated correlation on approved reads; strip inherited `ZXRO_LOG_*` | W1 |
 | UI log retention | In-memory ring by default; owner-only rotating files outside `$ZXRO_HOME` only when opted in | W1 |
 | Sensitive diagnostics | Off by default, process-lifetime opt-in, unconditional content/credential exclusions remain | W1 |
 | Web UI packaging | Optional local Python stdlib command/package, not a daemon | W3 |
