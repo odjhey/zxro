@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: "2026-08-25T19:21:34+08:00"
+updated_at: "2026-08-26T05:15:56+08:00"
 ---
 
 # v0.x CLI
@@ -30,7 +30,7 @@ zxro [--home PATH] [--json] <command> ...
 - `$ZXRO_HOME` defaults to `~/.zxro`; `--home` overrides it for one invocation.
 - One `$ZXRO_HOME` may contain several watchtowers. Separate homes are the v0.x isolation boundary when companies, customers, operators, or experiments must not share durable zxro state.
 - Human-readable output is the default.
-- `--json` reserves stdout for one compact, key-sorted JSON value shaped as `{"schema_version":1,"data":...}`. Object and list payloads both occupy `data`. Diagnostics go to stderr and errors leave stdout empty. Namespaced `work meta` commands remain unimplemented; see the [machine contract design](../execution/machine-contract-design.md).
+- `--json` reserves stdout for one compact, key-sorted JSON value shaped as `{"schema_version":1,"data":...}`. Object and list payloads both occupy `data`. Diagnostics go to stderr and errors leave stdout empty. Namespaced `work meta` commands use the same envelope.
 - Mutating commands return non-zero on malformed, conflicting, or unsafe state.
 - IDs supplied by users are validated before they become path components or provider identifiers.
 - A command must not silently create a missing parent artifact unless its contract says so.
@@ -157,7 +157,7 @@ zxro work meta show auth-fix github
 zxro work meta unset auth-fix github
 ```
 
-`set` requires one JSON object on stdin and replaces the whole named namespace. `unset` succeeds when the namespace is absent. `show` for an absent named namespace exits with class 3. Input violations exit with class 2; malformed durable metadata exits with class 5. Edits are allowed after work closes. They do not reopen it. Work `show` and `list` include metadata in schema version 1 JSON. Human `work list` remains one line per record and prints namespace names instead of payloads.
+`set` requires one JSON object on stdin and replaces the whole named namespace. The 16 KiB limit applies to canonical compact, key-sorted metadata after parsing, so insignificant JSON whitespace does not count toward it. `unset` succeeds when the namespace is absent. `show` validates the namespace first: invalid or reserved names exit with class 2, while an absent valid namespace exits with class 3. Malformed durable metadata exits with class 5. Edits are allowed after work closes. They do not reopen it. Work `show` and `list` include metadata in schema version 1 JSON. Human `work list` remains one line per record and prints namespace names instead of payloads.
 
 Metadata is durable and unencrypted. Do not store credentials in it.
 

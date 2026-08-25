@@ -4,7 +4,7 @@ import sys
 
 from .errors import NotFoundError, ValidationError, ZxroError
 from .localfs import m1_capabilities, providers, resolve_home
-from .metadata import MAX_METADATA_BYTES
+from .metadata import validate_namespace
 from .settle import MAX_STDIN_BYTES
 
 
@@ -81,9 +81,7 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         elif args.action == "close": value = work.close(args.id)
         elif args.action == "list": value = work.list(args.watchtower, args.state)
         elif args.meta_action == "set":
-            raw = sys.stdin.buffer.read(MAX_METADATA_BYTES + 1)
-            if len(raw) > MAX_METADATA_BYTES:
-                raise ValidationError(f"metadata input exceeds {MAX_METADATA_BYTES} bytes")
+            raw = sys.stdin.buffer.read()
             try:
                 payload = json.loads(raw.decode("utf-8"), parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
             except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
@@ -94,6 +92,7 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
             record = work.get(args.id)
             metadata = record.metadata or {}
             if args.namespace is not None:
+                validate_namespace(args.namespace, {})
                 if args.namespace not in metadata:
                     raise NotFoundError(f"metadata namespace not found: {args.namespace}")
                 value = metadata[args.namespace]

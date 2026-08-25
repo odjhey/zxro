@@ -58,10 +58,20 @@ class WorkCliTests(CliCase):
         self.ok_json("work", "create", "job", "--watchtower", "main")
         self.assertNotIn("metadata", self.ok_json("work", "show", "job"))
         self.assertEqual(self.cli("work", "meta", "show", "job", "missing").returncode, 3)
+        for namespace in ("zxro", "Upper", "-bad", "a" * 65):
+            with self.subTest(show_namespace=namespace):
+                self.assertEqual(self.cli("work", "meta", "show", "job", namespace).returncode, 2)
         for namespace, payload in (("zxro", "{}"), ("Upper", "{}"), ("ok", "null"), ("ok", "{"), ("ok", '{"x":1.2}')):
             with self.subTest(namespace=namespace, payload=payload):
                 self.assertEqual(self.cli("work", "meta", "set", "job", namespace, "--stdin", input_text=payload).returncode, 2)
         self.assertNotIn("metadata", self.ok_json("work", "show", "job"))
+
+    def test_metadata_set_ignores_insignificant_raw_json_whitespace(self):
+        self.ok_json("work", "create", "job", "--watchtower", "main")
+        payload = " " * 10_000 + '{"key":"value"}' + " " * 10_000
+        result = self.cli("work", "meta", "set", "job", "tracker", "--stdin", input_text=payload)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.ok_json("work", "meta", "show", "job", "tracker"), {"key": "value"})
 
     def test_metadata_bounds_through_public_cli(self):
         self.ok_json("work", "create", "job", "--watchtower", "main")
