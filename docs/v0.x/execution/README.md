@@ -5,13 +5,14 @@ type: index
 tags: [v0.x, execution]
 status: current
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-24T17:06:13+08:00
+updated_at: 2026-08-25T09:35:45+08:00
 ---
 
 # v0.x Execution
 
 - [Implementation plan](./implementation-plan.md)
 - [CLI-first delivery plan](./cli-first-delivery-plan.md)
+- [CLI-first Web UI plan](./web-ui-plan.md)
 - [Human decision gates](./human-decision-gates.md)
 - [Task cards](./task-cards/README.md)
 
