@@ -35,7 +35,9 @@ class CliCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
         value = json.loads(result.stdout)
-        if isinstance(value, dict) and set(value) == {"schema_version", "data"}:
+        if isinstance(value, dict) and "schema_version" in value:
+            self.assertEqual(set(value), {"schema_version", "data"})
+            self.assertIs(type(value["schema_version"]), int)
             self.assertEqual(value["schema_version"], 1)
             return value["data"]
         return value

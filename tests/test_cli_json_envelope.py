@@ -1,11 +1,31 @@
 import json
 import os
 import subprocess
+from unittest.mock import Mock
 
 from tests.helpers import BIN, ROOT, CliCase
 
 
 class JsonEnvelopeTests(CliCase):
+    def test_helper_rejects_invalid_present_envelope_versions(self):
+        for version in (True, 1.0, 2):
+            with self.subTest(version=version):
+                self.cli = Mock(
+                    return_value=subprocess.CompletedProcess(
+                        [], 0, json.dumps({"schema_version": version, "data": {}}), ""
+                    )
+                )
+                with self.assertRaises(AssertionError):
+                    self.ok_json("work", "list")
+
+    def test_helper_keeps_accepting_legacy_bare_values(self):
+        for value in ({"id": "legacy"}, ["legacy"], "legacy"):
+            with self.subTest(value=value):
+                self.cli = Mock(
+                    return_value=subprocess.CompletedProcess([], 0, json.dumps(value), "")
+                )
+                self.assertEqual(self.ok_json("work", "list"), value)
+
     def assert_envelope(self, result, expected_type):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")

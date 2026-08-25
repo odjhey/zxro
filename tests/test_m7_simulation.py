@@ -4,8 +4,10 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from helpers import ROOT
+from tools import m7_simulation
 
 
 class ProviderFreeM7SimulationTests(unittest.TestCase):
@@ -122,6 +124,15 @@ class ProviderFreeM7SimulationTests(unittest.TestCase):
         self.assertEqual(stop["pending_after_close"], 0)
         self.assertTrue(first_report["cleanup"]["fake_runtime_processes_reaped"])
         self.assertTrue(first_report["cleanup"]["temporary_home_removed"])
+
+    def test_invoke_rejects_invalid_envelope_versions(self):
+        for version in (True, 1.0, 2):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as temporary:
+                output = json.dumps({"schema_version": version, "data": {}}).encode()
+                completed = subprocess.CompletedProcess([], 0, output, b"")
+                with patch.object(m7_simulation.subprocess, "run", return_value=completed):
+                    with self.assertRaisesRegex(RuntimeError, "unsupported JSON envelope"):
+                        m7_simulation.invoke(Path(temporary), "work", "list")
 
     def test_inherited_provider_environment_is_not_passed_to_children(self):
         with tempfile.TemporaryDirectory() as temporary:
