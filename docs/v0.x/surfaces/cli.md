@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: 2026-08-25T13:00:51+08:00
+updated_at: "2026-08-25T18:34:06+08:00"
 ---
 
 # v0.x CLI
@@ -30,8 +30,7 @@ zxro [--home PATH] [--json] <command> ...
 - `$ZXRO_HOME` defaults to `~/.zxro`; `--home` overrides it for one invocation.
 - One `$ZXRO_HOME` may contain several watchtowers. Separate homes are the v0.x isolation boundary when companies, customers, operators, or experiments must not share durable zxro state.
 - Human-readable output is the default.
-- `--json` reserves stdout for one valid JSON value. Diagnostics go to stderr.
-- **Unavailable on `master`:** a versioned machine envelope (`{"schema_version": 1, "data": ...}`) for all `--json` output and namespaced `work meta` commands are designed but not implemented. See the [machine contract design](../execution/machine-contract-design.md). Until the envelope lands, `--json` payloads are bare values.
+- `--json` reserves stdout for one compact, key-sorted JSON value shaped as `{"schema_version":1,"data":...}`. Object and list payloads both occupy `data`. Diagnostics go to stderr and errors leave stdout empty. Namespaced `work meta` commands remain unimplemented; see the [machine contract design](../execution/machine-contract-design.md).
 - Mutating commands return non-zero on malformed, conflicting, or unsafe state.
 - IDs supplied by users are validated before they become path components or provider identifiers.
 - A command must not silently create a missing parent artifact unless its contract says so.

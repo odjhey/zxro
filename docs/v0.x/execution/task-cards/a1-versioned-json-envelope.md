@@ -6,7 +6,7 @@ tags: [v0.x, execution, task-cards, cli, json]
 status: draft
 generated: "Claude Fable 5 agent, 2026-08-25"
 created_at: "2026-08-25T14:25:09+08:00"
-updated_at: "2026-08-25T14:25:09+08:00"
+updated_at: "2026-08-25T18:34:06+08:00"
 ---
 
 # A1 — Versioned JSON envelope
@@ -52,11 +52,11 @@ Every `zxro --json` response on stdout is `{"schema_version": 1, "data": ...}` f
 
 ## Acceptance criteria
 
-- [ ] All public `--json` responses carry `schema_version` with identical convention for objects and lists.
-- [ ] Repeating a read command produces byte-identical output.
-- [ ] Error paths leave stdout empty; exit classes are unchanged.
-- [ ] Bump-versus-additive rules are published in contract conventions as current behavior.
-- [ ] No doc or test still presents bare `--json` payloads as current.
+- [x] All public `--json` responses carry `schema_version` with identical convention for objects and lists.
+- [x] Repeating a read command produces byte-identical output.
+- [x] Error paths leave stdout empty; exit classes are unchanged.
+- [x] Bump-versus-additive rules are published in contract conventions as current behavior.
+- [x] No doc or test still presents bare `--json` payloads as current.
 
 ## Verification
 
@@ -67,8 +67,8 @@ ZXRO_HOME=$(mktemp -d) sh -c 'bin/zxro watchtower create w --cwd /tmp && bin/zxr
 
 ## Documentation impact
 
-- [ ] Contract conventions carry the compatibility policy; CLI spec global behavior updated.
-- [ ] Machine contract design WP1 marked delivered; indexes untouched (no new docs).
+- [x] Contract conventions carry the compatibility policy; CLI spec global behavior updated.
+- [x] Machine contract design WP1 marked delivered; indexes untouched (no new docs).
 
 ## Human gate
 

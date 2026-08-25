@@ -259,7 +259,7 @@ class DurableLoopCliTests(CliCase):
                 first = run_cli(home, "turn", "create", "--work", "job", "--agent", "pi", "--session", "one", "--cwd", "/tmp").stdout.strip()
                 crashed = run_cli(home, "turn", "settle", first, "--source", "test", "--status", "completed", "--message", "first", env={"ZXRO_FAULT_EXIT_AFTER": "index-commit"})
                 self.assertEqual(crashed.returncode, 86)
-                first_record = json.loads(run_cli(home, "--json", "turn", "show", first).stdout)
+                first_record = json.loads(run_cli(home, "--json", "turn", "show", first).stdout)["data"]
                 index = home / "inbox-index" / f"{first_record['settlement']['event_id']}.json"
                 index.write_text(json.dumps(corrupt(json.loads(index.read_text()))))
                 second = run_cli(home, "turn", "create", "--work", "job", "--agent", "pi", "--session", "two", "--cwd", "/tmp").stdout.strip()
@@ -268,7 +268,7 @@ class DurableLoopCliTests(CliCase):
                 result = run_cli(home, "turn", "settle", second, "--source", "test", "--status", "completed", "--message", "second")
                 self.assertEqual(result.returncode, 5, result.stderr)
                 self.assertEqual(mailbox.read_bytes() if mailbox.exists() else None, before)
-                second_record = json.loads(run_cli(home, "--json", "turn", "show", second).stdout)
+                second_record = json.loads(run_cli(home, "--json", "turn", "show", second).stdout)["data"]
                 self.assertEqual(second_record["state"], "running")
 
     def test_published_boundary_index_corruption_precedes_requested_turn_mutation(self):
@@ -286,7 +286,7 @@ class DurableLoopCliTests(CliCase):
                 self.assertEqual(run_cli(home, "work", "create", "job", "--watchtower", "main").returncode, 0)
                 first = run_cli(home, "turn", "create", "--work", "job", "--agent", "pi", "--session", "one", "--cwd", "/tmp").stdout.strip()
                 self.assertEqual(run_cli(home, "turn", "settle", first, "--source", "test", "--status", "completed", "--message", "first").returncode, 0)
-                event = json.loads(run_cli(home, "--json", "inbox", "unread", "--watchtower", "main").stdout)[0]
+                event = json.loads(run_cli(home, "--json", "inbox", "unread", "--watchtower", "main").stdout)["data"][0]
                 index = home / "inbox-index" / f"{event['event_id']}.json"
                 if corrupt is None:
                     index.unlink()
@@ -297,7 +297,7 @@ class DurableLoopCliTests(CliCase):
                 result = run_cli(home, "turn", "settle", second, "--source", "test", "--status", "completed", "--message", "second")
                 self.assertEqual(result.returncode, 5, result.stderr)
                 self.assertEqual(mailbox.read_bytes(), before)
-                self.assertEqual(json.loads(run_cli(home, "--json", "turn", "show", second).stdout)["state"], "running")
+                self.assertEqual(json.loads(run_cli(home, "--json", "turn", "show", second).stdout)["data"]["state"], "running")
 
     def test_missing_partial_index_remains_a_repairable_event_commit_window(self):
         turn = self.turn()

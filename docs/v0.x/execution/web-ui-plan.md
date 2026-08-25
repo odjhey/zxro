@@ -23,7 +23,7 @@ sources:
   - ref: ../engineering/runtime-and-provisioning.md
     credibility: primary
 created_at: "2026-08-25T09:35:45+08:00"
-updated_at: "2026-08-25T10:39:41+08:00"
+updated_at: "2026-08-25T18:34:06+08:00"
 ---
 
 # CLI-first Web UI plan
@@ -236,7 +236,7 @@ If `turn list` or any other required read fails, the UI publishes no new current
 
 `Safe now` means the merged implementation takes no ZXRO mutation path. It does not mean the command is side-channel free on every filesystem.
 
-| Public CLI capability | JSON shape now | UI view | Read status | Parity rule and test |
+| Public CLI capability | `data` shape inside the version 1 envelope | UI view | Read status | Parity rule and test |
 |---|---|---|---|---|
 | `watchtower list` | Array of watchtower records | Overview, watchtower list | Safe now | Adapter output equals CLI records field for field |
 | `watchtower show <id>` | One watchtower record | Watchtower detail | Safe now | Detail equals `show`; list-to-detail identity must match |
@@ -398,7 +398,7 @@ The proposed commands below do not exist on `master`.
   ```
 
   Capabilities return command, output, and logging schema revisions without probing mutating commands. With structured logging disabled, JSON errors use stderr and contain `schema_version`, stable `code`, exit class, and bounded message. With G19 JSONL enabled, stderr contains one schema-valid JSON event per line and the final invocation event carries the same error object.
-- Schema and versioning: these commands establish explicit revisions for new envelopes. Existing unversioned record outputs remain compatible and additive.
+- Schema and versioning: these commands advertise revisions beyond the current version 1 result envelope. Existing `data` fields remain compatible and additive.
 - Security and privacy: version output must not include environment variables, home contents, or executable search paths. Errors must not dump raw records or artifact content.
 - Dependencies: the G19 logging event schema must be defined first so G6 can consume and advertise its version, plus a contract-conventions update and stable error identifiers. G19 does not depend on G6.
 - Priority: P0 core CLI prerequisite after G19 and before reliable adapter negotiation. MVP may pin one CLI version, but it still needs a deterministic unsupported-capability screen.

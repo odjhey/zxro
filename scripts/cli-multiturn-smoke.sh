@@ -19,7 +19,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 json_event_id() {
-    python3 -c 'import json,sys; events=json.load(sys.stdin); print(next(event["event_id"] for event in events if event["generation"] == int(sys.argv[1])))' "$1"
+    python3 -c 'import json,sys; events=json.load(sys.stdin)["data"]; print(next(event["event_id"] for event in events if event["generation"] == int(sys.argv[1])))' "$1"
 }
 
 printf 'disposable state: %s\n' "$STATE"
@@ -54,7 +54,7 @@ else
 fi
 
 "$ZXRO" ack --watchtower ops --through 6
-test "$("$ZXRO" --json inbox unread --watchtower ops)" = '[]'
+test "$("$ZXRO" --json inbox unread --watchtower ops)" = '{"data":[],"schema_version":1}'
 EVENT6=$(printf '%s\n' "$EVENTS" | json_event_id 6)
 EVENT2=$(printf '%s\n' "$EVENTS" | json_event_id 2)
 "$ZXRO" inbox handle "$EVENT6"
@@ -70,7 +70,7 @@ done
 "$ZXRO" work close release-fix
 "$ZXRO" --json work show release-fix
 "$ZXRO" --json turn list --work release-fix
-test "$("$ZXRO" --json inbox pending --watchtower ops)" = '[]'
+test "$("$ZXRO" --json inbox pending --watchtower ops)" = '{"data":[],"schema_version":1}'
 
 if [ "$INSPECT" = 1 ]; then
     printf '%s\n' 'durable file inventory:'

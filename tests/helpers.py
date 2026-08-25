@@ -34,7 +34,10 @@ class CliCase(unittest.TestCase):
         result = self.cli("--json", *args)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
-        return json.loads(result.stdout)
+        envelope = json.loads(result.stdout)
+        self.assertEqual(set(envelope), {"schema_version", "data"})
+        self.assertEqual(envelope["schema_version"], 1)
+        return envelope["data"]
 
     def seed(self):
         self.assertEqual(self.cli("watchtower", "create", "main", "--cwd", "/watchtower", "--agent", "pi", "--session", "wt").returncode, 0)

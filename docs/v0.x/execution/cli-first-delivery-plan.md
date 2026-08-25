@@ -85,7 +85,7 @@ These choices satisfy the contracts but were not fully fixed by them. Challenge 
 | 5 | unsafe or malformed durable state |
 | 6 | child-process failure (reserved for the deferred `turn run`) |
 
-Errors go to stderr. `--json` must keep stdout a single valid JSON value.
+Errors go to stderr and leave stdout empty. Successful `--json` output must be one compact version 1 envelope.
 
 ### Built-in provider home layout
 

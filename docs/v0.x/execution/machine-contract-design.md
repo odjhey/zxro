@@ -15,7 +15,7 @@ sources:
   - ref: ../../architecture/contracts/durable-store.md
     credibility: primary
 created_at: "2026-08-25T13:00:51+08:00"
-updated_at: "2026-08-25T13:00:51+08:00"
+updated_at: "2026-08-25T18:34:06+08:00"
 ---
 
 # Machine contract design: versioned JSON envelope and namespaced metadata
@@ -160,6 +160,8 @@ External references use stable identifiers supplied by the caller (a Beads issue
 ## Work packages
 
 ### WP1: versioned envelope
+
+Status: implemented, pending the contract compatibility merge gate.
 
 Outcome: every `zxro --json` response is `{"schema_version": 1, "data": ...}`, and the compatibility policy is published in the contract docs.
 

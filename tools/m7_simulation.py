@@ -176,7 +176,10 @@ def invoke(home: Path, *args: str, input_bytes: bytes | None = None, check: bool
         )
     value = None
     if result.stdout:
-        value = json.loads(result.stdout)
+        envelope = json.loads(result.stdout)
+        if set(envelope) != {"schema_version", "data"} or envelope["schema_version"] != 1:
+            raise RuntimeError("zxro returned an unsupported JSON envelope")
+        value = envelope["data"]
     return result, value
 
 

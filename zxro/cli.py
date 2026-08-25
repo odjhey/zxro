@@ -42,7 +42,7 @@ def parser():
 
 def render(value, machine, *, turn_id_only=False, path_only=False):
     if machine:
-        print(json.dumps(value, sort_keys=True, separators=(",", ":")))
+        print(json.dumps({"schema_version": 1, "data": value}, sort_keys=True, separators=(",", ":")))
     elif turn_id_only:
         print(value["id"])
     elif path_only:
