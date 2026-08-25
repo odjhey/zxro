@@ -208,7 +208,21 @@ Show one turn's zxro identities, crew target, session address, lifecycle state, 
 zxro turn show 550e8400-e29b-41d4-a716-446655440000
 ```
 
-This command is the preferred zxro-side starting point for both deeper evidence inspection and native session recovery. It preserves `artifact_refs` and adds at most 32 `artifacts` entries shaped as `{ref,kind,bytes}`. It must not inline artifact contents or a full provider hook payload.
+This command is the preferred zxro-side starting point for both deeper evidence inspection and native session recovery. It preserves `artifact_refs` and adds at most 32 `artifacts` entries shaped as `{ref,kind,bytes}`. It must not inline artifact contents or a full provider hook payload. Human and JSON output include `native_session_id` and `native_session_source` when present.
+
+### `zxro turn bind`
+
+Attach a provider-native conversation identity and its provenance after turn creation.
+
+```sh
+zxro turn bind <turn-id> \
+  --native-session-id 9b92aa10 \
+  --source acpx.agentSessionId
+```
+
+Both flags are required. Each value is a free string of 1 to 256 characters without control characters. `--source` records provenance and is not a provider enum.
+
+The command may bind running or settled turns, including turns whose work is closed. An identical bind is idempotent. Once both fields exist, a different native ID or source conflicts and leaves the turn unchanged. A create-time native ID without a source may be enriched once by repeating the same ID with a source. Binding changes only `native_session_id` and `native_session_source` under the home lock. It does not change zxro identities, the runtime address, cwd, settlement, mailbox data, or work state. The fields are recovery data. They are not shell syntax and do not prove that a runtime can resume the conversation.
 
 ### `zxro turn list`
 

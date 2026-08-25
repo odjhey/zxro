@@ -9,7 +9,7 @@ sources:
   - ref: https://github.com/odjhey/rozoro/blob/master/docs/plans/2026-08-22-000356-session-linking/plan.md
     credibility: primary
 created_at: 2026-08-24T16:41:00+08:00
-updated_at: 2026-08-24T16:41:00+08:00
+updated_at: 2026-08-25T18:36:18+08:00
 ---
 
 # Session binding contract
@@ -97,7 +97,11 @@ zxro turn bind <turn-id> \
 
 This is an enrichment operation, not a relink-to-anything command. Conflicting identity requires a new turn or an explicit future migration procedure.
 
-When the native ID is already known at turn creation, the existing `--native-session-id` input remains valid.
+When the native ID is already known at turn creation, the existing `--native-session-id` input remains valid. Such a turn may lack provenance. One later bind may add `native_session_source` when it repeats the same native ID. A different ID conflicts.
+
+The command validates both values before taking the home lock. Each value must contain 1 to 256 characters and must not contain control characters. An unknown turn exits with class 3. Malformed input exits with class 2. Once both fields exist, a bind succeeds only when both values match. A different ID or source exits with conflict class 4 and leaves the record unchanged.
+
+Binding is allowed while a turn is running, after settlement, and after its work closes. The implementation changes only `native_session_id` and `native_session_source` under the home lock. It does not change the work ID, turn ID, runtime address, cwd, lifecycle state, settlement, artifacts, or mailbox data.
 
 ## Resume rule
 
@@ -119,7 +123,7 @@ zxro should not persist shell command strings or provider-specific resume argv a
 
 ## Provenance
 
-`native_session_source` is short, non-secret provenance such as:
+`native_session_source` is a bounded, free provenance string, not a provider enum. Examples include:
 
 ```text
 acpx.agentSessionId

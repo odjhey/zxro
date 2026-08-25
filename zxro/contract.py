@@ -196,6 +196,7 @@ class Turn:
     cwd: str
     state: str
     native_session_id: str | None = None
+    native_session_source: str | None = None
     outcome: str | None = None
     summary: str | None = None
     verdict: str | None = None
@@ -235,6 +236,7 @@ class TurnStore(Protocol):
     def create(self, work_id: str, agent: str, session: str, cwd: str, native_session_id: str | None = None) -> Turn: ...
     def get(self, id: str) -> Turn: ...
     def list(self, work_id: str | None = None, state: str | None = None) -> list[Turn]: ...
+    def bind(self, id: str, native_session_id: str, source: str) -> Turn: ...
 
 
 class SettlementCapability(Protocol):

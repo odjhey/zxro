@@ -34,7 +34,7 @@ Every design below must respect the invariants already published:
 
 ## ZR3: late session/native-ID binding
 
-Smallest item first: the [session binding contract](../../architecture/contracts/session-binding.md) already specifies the command; only the public implementation is missing.
+Delivered by the focused D1 implementation. The [session binding contract](../../architecture/contracts/session-binding.md) defines the command and failure rules.
 
 ```sh
 zxro turn bind <turn-id> \
@@ -139,7 +139,7 @@ These packages slot between M1 and the M5/M6 harness integrations in the [implem
 
 - [ ] Scenario B: a completed execution can report `verdict=blocked` and the watchtower routes on the field, not prose.
 - [ ] Scenario C: many turns and large artifacts leave `inbox unread`, `work show`, `turn show` output sizes unchanged.
-- [ ] Scenario D: late native-ID binding is idempotent, conflict-safe, and never changes work or turn identity.
+- [x] Scenario D: late native-ID binding is idempotent, conflict-safe, and never changes work or turn identity.
 - [ ] A work item's original brief is retrievable after settlement bursts, work close, and process restarts.
 - [ ] Scenario A's 12-task burst passes with verdict-carrying events.
 - [ ] All new fields round-trip through `--json` and older-binary downgrade behavior is documented.
