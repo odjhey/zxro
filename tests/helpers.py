@@ -10,13 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin" / "zxro"
 
 
-def run_cli(home, *args, module=False, env=None):
+def run_cli(home, *args, module=False, env=None, input_text=None):
     command = [sys.executable, "-m", "zxro"] if module else [str(BIN)]
     environment = os.environ.copy()
     environment["ZXRO_HOME"] = str(home)
     if env:
         environment.update(env)
-    return subprocess.run(command + list(args), cwd=ROOT, env=environment, text=True, capture_output=True)
+    return subprocess.run(command + list(args), cwd=ROOT, env=environment, text=True, capture_output=True, input=input_text)
 
 
 class CliCase(unittest.TestCase):

@@ -2,8 +2,9 @@ import argparse
 import json
 import sys
 
-from .errors import ValidationError, ZxroError
+from .errors import NotFoundError, ValidationError, ZxroError
 from .localfs import m1_capabilities, providers, resolve_home
+from .metadata import validate_namespace
 from .settle import MAX_STDIN_BYTES
 
 
@@ -23,6 +24,10 @@ def parser():
     show = work.add_parser("show"); show.add_argument("id")
     listing = work.add_parser("list"); listing.add_argument("--watchtower"); listing.add_argument("--state")
     close = work.add_parser("close"); close.add_argument("id")
+    meta = work.add_parser("meta").add_subparsers(dest="meta_action", required=True)
+    meta_set = meta.add_parser("set"); meta_set.add_argument("id"); meta_set.add_argument("namespace"); meta_set.add_argument("--stdin", action="store_true", required=True)
+    meta_show = meta.add_parser("show"); meta_show.add_argument("id"); meta_show.add_argument("namespace", nargs="?")
+    meta_unset = meta.add_parser("unset"); meta_unset.add_argument("id"); meta_unset.add_argument("namespace")
 
     turn = commands.add_parser("turn").add_subparsers(dest="action", required=True)
     create = turn.add_parser("create"); create.add_argument("--work", required=True); create.add_argument("--agent", required=True); create.add_argument("--session", required=True); create.add_argument("--cwd", required=True); create.add_argument("--native-session-id")
@@ -41,16 +46,21 @@ def parser():
     return root
 
 
-def render(value, machine, *, turn_id_only=False, path_only=False):
+def render(value, machine, *, turn_id_only=False, path_only=False, metadata_only=False):
     if machine:
-        print(json.dumps({"schema_version": 1, "data": value}, sort_keys=True, separators=(",", ":")))
+        print(json.dumps({"schema_version": 1, "data": value}, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+    elif metadata_only:
+        print(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
     elif turn_id_only:
         print(value["id"])
     elif path_only:
         print(value["path"])
     elif isinstance(value, list):
         for item in value:
-            print(" ".join(f"{key}={item[key]}" for key in item))
+            printable = dict(item)
+            if "metadata" in printable:
+                printable["metadata"] = ",".join(sorted(printable["metadata"]))
+            print(" ".join(f"{key}={printable[key]}" for key in printable))
     else:
         print("\n".join(f"{key}: {value[key]}" for key in value))
 
@@ -60,6 +70,7 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
     registry, work, turn = core_factory(home)
     loop = m1_factory(home, registry, turn)
     path_only = False
+    metadata_only = False
     if args.command == "watchtower":
         if args.action == "create": value = registry.create(args.id, args.cwd, args.agent, args.session)
         elif args.action == "show": value = registry.get(args.id)
@@ -68,7 +79,28 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         if args.action == "create": value = work.create(args.id, args.watchtower)
         elif args.action == "show": value = work.get(args.id)
         elif args.action == "close": value = work.close(args.id)
-        else: value = work.list(args.watchtower, args.state)
+        elif args.action == "list": value = work.list(args.watchtower, args.state)
+        elif args.meta_action == "set":
+            raw = sys.stdin.buffer.read(MAX_STDIN_BYTES + 1)
+            if len(raw) > MAX_STDIN_BYTES:
+                raise ValidationError(f"stdin payload too large: maximum is {MAX_STDIN_BYTES} bytes")
+            try:
+                payload = json.loads(raw.decode("utf-8"), parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+            except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+                raise ValidationError(f"invalid metadata JSON: {exc}") from exc
+            value = work.set_metadata(args.id, args.namespace, payload)
+        elif args.meta_action == "unset": value = work.unset_metadata(args.id, args.namespace)
+        else:
+            if args.namespace is not None:
+                validate_namespace(args.namespace, {})
+            record = work.get(args.id)
+            metadata = record.metadata or {}
+            if args.namespace is not None:
+                if args.namespace not in metadata:
+                    raise NotFoundError(f"metadata namespace not found: {args.namespace}")
+                value = metadata[args.namespace]
+            else: value = metadata
+            metadata_only = True
     elif args.command == "turn":
         if args.action == "create": value = turn.create(args.work, args.agent, args.session, args.cwd, args.native_session_id)
         elif args.action == "show": value = turn.get(args.id)
@@ -105,7 +137,7 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         ]
     elif args.command == "artifact" and args.action == "put":
         records = {key: item for key, item in records.items() if key in {"ref", "kind", "bytes"}}
-    render(records, args.json_output, turn_id_only=args.command == "turn" and args.action == "create", path_only=path_only)
+    render(records, args.json_output, turn_id_only=args.command == "turn" and args.action == "create", path_only=path_only, metadata_only=metadata_only)
 
 
 def main(argv=None):

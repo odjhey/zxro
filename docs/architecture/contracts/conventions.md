@@ -6,7 +6,7 @@ tags: [architecture, contracts, conventions]
 status: current
 generated: "pi coding agent, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: "2026-08-25T19:15:39+08:00"
+updated_at: "2026-08-25T19:21:34+08:00"
 ---
 
 # Contract conventions and primitives
@@ -67,11 +67,11 @@ The approved verdict vocabulary is `done | partial | blocked`. `blocked` require
 
 zxro allocates the event ID before terminal turn commit and stores it in settlement metadata. Publication assigns generation while holding the home lock. Crash-gap retries therefore retain event identity.
 
-M1 reads M0 running records without migration and preserves all M0 command names, arguments, output fields, and exit classes. Verdict-less settled records remain valid. An older binary rejects verdict-carrying turn and mailbox records with code 5 because their additive fields are unknown. Operators testing a downgrade must use a copied pre-settlement home or a fresh home. This limitation avoids unsafe lossy conversion.
+M1 reads M0 running records without migration and preserves all M0 command names, arguments, output fields, and exit classes. Verdict-less settled records remain valid. An older binary rejects verdict-carrying turn and mailbox records with code 5 because their additive fields are unknown. It may likewise reject a work record after metadata is added. Operators testing a downgrade must use a copied home from before the newer record was written, or a fresh home. This limitation avoids unsafe lossy conversion.
 
 ## Security and privacy
 
-Routine work, turn, and mailbox views contain bounded metadata and artifact references only. Stdin payload bytes stay in artifact storage. Built-in-provider paths must remain owned by the current user, reject symlinks, and resolve beneath the active home.
+Routine work, turn, and mailbox views contain bounded metadata and artifact references only. Work metadata is durable, unencrypted, and readable by anything that can read `$ZXRO_HOME`. It must not contain tokens, passwords, or other credentials. Stdin payload bytes stay in artifact storage. Built-in-provider paths must remain owned by the current user, reject symlinks, and resolve beneath the active home.
 
 ## Related
 

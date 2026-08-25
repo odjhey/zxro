@@ -6,7 +6,7 @@ tags: [docs, meta, toc]
 status: current
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-25T14:25:09+08:00
+updated_at: 2026-08-26T07:10:00+08:00
 ---
 
 # Docs index
@@ -80,7 +80,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [D1 turn bind](./v0.x/execution/task-cards/d1-turn-bind.md) | checklist | Late native-session-ID binding with idempotent, fail-closed semantics |
 | [Task-card template](./v0.x/execution/task-cards/task-card-template.md) | plan | Copyable implementation task card |
 | [Surfaces](./v0.x/surfaces/README.md) | index | Product-interface index |
-| [v0.x CLI](./v0.x/surfaces/cli.md) | spec | Current durable CRUD, settlement, mailbox, and artifact resolution plus unavailable future M2 inspection and metadata helpers |
+| [v0.x CLI](./v0.x/surfaces/cli.md) | spec | Current durable CRUD, settlement, mailbox, namespaced work metadata, and artifact resolution plus unavailable future M2 inspection |
 | [Surface template](./v0.x/surfaces/surface-template.md) | spec | Template for a later user or system interface |
 | [Engineering](./v0.x/engineering/README.md) | index | Engineering strategy index |
 | [Testing and agent workflow](./v0.x/engineering/testing-and-agent-workflow.md) | guide | Black-box CLI tests, durable-store conformance, delivery/attention separation, bounded reconciliation, crash-gap tests, and later integration smoke tests |
