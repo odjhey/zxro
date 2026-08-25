@@ -252,6 +252,16 @@ class ArtifactPutCliTests(CliCase):
         )
         crashed = self.binary_cli(*settle_args, body=b"orphaned", env={"ZXRO_FAULT_EXIT_AFTER": "artifact-commit"})
         self.assertEqual(crashed.returncode, 86)
+        unrelated = self.cli(
+            "turn", "create", "--work", "job", "--agent", "pi",
+            "--session", "unrelated", "--cwd", "/tmp",
+        ).stdout.strip()
+        publication_gap = self.binary_cli(
+            "turn", "settle", unrelated, "--source", "manual", "--status", "completed",
+            "--message", "unrelated", env={"ZXRO_FAULT_EXIT_AFTER": "index-commit"},
+        )
+        self.assertEqual(publication_gap.returncode, 86)
+        self.assertFalse((self.home / "inbox" / "main.json").exists())
         for index in range(32):
             self.assertEqual(self.put(f"attached-{index}", b"x").returncode, 0)
 

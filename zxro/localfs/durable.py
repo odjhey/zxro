@@ -215,10 +215,18 @@ class LocalDurableLoop:
             self.turns.get_from(access, turn_id)
         with mutation(self.home) as access:
             turn = self.turns.get_from(access, turn_id)
+            recovered_stdin = None
             if turn.state == "settled":
                 existing = turn.settlement
                 if existing.outcome != outcome or existing.summary != message or existing.verdict != verdict or existing.needs != needs or (payload is not None and existing.payload_sha256 != digest):
                     raise ConflictError("turn already has a different settlement")
+            elif payload is None:
+                try:
+                    recovered_stdin = self._artifact_record(access, turn.id, "stdin")
+                except NotFoundError:
+                    pass
+                if recovered_stdin is not None and len(turn.artifacts) >= 32:
+                    raise ValidationError("turn artifact limit exceeded: maximum is 32")
             box = self._mailbox(access, turn.watchtower_id)
             if box["highest"]:
                 try:
@@ -245,23 +253,17 @@ class LocalDurableLoop:
                 elif payload is not None:
                     turn, artifact = self._put_artifact(access, turn, "stdin", payload, settlement=True)
                     digest = artifact.sha256
-                else:
-                    try:
-                        artifact = self._artifact_record(access, turn.id, "stdin")
-                    except NotFoundError:
-                        artifact = None
-                    if artifact is not None:
-                        if len(turn.artifacts) >= 32:
-                            raise ValidationError("turn artifact limit exceeded: maximum is 32")
-                        metadata = ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
-                        turn = Turn(**{
-                            **turn.to_dict(),
-                            "artifact_refs": (*turn.artifact_refs, artifact.ref),
-                            "artifacts": (*turn.artifacts, metadata),
-                        })
-                        atomic_replace(access, "turns", f"{turn.id}.json", turn.to_dict())
-                        self._fault("artifact-metadata-commit")
-                        digest = artifact.sha256
+                elif recovered_stdin is not None:
+                    artifact = recovered_stdin
+                    metadata = ArtifactMetadata(artifact.ref, artifact.kind, artifact.bytes, artifact.sha256)
+                    turn = Turn(**{
+                        **turn.to_dict(),
+                        "artifact_refs": (*turn.artifact_refs, artifact.ref),
+                        "artifacts": (*turn.artifacts, metadata),
+                    })
+                    atomic_replace(access, "turns", f"{turn.id}.json", turn.to_dict())
+                    self._fault("artifact-metadata-commit")
+                    digest = artifact.sha256
                 settled_at = timestamp()
                 settlement = Settlement(source, outcome, message, digest, event_id, settled_at, verdict, needs)
                 turn = Turn(**{
