@@ -63,11 +63,65 @@ class WorkCliTests(CliCase):
                 self.assertEqual(self.cli("work", "meta", "set", "job", namespace, "--stdin", input_text=payload).returncode, 2)
         self.assertNotIn("metadata", self.ok_json("work", "show", "job"))
 
-    def test_malformed_durable_metadata_fails_closed(self):
+    def test_metadata_bounds_through_public_cli(self):
+        self.ok_json("work", "create", "job", "--watchtower", "main")
+        accepted = {
+            "a" * 64: {"k" * 64: {"b": {"c": {"d": "x" * 2048}}}},
+        }
+        namespace, payload = next(iter(accepted.items()))
+        result = self.cli("work", "meta", "set", "job", namespace, "--stdin", input_text=json.dumps(payload))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rejected = (
+            ("a" * 65, {}),
+            ("valid", {"k" * 65: 1}),
+            ("valid", {"a": {"b": {"c": {"d": {"e": 1}}}}}),
+            ("valid", {"k": "x" * 2049}),
+            ("valid", {"k": 1.5}),
+            ("valid", {"k": None}),
+            ("valid", {"k": [{}]}),
+            ("zxro", {}),
+        )
+        for namespace, payload in rejected:
+            with self.subTest(namespace=namespace, payload_type=type(payload).__name__):
+                self.assertEqual(self.cli("work", "meta", "set", "job", namespace, "--stdin", input_text=json.dumps(payload)).returncode, 2)
+        self.assertEqual(self.cli("work", "meta", "unset", "job", "a" * 64).returncode, 0)
+        exact = {f"k{i}": "x" * 2048 for i in range(7)}
+        exact["tail"] = ""
+        wrapped = {"size": exact}
+        current = len(json.dumps(wrapped, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode())
+        exact["tail"] = "x" * (16 * 1024 - current)
+        self.assertEqual(self.cli("work", "meta", "set", "job", "size", "--stdin", input_text=json.dumps(exact, separators=(",", ":"))).returncode, 0)
+        exact["tail"] += "x"
+        self.assertEqual(self.cli("work", "meta", "set", "job", "size", "--stdin", input_text=json.dumps(exact, separators=(",", ":"))).returncode, 2)
+
+    def test_malformed_and_newer_durable_work_records_fail_closed(self):
         self.ok_json("work", "create", "job", "--watchtower", "main")
         path = self.home / "work" / "job.json"
-        path.write_text('{"id":"job","metadata":{"bad":{"key":null}},"state":"open","watchtower_id":"main"}\n')
-        self.assertEqual(self.cli("work", "show", "job").returncode, 5)
+        records = (
+            {"id": "job", "metadata": {"bad": {"key": None}}, "state": "open", "watchtower_id": "main"},
+            {"id": "job", "metadata": None, "state": "open", "watchtower_id": "main"},
+            {"id": "job", "metadata": {"bad": {"key": "e\u0301"}}, "state": "open", "watchtower_id": "main"},
+            {"id": "job", "state": "open", "watchtower_id": "main", "future_field": {}},
+        )
+        for record in records:
+            with self.subTest(record=record):
+                path.write_text(json.dumps(record) + "\n")
+                self.assertEqual(self.cli("work", "show", "job").returncode, 5)
+
+    def test_metadata_preserves_a1_envelope_and_c1_artifact_views(self):
+        self.ok_json("work", "create", "job", "--watchtower", "main")
+        self.assertEqual(self.cli("work", "meta", "set", "job", "tracker", "--stdin", input_text='{"issue":39}').returncode, 0)
+        turn = self.cli("turn", "create", "--work", "job", "--agent", "pi", "--session", "coder", "--cwd", "/crew").stdout.strip()
+        artifact = self.cli("--json", "artifact", "put", turn, "--kind", "review", "--stdin", input_text="evidence")
+        self.assertEqual(json.loads(artifact.stdout)["data"], {"bytes": 8, "kind": "review", "ref": f"artifact:{turn}:review"})
+        settled = self.cli("--json", "turn", "settle", turn, "--source", "test", "--status", "completed", "--message", "done", "--verdict", "done")
+        settled_data = json.loads(settled.stdout)["data"]
+        self.assertNotIn("artifacts", settled_data)
+        shown_turn = self.ok_json("turn", "show", turn)
+        self.assertEqual(shown_turn["artifacts"], [{"bytes": 8, "kind": "review", "ref": f"artifact:{turn}:review"}])
+        shown_work = json.loads(self.cli("--json", "work", "show", "job").stdout)
+        self.assertEqual(shown_work["schema_version"], 1)
+        self.assertEqual(shown_work["data"]["metadata"], {"tracker": {"issue": 39}})
 
     def test_concurrent_namespace_writers_serialize(self):
         self.ok_json("work", "create", "job", "--watchtower", "main")
