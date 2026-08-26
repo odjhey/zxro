@@ -4,8 +4,11 @@ import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest import mock
 
 from tests.helpers import BIN, ROOT, CliCase
+from zxro.errors import UnsafeStateError
+from zxro.localfs import providers
 from zxro.settle import MAX_STDIN_BYTES
 
 
@@ -71,6 +74,68 @@ class WorkBriefCliTests(CliCase):
         self.assertEqual(missing.returncode, 3)
         self.assertFalse((self.home / "work" / "orphan.json").exists())
 
+    def test_work_record_write_exception_reconciles_exact_commit(self):
+        _, work, _ = providers(self.home)
+        real_create = __import__("zxro.localfs.work", fromlist=["atomic_create"]).atomic_create
+
+        def commit_then_fail(*args, **kwargs):
+            result = real_create(*args, **kwargs)
+            if args[1] == "work":
+                raise OSError("post-commit failure")
+            return result
+
+        with mock.patch("zxro.localfs.work.atomic_create", side_effect=commit_then_fail):
+            created = work.create("job", "main", brief=b"same")
+        self.assertEqual(created.brief.bytes, 4)
+        self.assertEqual(providers(self.home)[1].get("job"), created)
+
+    def test_work_record_write_failure_keeps_orphan_invisible_and_retry_safe(self):
+        _, work, _ = providers(self.home)
+        real_create = __import__("zxro.localfs.work", fromlist=["atomic_create"]).atomic_create
+
+        def fail_work_write(*args, **kwargs):
+            if args[1] == "work":
+                raise OSError("pre-commit failure")
+            return real_create(*args, **kwargs)
+
+        with mock.patch("zxro.localfs.work.atomic_create", side_effect=fail_work_write):
+            with self.assertRaises(UnsafeStateError):
+                work.create("job", "main", brief=b"same")
+        self.assertFalse((self.home / "work" / "job.json").exists())
+        self.assertEqual(self.cli("work", "show", "job").returncode, 3)
+        self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"same").returncode, 0)
+
+    def test_uncertain_write_does_not_accept_mismatched_durable_record(self):
+        _, work, _ = providers(self.home)
+        target = self.home / "work" / "job.json"
+
+        real_create = __import__("zxro.localfs.work", fromlist=["atomic_create"]).atomic_create
+
+        def install_mismatch(*args, **kwargs):
+            if args[1] != "work":
+                return real_create(*args, **kwargs)
+            target.write_text('{"id":"job","state":"open","watchtower_id":"other"}\n')
+            raise OSError("uncertain write")
+
+        with mock.patch("zxro.localfs.work.atomic_create", side_effect=install_mismatch):
+            with self.assertRaises(UnsafeStateError):
+                work.create("job", "main", brief=b"same")
+        self.assertEqual(json.loads(target.read_text())["watchtower_id"], "other")
+
+    def test_set_brief_reconciles_post_commit_exception(self):
+        self.assertEqual(self.cli("work", "create", "job", "--watchtower", "main").returncode, 0)
+        _, work, _ = providers(self.home)
+        real_replace = __import__("zxro.localfs.work", fromlist=["atomic_replace"]).atomic_replace
+
+        def commit_then_fail(*args, **kwargs):
+            real_replace(*args, **kwargs)
+            raise OSError("post-commit failure")
+
+        with mock.patch("zxro.localfs.work.atomic_replace", side_effect=commit_then_fail):
+            updated = work.set_brief("job", b"body")
+        self.assertEqual(updated.brief.bytes, 4)
+        self.assertEqual(providers(self.home)[1].get("job"), updated)
+
     def test_crash_orphan_is_invisible_and_same_retry_converges(self):
         crashed = self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"same", env={"ZXRO_FAULT_EXIT_AFTER": "artifact-commit"})
         self.assertEqual(crashed.returncode, 86)
@@ -115,11 +180,29 @@ class WorkBriefCliTests(CliCase):
         for update in ({"work_id": "other"}, {"sha256": "0" * 64}, {"bytes": 99}, {"future": True}):
             record = {**original, **update}
             artifact_path.write_text(json.dumps(record))
-            self.assertEqual(self.cli("work", "show", "job").returncode, 5)
+            self.assertEqual(self.cli("work", "brief", "path", "job").returncode, 5)
         artifact_path.write_text(json.dumps(original))
         materialized = self.home / "artifacts" / "work--job--brief.bin"
         materialized.symlink_to("/tmp")
         self.assertEqual(self.cli("work", "brief", "path", "job").returncode, 5)
+        materialized.unlink()
+        outside = Path(self.temp.name) / "outside"
+        outside.write_bytes(b"body")
+        outside.chmod(0o400)
+        os.link(outside, materialized)
+        self.assertEqual(self.cli("work", "brief", "path", "job").returncode, 5)
+        materialized.unlink()
+        materialized.write_bytes(b"body" + b"x" * (2 * 1024 * 1024))
+        materialized.chmod(0o400)
+        self.assertEqual(self.cli("work", "brief", "path", "job").returncode, 5)
+
+    def test_routine_show_does_not_read_brief_body_record(self):
+        self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)
+        _, work, _ = providers(self.home)
+        with mock.patch.object(work, "_brief_record", side_effect=AssertionError("body record read")):
+            shown = work.get("job")
+        self.assertEqual(shown.brief.bytes, 4)
+        self.assertEqual(self.show()["brief"]["bytes"], 4)
 
     def test_durable_work_schema_is_strict_and_digest_is_anchored(self):
         self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)
@@ -127,4 +210,4 @@ class WorkBriefCliTests(CliCase):
         record = json.loads(work_path.read_text())
         record["brief"]["sha256"] = hashlib.sha256(b"other").hexdigest()
         work_path.write_text(json.dumps(record))
-        self.assertEqual(self.cli("work", "show", "job").returncode, 5)
+        self.assertEqual(self.cli("work", "brief", "path", "job").returncode, 5)

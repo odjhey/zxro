@@ -10,7 +10,7 @@ from zxro.ids import validate_id
 from zxro.metadata import RESERVED_NAMESPACES, validate_metadata, validate_name, validate_namespace
 from zxro.settle import MAX_STDIN_BYTES
 from .home import check_stat
-from .ioutil import MAX_RECORD_BYTES, atomic_create, atomic_replace, list_records, mutation, read_json, reading
+from .ioutil import MAX_RECORD_BYTES, atomic_create, atomic_replace, exact_record_is_durable, list_records, mutation, read_json, reading
 
 
 class LocalWorkStore:
@@ -93,7 +93,12 @@ class LocalWorkStore:
                 raise ConflictError(f"work already exists: {id}")
             brief_metadata = self._write_brief_artifact(access, id, brief) if brief is not None else None
             record = Work(id, watchtower_id, "open", brief=brief_metadata)
-            atomic_create(access, "work", f"{id}.json", self._durable(record))
+            durable = self._durable(record)
+            try:
+                atomic_create(access, "work", f"{id}.json", durable)
+            except Exception:
+                if not exact_record_is_durable(access, "work", f"{id}.json", durable):
+                    raise
         return record
 
     def get(self, id):
@@ -107,14 +112,6 @@ class LocalWorkStore:
             self.registry.get_from(access, record.watchtower_id)
         except Exception as exc:
             raise UnsafeStateError(f"invalid work ownership: {exc}") from exc
-        if record.brief is not None:
-            try:
-                artifact = self._brief_record(access, record.id)
-            except NotFoundError as exc:
-                raise UnsafeStateError("work brief references missing artifact") from exc
-            expected = WorkBrief(artifact["ref"], artifact["bytes"], artifact["sha256"])
-            if record.brief != expected:
-                raise UnsafeStateError("work brief does not match attached artifact")
         return record
 
     def list(self, watchtower_id=None, state=None):
@@ -153,7 +150,12 @@ class LocalWorkStore:
                 raise ConflictError(f"work brief already exists: {id}")
             metadata = self._write_brief_artifact(access, id, payload)
             updated = replace(current, brief=metadata)
-            atomic_replace(access, "work", f"{id}.json", self._durable(updated))
+            durable = self._durable(updated)
+            try:
+                atomic_replace(access, "work", f"{id}.json", durable)
+            except Exception:
+                if not exact_record_is_durable(access, "work", f"{id}.json", durable):
+                    raise
             return updated
 
     def brief_path(self, id):
@@ -167,6 +169,9 @@ class LocalWorkStore:
             if work.brief is None:
                 raise NotFoundError(f"work brief not found: {id}")
             record = self._brief_record(access, id)
+            expected = WorkBrief(record["ref"], record["bytes"], record["sha256"])
+            if work.brief != expected:
+                raise UnsafeStateError("work brief does not match attached artifact")
             filename = f"work--{id}--brief.bin"
             path = self.home / "artifacts" / filename
             content = bytes.fromhex(record["content_hex"])
@@ -188,18 +193,24 @@ class LocalWorkStore:
                             fd = os.open(filename, flags, dir_fd=directory_fd)
                     info = os.fstat(fd)
                     check_stat(info, path, directory=False)
+                    if info.st_nlink != 1:
+                        raise UnsafeStateError("work brief materialization has multiple links")
                     if info.st_mode & 0o222:
                         raise UnsafeStateError("work brief materialization is writable")
                     os.lseek(fd, 0, os.SEEK_SET)
                     chunks = []
-                    while True:
-                        chunk = os.read(fd, 1024 * 1024)
+                    remaining = work.brief.bytes + 1
+                    while remaining:
+                        chunk = os.read(fd, min(1024 * 1024, remaining))
                         if not chunk:
                             break
                         chunks.append(chunk)
+                        remaining -= len(chunk)
                     actual = b"".join(chunks)
                     entry = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
                     check_stat(entry, path, directory=False)
+                    if entry.st_nlink != 1:
+                        raise UnsafeStateError("work brief materialization has multiple links")
                     if (entry.st_dev, entry.st_ino) != (info.st_dev, info.st_ino):
                         raise UnsafeStateError("work brief path changed during verification")
                 except OSError as exc:
