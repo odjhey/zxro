@@ -2,11 +2,11 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
-from tests.fixtures.legacy_pre_brief_work import decode_legacy_work_record
 from tests.helpers import BIN, ROOT, CliCase
 from zxro.errors import UnsafeStateError
 from zxro.localfs import providers
@@ -197,10 +197,17 @@ class WorkBriefCliTests(CliCase):
         self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)
         artifact_path = self.home / "artifacts" / "work--job--brief.json"
         original = json.loads(artifact_path.read_text())
-        for update in ({"work_id": "other"}, {"sha256": "0" * 64}, {"bytes": 99}, {"future": True}):
+        malformed = (
+            {"work_id": "other"},
+            {"bytes": True}, {"bytes": "4"}, {"bytes": 4.0},
+            {"sha256": "0" * 64}, {"sha256": original["sha256"].upper()}, {"sha256": "g" * 64},
+            {"content_hex": None}, {"content_hex": 1234}, {"content_hex": "abc"}, {"content_hex": "zz"},
+            {"future": True},
+        )
+        for update in malformed:
             record = {**original, **update}
             artifact_path.write_text(json.dumps(record))
-            self.assertEqual(self.cli("work", "brief", "path", "job").returncode, 5)
+            self.assertEqual(self.cli("work", "brief", "path", "job").returncode, 5, update)
         artifact_path.write_text(json.dumps(original))
         materialized = self.home / "artifacts" / "work--job--brief.bin"
         materialized.symlink_to("/tmp")
@@ -256,17 +263,28 @@ class WorkBriefCliTests(CliCase):
             self.assertEqual(self.cli("work", "show", "job").returncode, 5)
             self.assertEqual(self.cli("work", "list").returncode, 5)
 
-    def test_legacy_reader_rejects_brief_record_with_corruption_exit(self):
-        self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)
-        work_path = self.home / "work" / "job.json"
-        record = json.loads(work_path.read_text())
-        self.assertIn("brief", record)
-        without_brief = {key: item for key, item in record.items() if key != "brief"}
-        decoded = decode_legacy_work_record(without_brief)
-        self.assertEqual((decoded.id, decoded.watchtower_id, decoded.state), (record["id"], record["watchtower_id"], record["state"]))
-        with self.assertRaises(UnsafeStateError) as ctx:
-            decode_legacy_work_record(record)
-        self.assertEqual(ctx.exception.exit_code, 5)
+    def test_genuine_pre_brief_reader_rejects_new_record_with_corruption_exit(self):
+        snapshot = ROOT / "tests" / "fixtures" / "legacy_pre_brief_reader"
+
+        def legacy_show():
+            environment = os.environ.copy()
+            environment["ZXRO_HOME"] = str(self.home)
+            return subprocess.run(
+                [sys.executable, "-m", "zxro", "--json", "work", "show", "job"],
+                cwd=snapshot,
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(self.cli("work", "create", "job", "--watchtower", "main").returncode, 0)
+        old_shape = legacy_show()
+        self.assertEqual(old_shape.returncode, 0, old_shape.stderr)
+        self.assertEqual(json.loads(old_shape.stdout)["data"]["id"], "job")
+
+        self.assertEqual(self.binary("work", "brief", "set", "job", "--stdin", body=b"body").returncode, 0)
+        new_shape = legacy_show()
+        self.assertEqual(new_shape.returncode, 5, new_shape.stderr)
 
     def test_durable_work_schema_is_strict_and_digest_is_anchored(self):
         self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)

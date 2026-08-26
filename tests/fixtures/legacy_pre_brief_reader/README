@@ -1,0 +1,3 @@
+This is the complete zxro Python package exported from commit
+4249e75c5436ce5f6b8b219a431de9df8a4af42e, the last revision before the work
+brief durable field was introduced. Tests run it in a separate Python process.
