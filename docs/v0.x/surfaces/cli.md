@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: "2026-08-26T05:15:56+08:00"
+updated_at: "2026-08-26T06:30:00+08:00"
 ---
 
 # v0.x CLI
@@ -54,6 +54,7 @@ Level 2   zxro turn show <turn-id>
           one turn's metadata, outcome, summary, and artifact references
 
 Level 3   zxro artifact path <artifact-ref>
+          zxro work brief path <work-id>
           explicit resolution of full evidence for deliberate inspection
 ```
 
@@ -115,9 +116,12 @@ Create a stable logical work item owned by a watchtower.
 
 ```sh
 zxro work create auth-fix --watchtower main
+printf 'Fix refresh-token expiry.' | zxro work create auth-fix --watchtower main --brief-stdin
 ```
 
 A work ID survives several coder, reviewer, tester, or scout turns. zxro must not derive it from cwd, branch name, or a native session ID.
+
+`--brief-stdin` reads one immutable brief using the artifact payload bound. The command attaches `artifact:work:<work-id>:brief` and creates the work under one home lock. Any rejected or failed brief write leaves no work record. A crash may leave an unreferenced artifact record, but routine reads and `work brief path` cannot see it. Retrying the same command with identical bytes attaches it once. Different bytes conflict with exit class 4 and leave state unchanged.
 
 ### `zxro work show`
 
@@ -160,6 +164,17 @@ zxro work meta unset auth-fix github
 `set` requires one JSON object on stdin and replaces the whole named namespace. The 16 KiB limit applies to canonical compact, key-sorted metadata after parsing, so insignificant JSON whitespace does not count toward it. `unset` succeeds when the namespace is absent. `show` validates the namespace first: invalid or reserved names exit with class 2, while an absent valid namespace exits with class 3. Malformed durable metadata exits with class 5. Edits are allowed after work closes. They do not reopen it. Work `show` and `list` include metadata in schema version 1 JSON. Human `work list` remains one line per record and prints namespace names instead of payloads.
 
 Metadata is durable and unencrypted. Do not store credentials in it.
+
+### `zxro work brief set|path`
+
+Attach the brief once while work is open, then resolve it deliberately:
+
+```sh
+printf 'Fix refresh-token expiry.' | zxro work brief set auth-fix --stdin
+BRIEF="$(zxro work brief path auth-fix)"
+```
+
+`set` rejects closed work and any work that already has a brief with exit class 4. The payload uses the same bound as turn artifacts. `work show` exposes `brief` as `{ref,bytes}` and never returns its body. An absent brief is omitted. `path` rejects absent or unattached orphan records with exit class 3. Before returning a path under `$ZXRO_HOME`, the built-in provider verifies ownership, file type, symlink safety, byte count, and SHA-256 digest.
 
 ### `zxro work close`
 
