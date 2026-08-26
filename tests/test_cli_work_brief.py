@@ -6,22 +6,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
+from tests.fixtures.legacy_pre_brief_work import decode_legacy_work_record
 from tests.helpers import BIN, ROOT, CliCase
 from zxro.errors import UnsafeStateError
 from zxro.localfs import providers
 from zxro.settle import MAX_STDIN_BYTES
-
-
-# Synthetic snapshot of the pre-brief Work record schema (strict field-set,
-# no "brief" key), decoupled from any specific commit in git history.
-def _legacy_work_decode(data):
-    allowed = {"id", "watchtower_id", "state", "metadata"}
-    valid = {"id", "watchtower_id", "state"} <= set(data) and not set(data) - allowed
-    valid = valid and all(isinstance(data.get(key), str) for key in ("id", "watchtower_id", "state"))
-    valid = valid and data.get("state") in ("open", "closed") and data.get("metadata", {}) is not None
-    if not valid:
-        raise UnsafeStateError("invalid work record schema")
-    return data
 
 
 class WorkBriefCliTests(CliCase):
@@ -272,8 +261,11 @@ class WorkBriefCliTests(CliCase):
         work_path = self.home / "work" / "job.json"
         record = json.loads(work_path.read_text())
         self.assertIn("brief", record)
+        without_brief = {key: item for key, item in record.items() if key != "brief"}
+        decoded = decode_legacy_work_record(without_brief)
+        self.assertEqual((decoded.id, decoded.watchtower_id, decoded.state), (record["id"], record["watchtower_id"], record["state"]))
         with self.assertRaises(UnsafeStateError) as ctx:
-            _legacy_work_decode(record)
+            decode_legacy_work_record(record)
         self.assertEqual(ctx.exception.exit_code, 5)
 
     def test_durable_work_schema_is_strict_and_digest_is_anchored(self):
