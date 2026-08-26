@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 
 from ..contract import Artifact, ArtifactMetadata, MailboxEvent, Settlement, Turn
+from ..diagnostics import observe_duration
 from ..errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from ..ids import safe_string, validate_event_id, validate_id, validate_turn_id
 from .home import check_stat
@@ -20,6 +21,14 @@ def timestamp():
 class LocalDurableLoop:
     def __init__(self, home, turns, registry=None):
         self.home, self.turns, self.registry = home, turns, registry
+        self.diagnostic_observer = None
+
+    def _stage(self, name, operation):
+        return observe_duration(
+            self.diagnostic_observer,
+            operation,
+            lambda observer, success, duration_ms, exc: observer.settlement_stage(name, success, duration_ms, exc),
+        )
 
     @staticmethod
     def _mailbox(access, watchtower_id):
@@ -139,14 +148,14 @@ class LocalDurableLoop:
         try:
             existing = self._index(access, event.event_id)
         except NotFoundError:
-            atomic_create(access, "inbox-index", f"{event.event_id}.json", index)
+            self._stage("reconciliation_index_commit", lambda: atomic_create(access, "inbox-index", f"{event.event_id}.json", index))
         else:
             if existing != index:
                 raise UnsafeStateError("event index conflicts with immutable event")
         if self._handled(access, event) is None and event.event_id not in box["unresolved"]:
             box["unresolved"].append(event.event_id)
         box["highest"] = generation
-        atomic_replace(access, "inbox", f"{event.watchtower_id}.json", box)
+        self._stage("reconciliation_mailbox_commit", lambda: atomic_replace(access, "inbox", f"{event.watchtower_id}.json", box))
         return event
 
     def _put_artifact(self, access, turn, kind, payload, *, settlement=False):
@@ -168,7 +177,8 @@ class LocalDurableLoop:
         if encoded_size > MAX_RECORD_BYTES:
             raise ValidationError(f"stdin payload too large to store as a durable artifact: {len(payload)} bytes")
         try:
-            atomic_create(access, "artifacts", Artifact.record_name("turn", turn.id, kind), artifact.to_dict())
+            operation = lambda: atomic_create(access, "artifacts", Artifact.record_name("turn", turn.id, kind), artifact.to_dict())
+            self._stage("artifact_commit", operation) if settlement else operation()
         except ConflictError:
             existing = self._artifact_record(access, turn.id, kind)
             if existing != artifact:
@@ -180,7 +190,8 @@ class LocalDurableLoop:
             "artifact_refs": (*turn.artifact_refs, ref),
             "artifacts": (*turn.artifacts, metadata),
         })
-        atomic_replace(access, "turns", f"{turn.id}.json", updated.to_dict())
+        operation = lambda: atomic_replace(access, "turns", f"{turn.id}.json", updated.to_dict())
+        self._stage("artifact_metadata_commit", operation) if settlement else operation()
         self._fault("artifact-metadata-commit")
         return updated, artifact
 
@@ -273,7 +284,7 @@ class LocalDurableLoop:
                         "artifact_refs": (*turn.artifact_refs, artifact.ref),
                         "artifacts": (*turn.artifacts, metadata),
                     })
-                    atomic_replace(access, "turns", f"{turn.id}.json", turn.to_dict())
+                    self._stage("artifact_metadata_commit", lambda: atomic_replace(access, "turns", f"{turn.id}.json", turn.to_dict()))
                     self._fault("artifact-metadata-commit")
                     digest = artifact.sha256
                 settled_at = timestamp()
@@ -289,7 +300,7 @@ class LocalDurableLoop:
                     "artifacts": turn.artifacts,
                     "settlement": settlement,
                 })
-                atomic_replace(access, "turns", f"{turn.id}.json", turn.to_dict())
+                self._stage("turn_commit", lambda: atomic_replace(access, "turns", f"{turn.id}.json", turn.to_dict()))
                 if os.environ.get("ZXRO_FAULT_EXIT_AFTER") == "turn-commit":
                     os._exit(86)
             try:
@@ -298,25 +309,29 @@ class LocalDurableLoop:
                 generation = box["highest"] + 1
                 event = MailboxEvent(turn.settlement.event_id, generation, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.outcome, turn.summary, turn.artifact_refs, turn.settlement.settled_at, turn.verdict, turn.needs)
                 self._fault("before-event-commit")
-                atomic_create(access, "inbox-events", f"{turn.watchtower_id}--{generation:020d}.json", event.to_dict())
+                self._stage("event_commit", lambda: atomic_create(access, "inbox-events", f"{turn.watchtower_id}--{generation:020d}.json", event.to_dict()))
                 self._fault("event-commit")
                 self._fault("before-index-commit")
-                atomic_create(access, "inbox-index", f"{event.event_id}.json", {"event_id": event.event_id, "watchtower_id": event.watchtower_id, "generation": generation})
+                self._stage("index_commit", lambda: atomic_create(access, "inbox-index", f"{event.event_id}.json", {"event_id": event.event_id, "watchtower_id": event.watchtower_id, "generation": generation}))
                 self._fault("index-commit")
                 self._fault("before-mailbox-commit")
                 box["highest"] = generation
                 box["unresolved"].append(event.event_id)
-                atomic_replace(access, "inbox", f"{turn.watchtower_id}.json", box)
+                self._stage("mailbox_commit", lambda: atomic_replace(access, "inbox", f"{turn.watchtower_id}.json", box))
                 self._fault("mailbox-commit")
             else:
                 while event.generation > box["highest"]:
                     if self._reconcile_next(access, box) is None:
                         raise UnsafeStateError("event index is above mailbox high-water without an immutable event")
                     box = self._mailbox(access, turn.watchtower_id)
+
+            def validate_published_event():
                 expected = MailboxEvent(turn.settlement.event_id, event.generation, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.outcome, turn.summary, turn.artifact_refs, turn.settlement.settled_at, turn.verdict, turn.needs)
                 if event != expected:
                     raise UnsafeStateError("settlement event does not match committed turn")
-            self._validate_event(access, event)
+                return self._validate_event(access, event)
+
+            self._stage("event_validation", validate_published_event)
             return turn, event
 
     def unread(self, watchtower_id):
@@ -426,6 +441,13 @@ class LocalDurableLoop:
         return record
 
     def artifact_path(self, ref):
+        return observe_duration(
+            self.diagnostic_observer,
+            lambda: self._verified_artifact_path(ref),
+            lambda observer, success, duration_ms, exc: observer.artifact_verification(success, duration_ms, exc),
+        )
+
+    def _verified_artifact_path(self, ref):
         artifact = Artifact.parse_ref(ref)
         with reading(self.home) as access:
             self._attached_artifact(access, ref, artifact)
@@ -437,7 +459,7 @@ class LocalDurableLoop:
             path = self.home / "artifacts" / filename
             content = bytes.fromhex(record.content_hex)
             with access.directory("artifacts") as directory_fd:
-                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
                 fd = None
                 try:
                     try:
@@ -454,6 +476,8 @@ class LocalDurableLoop:
                             fd = os.open(filename, flags, dir_fd=directory_fd)
                     info = os.fstat(fd)
                     check_stat(info, path, directory=False)
+                    if info.st_nlink != 1:
+                        raise UnsafeStateError("artifact materialization has multiple links")
                     if info.st_mode & 0o222:
                         raise UnsafeStateError("artifact materialization is writable")
                     os.lseek(fd, 0, os.SEEK_SET)
@@ -466,6 +490,8 @@ class LocalDurableLoop:
                     actual = b"".join(chunks)
                     entry = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
                     check_stat(entry, path, directory=False)
+                    if entry.st_nlink != 1:
+                        raise UnsafeStateError("artifact materialization has multiple links")
                     if (entry.st_dev, entry.st_ino) != (info.st_dev, info.st_ino):
                         raise UnsafeStateError("artifact path changed during verification")
                 except OSError as exc:

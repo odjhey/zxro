@@ -23,7 +23,7 @@ sources:
   - ref: ../engineering/runtime-and-provisioning.md
     credibility: primary
 created_at: "2026-08-25T09:35:45+08:00"
-updated_at: "2026-08-25T23:39:02+08:00"
+updated_at: "2026-08-26T21:10:00+08:00"
 ---
 
 # CLI-first Web UI plan
@@ -89,7 +89,7 @@ The built-in provider is the only merged provider. The optional-provider evaluat
 
 ## Logging and observability audit
 
-The merged CLI has error reporting, not a logging system:
+The pre-G19 CLI baseline audited by this plan had error reporting, not a logging system:
 
 - `zxro.cli.main` prints one human-readable error line to stderr for `ZxroError` and `OSError` failures.
 - Stable exit classes 2 through 5 distinguish validation, missing, conflict, and unsafe state.
@@ -97,11 +97,11 @@ The merged CLI has error reporting, not a logging system:
 - Public show, list, unread, pending, and artifact commands provide local diagnostic evidence.
 - The runtime guide explicitly says v0.x has no metrics, traces, network health endpoint, or background health checks.
 
-No merged module defines structured diagnostic events, event names, a log schema, levels, correlation IDs, performance timings, retention, rotation, or redaction. The CLI does not record command starts, successful reads, lock wait, validation stages, malformed record identity, or subprocess details in a stable machine format. There is no Web UI yet, so there are no request, refresh, index, cache, or child-process logs.
+At that baseline, no module defined structured diagnostic events, event names, a log schema, levels, correlation IDs, performance timings, retention, rotation, or redaction. The baseline CLI did not record command starts, successful reads, lock wait, validation stages, malformed record identity, or subprocess details in a stable machine format. There is no Web UI yet, so there are no request, refresh, index, cache, or child-process logs.
 
 Immutable mailbox events and turn settlements are durable domain records. They are not logs. A future logging system must not replace, repair, infer, or mutate those records. Logs may explain what one process observed or failed to do. Durable state remains authoritative for what ZXRO committed.
 
-This is a ZXRO-wide core CLI gap, not a Web UI feature. Humans, hooks, CI, future runtime integrations, and the Web UI need the same opt-in logging contract. Implement the core CLI foundation first. The Web UI later reuses it and adds request/refresh events at its own boundary. Defaults for ordinary CLI users must remain compatible, including empty stderr on successful commands unless logging is explicitly enabled.
+The audit identified a ZXRO-wide core CLI gap, not a Web UI feature. Humans, hooks, CI, future runtime integrations, and the Web UI need the same opt-in logging contract. The delivery plan places the core CLI foundation first. The Web UI later reuses it and adds request/refresh events at its own boundary. Defaults for ordinary CLI users must remain compatible, including empty stderr on successful commands unless logging is explicitly enabled.
 
 ## Operator questions and honest answers
 
@@ -552,31 +552,10 @@ The proposed commands below do not exist on `master`.
 ### G19. ZXRO-wide structured core CLI diagnostics
 
 - Operator question: "What did this CLI invocation read or attempt, where did it fail, and how long did each stage take?"
-- Proposed global contract:
-
-  ```text
-  zxro \
-    [--log-level off|error|warning|info|debug] \
-    [--log-format human|jsonl] \
-    [--log-file PATH] \
-    [--correlation-id OPAQUE_ID] \
-    [--log-sensitive] \
-    [--home PATH] [--json] <command> ...
-  ```
-
-  `off` is the default and emits no structured events. Thresholds are inclusive: `error` admits error events, `warning` admits warning and error, `info` admits info/warning/error, and `debug` admits every defined level. With logging enabled and no `--log-file`, logs use stderr. `human` produces bounded one-line diagnostics for operators. `jsonl` produces one JSON object per line for wrappers. A single `json` format is intentionally absent because one invocation may emit several events. Stdout is never a log destination. `--json` continues to control command results only.
-
-  Carefully scoped environment equivalents are useful for hooks and CI: `ZXRO_LOG_LEVEL`, `ZXRO_LOG_FORMAT`, `ZXRO_LOG_FILE`, and `ZXRO_CORRELATION_ID`. Explicit flags override these variables, which override defaults. Do not honor generic `DEBUG`, `LOG_LEVEL`, or provider variables. Do not provide an environment equivalent for `--log-sensitive`. The first version should not discover a config file because config search would add another path and trust boundary.
-
-  Validate logging flags and environment values before provider access. Correlation IDs are bounded opaque strings with a closed character set. A log file is explicit, must resolve outside the active `$ZXRO_HOME`, and must pass owner, permission, file-type, parent-directory, and symlink checks. File-backed logs use the fixed retention defaults in this plan unless a later contract adds bounded retention flags.
-
-  Required events cover every public CLI command, not only reads. They include invocation start/completion, command dispatch, provider read or mutation start/completion/failure, state validation failure, lock wait where applicable, settlement publication stages, and artifact verification. Every non-terminal stage outcome includes elapsed milliseconds and exactly one of `result_code` or stable `error_code`; it never includes `process_exit_code`. Only the one terminal `zxro.cli.invocation.completed` reports the process exit. A mutation log may report that the command returned success or failed at a named stage. It cannot replace the durable record as proof of commit.
-- Output and exit behavior: with logging off, successful stderr remains empty and failures keep the current bounded human diagnostic. With `--log-format jsonl` to stderr, every stderr line follows the log schema. Every invocation with a level other than `off` constructs exactly one terminal `zxro.cli.invocation.completed` event, even when its success level would otherwise fall below the threshold. The terminal event is the final and highest-sequence event and carries `process_exit_code` plus overall `result_code` or `error_code`. A healthy enabled sink receives it exactly once. Stage events never carry `process_exit_code`; they use `result_code` on success or stable `error_code` on failure. With `--log-file`, normal command stderr keeps its current behavior while structured events go to the file. Invalid logging configuration exits 2 before state access. A runtime sink, append, rotation, formatting, or redaction failure disables that sink, emits at most one bounded fallback warning when possible, and never changes the underlying command exit code, retries a mutation, or redirects logs to stdout or `$ZXRO_HOME`.
-- Schema and versioning: every event contains `log_schema_version`, stable `event_name`, `event_version`, `timestamp`, `level`, `invocation_id`, per-invocation `sequence`, optional validated correlation fields, and a typed `attributes` object. Sequence starts at 1 and increments by 1 after threshold filtering, so a healthy stream has no gaps and the terminal event has the largest value. Event names use a stable namespace such as `zxro.cli.invocation.completed` and `zxro.state.validation.failed`. Additive attributes are allowed. Renaming an event or changing attribute meaning requires a new event version.
-- Security and privacy: default events omit argv values, cwd, home path, prompt/summary/artifact content, stdin, environment, session/native IDs, and raw records. Resource correlation uses process-local keyed fingerprints by default. `--log-sensitive` may include raw ZXRO IDs and masked path tails, but never credentials, prompts, payloads, artifact bodies, cookies, authorization data, or raw environment values.
+- Contract owner: [Structured CLI logging](../engineering/structured-cli-logging.md) is the single normative source for the flag set, environment equivalents, validation rules, required events, output/exit behavior, schema and versioning, and security/privacy redaction. This plan does not assert G19's delivery state and does not duplicate that contract.
 - Dependencies: only a core logging contract, a clock abstraction for tests, redaction helpers, and sink primitives including safe concurrent append/rotation. G19 does not depend on G6, a durable-schema change, a UI package, or a provider adapter.
 - Priority: P0 core CLI prerequisite and ZXRO-wide opportunity before Web UI implementation. It benefits shell operators, hooks, CI, M5/M6 producers, and later M7 work independently from the UI.
-- Acceptance test: every merged command class emits schema-valid ordered events only when enabled; threshold matrices pass; stdout bytes and command-result JSON remain exact; normal logging-off stderr remains compatible; human and JSONL formats carry equivalent event meaning; flags and environment precedence are deterministic; each healthy stream has contiguous sequence and exactly one final `invocation.completed` whose `process_exit_code` matches the process; stage events use only result/error codes; elapsed time is non-negative; malformed/conflicting/unsafe cases have stable names; no fixture secret or path appears; exact five-file rotation, file-granular activity-triggered age pruning, and permissions pass; logging failure cannot alter command behavior or durable state.
+- Acceptance: covered by `tests/test_cli_logging.py` and the guarantees documented in [Structured CLI logging](../engineering/structured-cli-logging.md) (schema-valid ordered events, threshold matrices, stdout/stderr compatibility, redaction, and file rotation/retention).
 
 ### G20. Web UI request, refresh, child-process, and index diagnostics
 
@@ -930,7 +909,7 @@ Default sinks:
 - Core CLI with structured logging enabled: JSONL or human logs on stderr unless `--log-file PATH` selects an explicit owner-only file.
 - Web UI: redacted warning/error stderr plus an in-memory ring capped at 1,000 events and 2 MiB of serialized event bytes. Before inserting an event, evict the oldest until both limits hold. Track and display the evicted count. The Web UI has no disk retention by default.
 
-For `--log-file PATH`, `PATH` is the active file and `PATH.1` through `PATH.4` are the only backups. The active file plus four backups is a hard maximum of five files. Each file is capped at 5 MiB; rotate before an append would cross the cap, delete `PATH.4`, and shift the other backups atomically under the logging sink's concurrency control. Retention is file-granular and activity-triggered. On every sink open and before every append, remove each whole file whose newest event is older than seven days. Individual events in a retained mixed-age file may be older than seven days. ZXRO has no daemon, so no file changes while the sink is inactive; stale files remain until the next sink open or append applies the rule. One event must fit the per-event bound and may never create a sixth file.
+For `--log-file PATH` rotation, retention, and pre-flight file checks (size, permissions, link count), see [File retention](../engineering/structured-cli-logging.md#file-retention) — the single normative source; do not duplicate that prose here.
 
 Opt-in file retention belongs outside `$ZXRO_HOME`, under an owner-specific state directory partitioned by non-reversible home fingerprint. Set parent directories to `0700`, files to `0600`, reject symlinks and group/world-writable paths, and never share a file between homes.
 

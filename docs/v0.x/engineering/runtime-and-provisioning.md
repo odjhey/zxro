@@ -6,7 +6,7 @@ tags: [v0.x, engineering, runtime]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:13:40+08:00
-updated_at: 2026-08-25T09:00:00+08:00
+updated_at: 2026-08-25T11:45:00+08:00
 ---
 
 # v0.x runtime and provisioning
@@ -117,6 +117,7 @@ v0.x observability is intentionally local:
 
 - CLI exit code;
 - stderr diagnostic;
+- optional opt-in structured CLI diagnostics, with the [G19 event and retention contract](./structured-cli-logging.md);
 - optional JSON stdout;
 - public current-state reads through `zxro work show`, `zxro turn list`, and `zxro turn show`;
 - bounded mailbox reads through `zxro inbox unread` and `zxro inbox pending`;

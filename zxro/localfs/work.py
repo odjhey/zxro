@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from zxro.contract import Work, WorkBrief
+from zxro.diagnostics import observe_duration
 from zxro.errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from zxro.ids import validate_id
 from zxro.metadata import RESERVED_NAMESPACES, validate_metadata, validate_name, validate_namespace
@@ -16,6 +17,7 @@ from .ioutil import MAX_RECORD_BYTES, atomic_create, atomic_replace, exact_recor
 class LocalWorkStore:
     def __init__(self, home: Path, registry):
         self.home, self.registry = home, registry
+        self.diagnostic_observer = None
 
     @staticmethod
     def _durable(record):
@@ -162,6 +164,13 @@ class LocalWorkStore:
             return updated
 
     def brief_path(self, id):
+        return observe_duration(
+            self.diagnostic_observer,
+            lambda: self._verified_brief_path(id),
+            lambda observer, success, duration_ms, exc: observer.artifact_verification(success, duration_ms, exc),
+        )
+
+    def _verified_brief_path(self, id):
         id = validate_id(id, "work id")
         with reading(self.home) as access:
             work = self.get_from(access, id)
@@ -179,7 +188,7 @@ class LocalWorkStore:
             path = self.home / "artifacts" / filename
             content = bytes.fromhex(record["content_hex"])
             with access.directory("artifacts") as directory_fd:
-                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
                 fd = None
                 try:
                     try:

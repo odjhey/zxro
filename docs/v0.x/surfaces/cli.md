@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: "2026-08-26T06:30:00+08:00"
+updated_at: "2026-08-26T18:31:15+08:00"
 ---
 
 # v0.x CLI
@@ -33,6 +33,7 @@ zxro [--home PATH] [--json] <command> ...
 - `--json` reserves stdout for one compact, key-sorted JSON value shaped as `{"schema_version":1,"data":...}`. Object and list payloads both occupy `data`. Diagnostics go to stderr and errors leave stdout empty. Namespaced `work meta` commands use the same envelope.
 - Mutating commands return non-zero on malformed, conflicting, or unsafe state.
 - IDs supplied by users are validated before they become path components or provider identifiers.
+- Opt-in structured diagnostics use `--log-level`, `--log-format`, `--log-file`, `--correlation-id`, and `--log-sensitive`. Logging is disabled by default, never uses stdout, and does not change command-result output or durable truth. See [structured CLI logging](../engineering/structured-cli-logging.md) for the event and retention contract.
 - A command must not silently create a missing parent artifact unless its contract says so.
 - Routine read commands must not inline historical artifact contents.
 
@@ -174,7 +175,7 @@ printf 'Fix refresh-token expiry.' | zxro work brief set auth-fix --stdin
 BRIEF="$(zxro work brief path auth-fix)"
 ```
 
-`set` rejects closed work and any work that already has a brief with exit class 4. The payload uses the same bound as turn artifacts. `work show` exposes `brief` as `{ref,bytes}` and never returns its body. An absent brief is omitted. `path` rejects absent or unattached orphan records with exit class 3. Before returning a path under `$ZXRO_HOME`, the built-in provider verifies ownership, file type, symlink safety, byte count, and SHA-256 digest.
+`set` rejects closed work and any work that already has a brief with exit class 4. The payload uses the same bound as turn artifacts. `work show` exposes `brief` as `{ref,bytes}` and never returns its body. An absent brief is omitted. `path` rejects absent or unattached orphan records with exit class 3. Before returning a path under `$ZXRO_HOME`, the built-in provider verifies ownership, file type, symlink safety, single hard link, byte count, and SHA-256 digest.
 
 ### `zxro work close`
 
@@ -449,7 +450,7 @@ Resolve one artifact reference to its local path when the active artifact provid
 zxro artifact path artifact:550e8400-e29b-41d4-a716-446655440000:review
 ```
 
-For the built-in provider, the returned path remains under the active `$ZXRO_HOME`. Before returning it, zxro rejects symlinks and unsafe ownership or file types, and verifies the materialized bytes against the durable artifact's byte count and SHA-256 digest.
+For the built-in provider, the returned path remains under the active `$ZXRO_HOME`. Before returning it, zxro rejects symlinks, hard-linked files, and unsafe ownership or file types, and verifies the materialized bytes against the durable artifact's byte count and SHA-256 digest.
 
 This is the explicit bridge to deeper inspection:
 
@@ -537,4 +538,5 @@ The numeric exit codes and their meanings are defined by [contract conventions](
 - [Durable store contract](../../architecture/contracts/durable-store.md)
 - [Decision 0002](../../decisions/0002-separate-delivery-from-attention.md)
 - [Implementation plan](../execution/implementation-plan.md)
+- [Structured CLI logging](../engineering/structured-cli-logging.md)
 - [Native session recovery](../../playbooks/native-session-recovery.md)
