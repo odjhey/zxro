@@ -260,7 +260,8 @@ class LocalWorkStore:
             brief = None
             if "brief" in data:
                 value = data["brief"]
-                if set(value) != {"ref", "bytes", "sha256"} or value["ref"] != LocalWorkStore._brief_ref(data["id"]) or type(value["bytes"]) is not int or value["bytes"] < 0 or not isinstance(value["sha256"], str) or len(bytes.fromhex(value["sha256"])) != 32:
+                digest = value.get("sha256") if isinstance(value, dict) else None
+                if set(value) != {"ref", "bytes", "sha256"} or value["ref"] != LocalWorkStore._brief_ref(data["id"]) or type(value["bytes"]) is not int or not 0 <= value["bytes"] <= MAX_STDIN_BYTES or not isinstance(digest, str) or len(digest) != 64 or bytes.fromhex(digest).hex() != digest:
                     raise ValueError("invalid brief metadata")
                 brief = WorkBrief(**value)
         except Exception as exc:

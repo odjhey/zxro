@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import subprocess
+import tarfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
@@ -153,6 +154,25 @@ class WorkBriefCliTests(CliCase):
         self.assertEqual(retry.returncode, 4)
         self.assertEqual({p.relative_to(self.home): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}, before)
 
+    def test_set_crash_orphan_same_retry_converges(self):
+        self.assertEqual(self.cli("work", "create", "job", "--watchtower", "main").returncode, 0)
+        crashed = self.binary("work", "brief", "set", "job", "--stdin", body=b"same", env={"ZXRO_FAULT_EXIT_AFTER": "artifact-commit"})
+        self.assertEqual(crashed.returncode, 86)
+        self.assertNotIn("brief", self.show())
+        self.assertEqual(self.cli("work", "brief", "path", "job").returncode, 3)
+        retried = self.binary("work", "brief", "set", "job", "--stdin", body=b"same")
+        self.assertEqual(retried.returncode, 0, retried.stderr)
+        self.assertEqual(self.show()["brief"]["bytes"], 4)
+
+    def test_set_crash_orphan_different_retry_conflicts_without_mutation(self):
+        self.assertEqual(self.cli("work", "create", "job", "--watchtower", "main").returncode, 0)
+        self.assertEqual(self.binary("work", "brief", "set", "job", "--stdin", body=b"same", env={"ZXRO_FAULT_EXIT_AFTER": "artifact-commit"}).returncode, 86)
+        before = {p.relative_to(self.home): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
+        retry = self.binary("work", "brief", "set", "job", "--stdin", body=b"different")
+        self.assertEqual(retry.returncode, 4)
+        self.assertEqual({p.relative_to(self.home): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}, before)
+        self.assertNotIn("brief", self.show())
+
     def test_turn_settlement_metadata_and_brief_integrate(self):
         self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"brief").returncode, 0)
         self.assertEqual(self.cli("work", "meta", "set", "job", "tracker", "--stdin", input_text='{"issue":39}').returncode, 0)
@@ -196,13 +216,65 @@ class WorkBriefCliTests(CliCase):
         materialized.chmod(0o400)
         self.assertEqual(self.cli("work", "brief", "path", "job").returncode, 5)
 
-    def test_routine_show_does_not_read_brief_body_record(self):
+    def test_routine_show_and_list_do_not_read_brief_body_record(self):
+        self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)
+        artifact_path = self.home / "artifacts" / "work--job--brief.json"
+        artifact_path.write_text("not json")
+        self.assertEqual(self.show()["brief"]["bytes"], 4)
+        listed = self.ok_json("work", "list")
+        self.assertEqual(listed[0]["brief"]["bytes"], 4)
+
+    def test_materialized_entry_swap_fails_closed(self):
         self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)
         _, work, _ = providers(self.home)
-        with mock.patch.object(work, "_brief_record", side_effect=AssertionError("body record read")):
-            shown = work.get("job")
-        self.assertEqual(shown.brief.bytes, 4)
-        self.assertEqual(self.show()["brief"]["bytes"], 4)
+        work.brief_path("job")
+        real_stat = os.stat
+
+        def swap_entry(path, *args, **kwargs):
+            result = real_stat(path, *args, **kwargs)
+            if path == "work--job--brief.bin" and kwargs.get("follow_symlinks") is False:
+                fields = list(result)
+                fields[1] += 1
+                return os.stat_result(fields)
+            return result
+
+        with mock.patch("zxro.localfs.work.os.stat", side_effect=swap_entry):
+            with self.assertRaisesRegex(UnsafeStateError, "path changed"):
+                work.brief_path("job")
+
+    def test_malformed_brief_metadata_makes_show_and_list_fail_closed(self):
+        self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)
+        work_path = self.home / "work" / "job.json"
+        original = json.loads(work_path.read_text())
+        malformed = (
+            {**original["brief"], "bytes": MAX_STDIN_BYTES + 1},
+            {**original["brief"], "sha256": original["brief"]["sha256"].upper()},
+            {**original["brief"], "sha256": "g" * 64},
+        )
+        for brief in malformed:
+            work_path.write_text(json.dumps({**original, "brief": brief}))
+            self.assertEqual(self.cli("work", "show", "job").returncode, 5)
+            self.assertEqual(self.cli("work", "list").returncode, 5)
+
+    def test_legacy_reader_rejects_brief_record_with_corruption_exit(self):
+        self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)
+        archive = Path(self.temp.name) / "legacy.tar"
+        checkout = Path(self.temp.name) / "legacy"
+        checkout.mkdir()
+        with archive.open("wb") as stream:
+            result = subprocess.run(
+                ["git", "archive", "4249e75c5436ce5f6b8b219a431de9df8a4af42e"],
+                cwd=ROOT, stdout=stream, stderr=subprocess.PIPE,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with tarfile.open(archive) as bundle:
+            bundle.extractall(checkout, filter="data")
+        legacy = subprocess.run(
+            [os.environ.get("PYTHON", "python3"), "-m", "zxro", "work", "show", "job"],
+            cwd=checkout, capture_output=True,
+            env={**os.environ, "PYTHONPATH": str(checkout), "ZXRO_HOME": str(self.home)},
+        )
+        self.assertEqual(legacy.returncode, 5, legacy.stderr)
 
     def test_durable_work_schema_is_strict_and_digest_is_anchored(self):
         self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)
