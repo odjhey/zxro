@@ -13,7 +13,7 @@ sources:
   - ref: ../../../zxro/diagnostics.py
     credibility: primary
 created_at: "2026-08-25T11:45:00+08:00"
-updated_at: "2026-08-25T15:30:00+08:00"
+updated_at: "2026-08-26T16:00:00+08:00"
 ---
 
 # Structured CLI logging
@@ -35,7 +35,7 @@ The available flags are:
 | `--log-level` | `off`, `error`, `warning`, `info`, `debug` | `off` |
 | `--log-format` | `human`, `jsonl` | `human` |
 | `--log-file` | An explicit path outside `$ZXRO_HOME` | stderr |
-| `--correlation-id` | 1 to 128 characters from `A-Z`, `a-z`, `0-9`, `.`, `_`, `:`, and `-` | generated invocation context only |
+| `--correlation-id` | 1 to 128 characters, starting with `A-Z`/`a-z`/`0-9` and followed by `A-Z`, `a-z`, `0-9`, `.`, `_`, `:`, or `-` | generated invocation context only |
 | `--log-sensitive` | flag | disabled |
 
 The environment equivalents are `ZXRO_LOG_LEVEL`, `ZXRO_LOG_FORMAT`, `ZXRO_LOG_FILE`, and `ZXRO_CORRELATION_ID`. A flag wins over its environment variable. ZXRO does not read a logging config file and does not honor generic `DEBUG` or `LOG_LEVEL` variables. There is no environment equivalent for `--log-sensitive`.
@@ -74,7 +74,9 @@ Timestamps are UTC RFC 3339 values with millisecond precision. Durations use a m
 
 Non-terminal stage events never carry `process_exit_code`. Successful stages carry `result_code`; failed stages carry a stable `error_code`.
 
-The initial core event names include invocation start and completion, argument and configuration rejection, command dispatch, provider read and mutation stages, state validation failure, settlement publication success or failure stages, artifact verification success or failure, measured lock wait, and sink failure. `inbox pending` is logged as a mutation operation because the current provider may compact state. The CLI emits aggregate stage events, not one event per durable record.
+The initial core event names include invocation start and completion, argument and configuration rejection, command dispatch, provider read and mutation stages, state validation failure, settlement publication success or failure stages, artifact verification success or failure, and measured lock wait. `inbox pending` is logged as a mutation operation because the current provider may compact state. The CLI emits aggregate stage events, not one event per durable record.
+
+A sink failure disables the sink silently instead of emitting an event; see [Destinations and compatibility](#destinations-and-compatibility).
 
 ## Levels
 
@@ -95,8 +97,9 @@ Default diagnostics omit:
 
 - argv values, current working directories, home paths, and raw durable records;
 - prompts, summaries, stdin, artifact bodies, and raw stdout;
-- environment values, session and native-session IDs;
-- cookies, authorization data, credentials, and token material.
+- environment values, session and native-session IDs.
+
+Cookies, authorization data, credentials, and token material are not omitted; the key is kept and its value is replaced with `[REDACTED]` (see below).
 
 Every event attribute passes the same bounded redaction normalizer before either formatter writes it. This applies to nested mappings and sequences, arbitrary payload keys, absolute Unix/Windows paths (including UNC and delimiter-embedded Unix forms), and values under snake-case, camel-case, kebab-case, or dotted path-like keys; human and JSONL output therefore share the same sanitized attributes. Prompt, summary, stdin/stdout, environment, session/native-ID, payload, and artifact-content fields are omitted by normalized key family. Password, authorization, cookie, API-key, token, secret, credential, and nested header fields are replaced with `[REDACTED]`. Non-finite numbers are normalized before strict JSON serialization. Sensitive mode may reveal raw ZXRO resource IDs in owner-only local diagnostics. It never disables path, content, credential, or token exclusions, and it ends when the process exits. Pattern redaction is incomplete. Do not treat a log as a proof that sensitive content is absent.
 

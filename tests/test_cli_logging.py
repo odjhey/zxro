@@ -714,6 +714,34 @@ class StructuredLoggingCliTests(CliCase):
             self.assertEqual(sum(key in event["attributes"] for key in ("result_code", "error_code")), 1)
             self.assertNotIn("process_exit_code", event["attributes"] if event["event_name"] != "zxro.cli.invocation.completed" else {})
 
+    def test_observe_lock_attributes_each_concurrent_lock_wait_to_its_own_observer(self):
+        from zxro.localfs import ioutil
+
+        home = Path(self.temp.name) / "shared_lock_home"
+        with ioutil.mutation(home):
+            pass
+
+        def worker(index):
+            captured = []
+
+            def observer(duration_ms):
+                captured.append(duration_ms)
+
+            for _ in range(20):
+                with ioutil.observe_lock(observer):
+                    with ioutil.mutation(home):
+                        pass
+            return index, captured
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            outcomes = list(executor.map(worker, range(8)))
+
+        for index, captured in outcomes:
+            self.assertEqual(len(captured), 20, f"worker {index} lost or gained lock-wait events")
+            for duration in captured:
+                self.assertIsInstance(duration, float)
+                self.assertGreaterEqual(duration, 0)
+
     def test_thresholds_filter_stage_events_but_keep_terminal(self):
         expected = {
             "error": ["zxro.cli.invocation.completed"],
