@@ -486,6 +486,16 @@ class StructuredLoggingCliTests(CliCase):
         self.assertEqual(terminals[0]["attributes"], {"error_code": "internal_error", "process_exit_code": 1})
         self.assertEqual(terminals[0]["sequence"], len(events))
 
+    def test_os_error_subclass_is_classified_as_os_error(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "_run_command", side_effect=BrokenPipeError("synthetic broken pipe")), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            result = cli.main(["--log-level", "debug", "--log-format", "jsonl", "watchtower", "list"])
+        self.assertEqual(result, 5)
+        events = [json.loads(line) for line in stderr.getvalue().splitlines()]
+        terminals = [event for event in events if event["event_name"] == "zxro.cli.invocation.completed"]
+        self.assertEqual(len(terminals), 1)
+        self.assertEqual(terminals[0]["attributes"], {"error_code": "os_error", "process_exit_code": 5})
+
     def test_system_exit_payloads_match_process_exit_semantics(self):
         cases = ((None, 0), (0, 0), (7, 7), (True, 1), (False, 0), ("string-code", 1), (object(), 1))
         for payload, expected_code in cases:
