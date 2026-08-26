@@ -1,0 +1,9 @@
+{
+  "session_id": "official-stop-session",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "/tmp/target",
+  "permission_mode": "default",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "Completed the delegated turn."
+}

@@ -1,0 +1,7 @@
+{
+  "session_id": "official-ended-session",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "/tmp/target",
+  "hook_event_name": "SessionEnd",
+  "reason": "prompt_input_exit"
+}
