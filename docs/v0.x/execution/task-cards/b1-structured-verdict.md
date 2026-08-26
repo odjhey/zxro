@@ -6,7 +6,7 @@ tags: [v0.x, execution, task-cards, settlement, mailbox]
 status: draft
 generated: "Claude Fable 5 agent, 2026-08-25"
 created_at: "2026-08-25T14:25:09+08:00"
-updated_at: "2026-08-25T19:15:39+08:00"
+updated_at: "2026-08-26T14:08:10+08:00"
 ---
 
 # B1 — Structured routing verdict
@@ -85,7 +85,7 @@ bin/zxro --json inbox pending --watchtower <id>   # verdict field present
 ## Documentation impact
 
 - [x] Durable store contract, CLI spec, and conventions updated in this PR.
-- [ ] ZR1 marked delivered in the delivery plan after merge; implementation plan MR row evidence remains pending the complete MR milestone.
+- [x] ZR1 marked delivered in the delivery plan after merge; implementation plan MR row evidence remains pending the complete MR milestone.
 
 ## Human gate
 

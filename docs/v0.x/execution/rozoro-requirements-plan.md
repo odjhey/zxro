@@ -13,7 +13,7 @@ sources:
   - ref: ../../architecture/contracts/session-binding.md
     credibility: primary
 created_at: "2026-08-25T13:10:00+08:00"
-updated_at: "2026-08-26T06:30:00+08:00"
+updated_at: "2026-08-26T14:08:10+08:00"
 ---
 
 # ZR1-ZR4 delivery plan
@@ -137,12 +137,12 @@ These packages slot between M1 and the M5/M6 harness integrations in the [implem
 
 ## Acceptance
 
-- [ ] Scenario B: a completed execution can report `verdict=blocked` and the watchtower routes on the field, not prose.
-- [ ] Scenario C: many turns and large artifacts leave `inbox unread`, `work show`, `turn show` output sizes unchanged.
+- [x] Scenario B: a completed execution can report `verdict=blocked` and the watchtower routes on the field, not prose.
+- [x] Scenario C: many turns and large artifacts leave `inbox unread`, `work show`, `turn show` output sizes unchanged.
 - [x] Scenario D: late native-ID binding is idempotent, conflict-safe, and never changes work or turn identity.
 - [x] A work item's original brief is retrievable after settlement bursts, work close, and process restarts.
-- [ ] Scenario A's 12-task burst passes with verdict-carrying events.
-- [ ] All new fields round-trip through `--json` and older-binary downgrade behavior is documented.
+- [x] Scenario A's 12-task burst passes with verdict-carrying events.
+- [x] All new fields round-trip through `--json` and older-binary downgrade behavior is documented.
 
 ## Human gate
 

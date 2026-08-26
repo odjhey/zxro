@@ -6,7 +6,7 @@ tags: [v0.x, execution, task-cards, artifacts]
 status: draft
 generated: "Claude Fable 5 agent, 2026-08-25"
 created_at: "2026-08-25T14:25:09+08:00"
-updated_at: "2026-08-25T19:17:39+08:00"
+updated_at: "2026-08-26T14:08:10+08:00"
 ---
 
 # C1 — Multiple artifacts per turn
@@ -80,7 +80,7 @@ bin/zxro turn show <turn-id>   # two references, byte counts, no bodies
 ## Documentation impact
 
 - [x] Durable store contract and CLI spec updated in this PR.
-- [ ] ZR4 marked delivered in the delivery plan.
+- [x] ZR4 marked delivered in the delivery plan.
 
 ## Human gate
 
