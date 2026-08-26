@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from .ioutil import MAX_RECORD_BYTES, atomic_create, atomic_replace, exact_recor
 class LocalWorkStore:
     def __init__(self, home: Path, registry):
         self.home, self.registry = home, registry
+        self.diagnostic_observer = None
 
     @staticmethod
     def _durable(record):
@@ -162,6 +164,26 @@ class LocalWorkStore:
             return updated
 
     def brief_path(self, id):
+        observer = self.diagnostic_observer
+        clock = getattr(observer, "_clock", time.monotonic)
+        started = clock()
+        try:
+            result = self._verified_brief_path(id)
+        except BaseException as exc:
+            if observer is not None:
+                try:
+                    observer.artifact_verification(False, (clock() - started) * 1000, exc)
+                except Exception:
+                    pass
+            raise
+        if observer is not None:
+            try:
+                observer.artifact_verification(True, (clock() - started) * 1000)
+            except Exception:
+                pass
+        return result
+
+    def _verified_brief_path(self, id):
         id = validate_id(id, "work id")
         with reading(self.home) as access:
             work = self.get_from(access, id)

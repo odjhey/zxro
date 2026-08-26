@@ -85,6 +85,7 @@ Every document is listed here. See [README.md](./README.md) for the schema and m
 | [Engineering](./v0.x/engineering/README.md) | index | Engineering strategy index |
 | [Testing and agent workflow](./v0.x/engineering/testing-and-agent-workflow.md) | guide | Black-box CLI tests, durable-store conformance, delivery/attention separation, bounded reconciliation, crash-gap tests, and later integration smoke tests |
 | [Runtime and provisioning](./v0.x/engineering/runtime-and-provisioning.md) | guide | No-daemon/no-listener topology, runtime-port boundary, `$ZXRO_HOME`, metadata environment, locking, and recovery posture |
+| [Structured CLI logging](./v0.x/engineering/structured-cli-logging.md) | guide | Opt-in CLI diagnostic flags, event schema, redaction, correlation, and bounded file retention |
 | [Validation](./v0.x/validation/README.md) | index | Validation document index |
 | [Release readiness](./v0.x/validation/release-readiness.md) | checklist | Acceptance and readiness template |
 | [CLI multi-turn operator readiness](./v0.x/validation/cli-multiturn-operator-readiness.md) | report | Public-CLI behavioral and manual evidence for an operator-driven multi-turn work lifecycle |

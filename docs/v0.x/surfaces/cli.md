@@ -33,6 +33,7 @@ zxro [--home PATH] [--json] <command> ...
 - `--json` reserves stdout for one compact, key-sorted JSON value shaped as `{"schema_version":1,"data":...}`. Object and list payloads both occupy `data`. Diagnostics go to stderr and errors leave stdout empty. Namespaced `work meta` commands use the same envelope.
 - Mutating commands return non-zero on malformed, conflicting, or unsafe state.
 - IDs supplied by users are validated before they become path components or provider identifiers.
+- Opt-in structured diagnostics use `--log-level`, `--log-format`, `--log-file`, `--correlation-id`, and `--log-sensitive`. Logging is disabled by default, never uses stdout, and does not change command-result output or durable truth. See [structured CLI logging](../engineering/structured-cli-logging.md) for the event and retention contract.
 - A command must not silently create a missing parent artifact unless its contract says so.
 - Routine read commands must not inline historical artifact contents.
 
@@ -537,4 +538,5 @@ The numeric exit codes and their meanings are defined by [contract conventions](
 - [Durable store contract](../../architecture/contracts/durable-store.md)
 - [Decision 0002](../../decisions/0002-separate-delivery-from-attention.md)
 - [Implementation plan](../execution/implementation-plan.md)
+- [Structured CLI logging](../engineering/structured-cli-logging.md)
 - [Native session recovery](../../playbooks/native-session-recovery.md)

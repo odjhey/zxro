@@ -2,6 +2,7 @@ import fcntl
 import json
 import os
 import secrets
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -11,6 +12,19 @@ from .home import MANAGED_DIRS, check_stat, prepare_home
 _DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 MAX_RECORD_BYTES = 16 * 1024 * 1024
+_LOCK_OBSERVER = None
+_LOCK_CLOCK = None
+
+
+@contextmanager
+def observe_lock(observer, clock=None):
+    global _LOCK_OBSERVER, _LOCK_CLOCK
+    previous_observer, previous_clock = _LOCK_OBSERVER, _LOCK_CLOCK
+    _LOCK_OBSERVER, _LOCK_CLOCK = observer, clock
+    try:
+        yield
+    finally:
+        _LOCK_OBSERVER, _LOCK_CLOCK = previous_observer, previous_clock
 
 
 def _same_inode(left, right):
@@ -125,7 +139,14 @@ def mutation(home: Path):
                 check_stat(lock_before, access.home / ".lock", directory=False)
                 if not _same_inode(lock_before, lock_stat):
                     raise UnsafeStateError("store lock changed while opening")
+            clock = _LOCK_CLOCK or time.monotonic
+            wait_started = clock()
             fcntl.flock(fd, fcntl.LOCK_EX)
+            if _LOCK_OBSERVER is not None:
+                try:
+                    _LOCK_OBSERVER((clock() - wait_started) * 1000)
+                except Exception:
+                    pass
             _verify_lock(access, fd, lock_stat)
             access.ensure_layout()
             yield access

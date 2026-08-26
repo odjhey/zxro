@@ -1,0 +1,283 @@
+{
+  "schema": 1,
+  "purpose": "Held-out security corpus for attempt 11 structured diagnostic redaction tests",
+  "held_out": true,
+  "target": {
+    "base_commit": "e9054dc2b96e7a07961aff226cf7044d7011f690",
+    "base_tree": "2cc1e375b0953e566f90fe27d648bafc7b641a3a",
+    "historical_head": "208b5ed62a1a19be14f6cd7881624d86bd25d643",
+    "historical_tree": "f2924ff38ceabb02ea8af90f5653783f3ca23322",
+    "historical_merge_base": "7dad18c56bf4ef92df84109f4870c330de9fede6",
+    "implementation_status": "reference-only historical head; known compact-key defect"
+  },
+  "production_independence": {
+    "rule": "The prefix values below are hand-authored outside the production source and must not be copied into an implementation table or generated from one.",
+    "historical_prefixes_not_used": [
+      "x",
+      "http",
+      "user",
+      "request",
+      "session",
+      "oauth",
+      "prefix",
+      "zxro"
+    ],
+    "held_out_prefixes": [
+      "worker",
+      "tenant",
+      "build",
+      "agent",
+      "runner",
+      "remote",
+      "bridge",
+      "trace"
+    ],
+    "test_must_not": [
+      "import or inspect a production prefix/root table",
+      "grep production source to discover expected keys",
+      "derive corpus keys from implementation constants"
+    ],
+    "test_must": [
+      "load this file as test data",
+      "exercise the formatter and sink path",
+      "assert decoded event structure and values"
+    ]
+  },
+  "grammar": {
+    "normalization": "For compact matching, lowercase the key and remove ASCII separators. For separated, camel, and dotted forms, use the same normalized key-token semantics as the production redactor.",
+    "sensitive_roots": [
+      "githubtoken",
+      "clientnativeid",
+      "openaiapikey",
+      "dbpassword",
+      "csrftoken",
+      "bearertoken",
+      "proxyauthorization",
+      "servercookie"
+    ],
+    "native_roots": ["clientnativeid", "nativeid", "nativeids"],
+    "approved_suffixes": ["", "value", "values", "hash", "hashes", "header", "headers"],
+    "root_position": {
+      "minimum_prefix_length": 0,
+      "maximum_prefix_length": 16,
+      "prefix_alphabet": "ASCII letters and digits after normalization",
+      "meaning": "A normalized sensitive root may start at position 0 through 16. Any preceding producer text is grammar input, not a lookup-table prefix. The remainder after the root must be empty or one approved suffix.",
+      "out_of_bound_behavior": "A root beginning at position 17 or later is not matched by this bounded compact grammar. The negative bound case must remain structurally present with its original fixture value."
+    },
+    "collision_rule": "Do not match a root when its remainder is an unapproved lexical continuation. In particular, tokenizer, keyboard, keynote, secretary, secretariat, headerless, idle, idea, and similar continuations are not approved suffixes."
+  },
+  "concepts": [
+    {
+      "id": "github_token",
+      "class": "credential",
+      "root": "githubtoken",
+      "prefix": "worker",
+      "forms": [
+        {"id": "compact_lower", "key": "githubtoken", "fixture": "hc-githubtoken-compact-lower-001", "oracle": "redacted", "placement": "nested"},
+        {"id": "compact_upper", "key": "GITHUBTOKEN", "fixture": "hc-githubtoken-compact-upper-002", "oracle": "redacted", "placement": "nested"},
+        {"id": "camel", "key": "githubToken", "fixture": "hc-githubtoken-camel-003", "oracle": "redacted", "placement": "mixed"},
+        {"id": "snake", "key": "github_token", "fixture": "hc-githubtoken-snake-004", "oracle": "redacted", "placement": "mixed"},
+        {"id": "kebab", "key": "github-token", "fixture": "hc-githubtoken-kebab-005", "oracle": "redacted", "placement": "mixed"},
+        {"id": "dotted", "key": "github.token", "fixture": "hc-githubtoken-dotted-006", "oracle": "redacted", "placement": "mixed"}
+      ]
+    },
+    {
+      "id": "client_native_id",
+      "class": "native_id",
+      "root": "clientnativeid",
+      "prefix": "tenant",
+      "forms": [
+        {"id": "compact_lower", "key": "clientnativeid", "fixture": "hc-clientnativeid-compact-lower-007", "oracle": "omitted", "placement": "nested"},
+        {"id": "compact_upper", "key": "CLIENTNATIVEID", "fixture": "hc-clientnativeid-compact-upper-008", "oracle": "omitted", "placement": "nested"},
+        {"id": "camel", "key": "clientNativeId", "fixture": "hc-clientnativeid-camel-009", "oracle": "omitted", "placement": "mixed"},
+        {"id": "snake", "key": "client_native_id", "fixture": "hc-clientnativeid-snake-010", "oracle": "omitted", "placement": "mixed"},
+        {"id": "kebab", "key": "client-native-id", "fixture": "hc-clientnativeid-kebab-011", "oracle": "omitted", "placement": "mixed"},
+        {"id": "dotted", "key": "client.native.id", "fixture": "hc-clientnativeid-dotted-012", "oracle": "omitted", "placement": "mixed"}
+      ]
+    },
+    {
+      "id": "openai_api_key",
+      "class": "credential",
+      "root": "openaiapikey",
+      "prefix": "build",
+      "forms": [
+        {"id": "compact_lower", "key": "openaiapikey", "fixture": "hc-openaiapikey-compact-lower-013", "oracle": "redacted", "placement": "nested"},
+        {"id": "compact_upper", "key": "OPENAIAPIKEY", "fixture": "hc-openaiapikey-compact-upper-014", "oracle": "redacted", "placement": "nested"},
+        {"id": "camel", "key": "openaiApiKey", "fixture": "hc-openaiapikey-camel-015", "oracle": "redacted", "placement": "mixed"},
+        {"id": "snake", "key": "openai_api_key", "fixture": "hc-openaiapikey-snake-016", "oracle": "redacted", "placement": "mixed"},
+        {"id": "kebab", "key": "openai-api-key", "fixture": "hc-openaiapikey-kebab-017", "oracle": "redacted", "placement": "mixed"},
+        {"id": "dotted", "key": "openai.api.key", "fixture": "hc-openaiapikey-dotted-018", "oracle": "redacted", "placement": "mixed"}
+      ]
+    },
+    {
+      "id": "db_password_hash",
+      "class": "credential",
+      "root": "dbpassword",
+      "prefix": "agent",
+      "forms": [
+        {"id": "compact_lower", "key": "dbpasswordhash", "fixture": "hc-dbpasswordhash-compact-lower-019", "oracle": "redacted", "placement": "nested"},
+        {"id": "compact_upper", "key": "DBPASSWORDHASH", "fixture": "hc-dbpasswordhash-compact-upper-020", "oracle": "redacted", "placement": "nested"},
+        {"id": "camel", "key": "dbPasswordHash", "fixture": "hc-dbpasswordhash-camel-021", "oracle": "redacted", "placement": "mixed"},
+        {"id": "snake", "key": "db_password_hash", "fixture": "hc-dbpasswordhash-snake-022", "oracle": "redacted", "placement": "mixed"},
+        {"id": "kebab", "key": "db-password-hash", "fixture": "hc-dbpasswordhash-kebab-023", "oracle": "redacted", "placement": "mixed"},
+        {"id": "dotted", "key": "db.password.hash", "fixture": "hc-dbpasswordhash-dotted-024", "oracle": "redacted", "placement": "mixed"}
+      ]
+    },
+    {
+      "id": "csrf_token_value",
+      "class": "credential",
+      "root": "csrftoken",
+      "prefix": "runner",
+      "forms": [
+        {"id": "compact_lower", "key": "csrftokenvalue", "fixture": "hc-csrftokenvalue-compact-lower-025", "oracle": "redacted", "placement": "nested"},
+        {"id": "compact_upper", "key": "CSRFTOKENVALUE", "fixture": "hc-csrftokenvalue-compact-upper-026", "oracle": "redacted", "placement": "nested"},
+        {"id": "camel", "key": "csrfTokenValue", "fixture": "hc-csrftokenvalue-camel-027", "oracle": "redacted", "placement": "mixed"},
+        {"id": "snake", "key": "csrf_token_value", "fixture": "hc-csrftokenvalue-snake-028", "oracle": "redacted", "placement": "mixed"},
+        {"id": "kebab", "key": "csrf-token-value", "fixture": "hc-csrftokenvalue-kebab-029", "oracle": "redacted", "placement": "mixed"},
+        {"id": "dotted", "key": "csrf.token.value", "fixture": "hc-csrftokenvalue-dotted-030", "oracle": "redacted", "placement": "mixed"}
+      ]
+    },
+    {
+      "id": "bearer_token",
+      "class": "credential",
+      "root": "bearertoken",
+      "prefix": "remote",
+      "forms": [
+        {"id": "compact_lower", "key": "bearertoken", "fixture": "hc-bearertoken-compact-lower-031", "oracle": "redacted", "placement": "nested"},
+        {"id": "compact_upper", "key": "BEARERTOKEN", "fixture": "hc-bearertoken-compact-upper-032", "oracle": "redacted", "placement": "nested"},
+        {"id": "camel", "key": "bearerToken", "fixture": "hc-bearertoken-camel-033", "oracle": "redacted", "placement": "mixed"},
+        {"id": "snake", "key": "bearer_token", "fixture": "hc-bearertoken-snake-034", "oracle": "redacted", "placement": "mixed"},
+        {"id": "kebab", "key": "bearer-token", "fixture": "hc-bearertoken-kebab-035", "oracle": "redacted", "placement": "mixed"},
+        {"id": "dotted", "key": "bearer.token", "fixture": "hc-bearertoken-dotted-036", "oracle": "redacted", "placement": "mixed"}
+      ]
+    },
+    {
+      "id": "proxy_authorization_header",
+      "class": "credential",
+      "root": "proxyauthorization",
+      "prefix": "bridge",
+      "forms": [
+        {"id": "compact_lower", "key": "proxyauthorizationheader", "fixture": "hc-proxyauthorizationheader-compact-lower-037", "oracle": "redacted", "placement": "nested"},
+        {"id": "compact_upper", "key": "PROXYAUTHORIZATIONHEADER", "fixture": "hc-proxyauthorizationheader-compact-upper-038", "oracle": "redacted", "placement": "nested"},
+        {"id": "camel", "key": "proxyAuthorizationHeader", "fixture": "hc-proxyauthorizationheader-camel-039", "oracle": "redacted", "placement": "mixed"},
+        {"id": "snake", "key": "proxy_authorization_header", "fixture": "hc-proxyauthorizationheader-snake-040", "oracle": "redacted", "placement": "mixed"},
+        {"id": "kebab", "key": "proxy-authorization-header", "fixture": "hc-proxyauthorizationheader-kebab-041", "oracle": "redacted", "placement": "mixed"},
+        {"id": "dotted", "key": "proxy.authorization.header", "fixture": "hc-proxyauthorizationheader-dotted-042", "oracle": "redacted", "placement": "mixed"}
+      ]
+    },
+    {
+      "id": "server_cookie_value",
+      "class": "credential",
+      "root": "servercookie",
+      "prefix": "trace",
+      "forms": [
+        {"id": "compact_lower", "key": "servercookievalue", "fixture": "hc-servercookievalue-compact-lower-043", "oracle": "redacted", "placement": "nested"},
+        {"id": "compact_upper", "key": "SERVERCOOKIEVALUE", "fixture": "hc-servercookievalue-compact-upper-044", "oracle": "redacted", "placement": "nested"},
+        {"id": "camel", "key": "serverCookieValue", "fixture": "hc-servercookievalue-camel-045", "oracle": "redacted", "placement": "mixed"},
+        {"id": "snake", "key": "server_cookie_value", "fixture": "hc-servercookievalue-snake-046", "oracle": "redacted", "placement": "mixed"},
+        {"id": "kebab", "key": "server-cookie-value", "fixture": "hc-servercookievalue-kebab-047", "oracle": "redacted", "placement": "mixed"},
+        {"id": "dotted", "key": "server.cookie.value", "fixture": "hc-servercookievalue-dotted-048", "oracle": "redacted", "placement": "mixed"}
+      ]
+    }
+  ],
+  "held_out_prefix_cases": [
+    {"concept": "github_token", "prefix": "worker", "key": "workergithubtoken", "fixture": "hp-worker-githubtoken-049", "upper_key": "WORKERGITHUBTOKEN", "upper_fixture": "hp-worker-githubtoken-upper-088", "oracle": "redacted"},
+    {"concept": "client_native_id", "prefix": "tenant", "key": "tenantclientnativeid", "fixture": "hp-tenant-clientnativeid-050", "upper_key": "TENANTCLIENTNATIVEID", "upper_fixture": "hp-tenant-clientnativeid-upper-089", "oracle": "omitted"},
+    {"concept": "openai_api_key", "prefix": "build", "key": "buildopenaiapikey", "fixture": "hp-build-openaiapikey-051", "upper_key": "BUILDOPENAIAPIKEY", "upper_fixture": "hp-build-openaiapikey-upper-090", "oracle": "redacted"},
+    {"concept": "db_password_hash", "prefix": "agent", "key": "agentdbpasswordhash", "fixture": "hp-agent-dbpasswordhash-052", "upper_key": "AGENTDBPASSWORDHASH", "upper_fixture": "hp-agent-dbpasswordhash-upper-091", "oracle": "redacted"},
+    {"concept": "csrf_token_value", "prefix": "runner", "key": "runnercsrftokenvalue", "fixture": "hp-runner-csrftokenvalue-053", "upper_key": "RUNNERCSRFTOKENVALUE", "upper_fixture": "hp-runner-csrftokenvalue-upper-092", "oracle": "redacted"},
+    {"concept": "bearer_token", "prefix": "remote", "key": "remotebearertoken", "fixture": "hp-remote-bearertoken-054", "upper_key": "REMOTEBEARERTOKEN", "upper_fixture": "hp-remote-bearertoken-upper-093", "oracle": "redacted"},
+    {"concept": "proxy_authorization_header", "prefix": "bridge", "key": "bridgeproxyauthorizationheader", "fixture": "hp-bridge-proxyauthorizationheader-055", "upper_key": "BRIDGEPROXYAUTHORIZATIONHEADER", "upper_fixture": "hp-bridge-proxyauthorizationheader-upper-094", "oracle": "redacted"},
+    {"concept": "server_cookie_value", "prefix": "trace", "key": "traceservercookievalue", "fixture": "hp-trace-servercookievalue-056", "upper_key": "TRACESERVERCOOKIEVALUE", "upper_fixture": "hp-trace-servercookievalue-upper-095", "oracle": "redacted"}
+  ],
+  "position_boundary_cases": [
+    {"id": "prefix_length_1", "key": "qgithubtoken", "fixture": "hb-prefix-one-057", "oracle": "redacted", "prefix_length": 1},
+    {"id": "prefix_length_16", "key": "abcdefghijklmnopgithubtoken", "fixture": "hb-prefix-sixteen-058", "oracle": "redacted", "prefix_length": 16},
+    {"id": "prefix_length_17", "key": "abcdefghijklmnopqgithubtoken", "fixture": "hb-prefix-seventeen-059", "oracle": "preserved", "prefix_length": 17}
+  ],
+  "safe_positives": [
+    {"key": "artifactRef", "fixture": "safe-artifact-ref-060", "oracle": "preserved"},
+    {"key": "artifactRefs", "fixture": "safe-artifact-refs-061", "oracle": "preserved"},
+    {"key": "artifactId", "fixture": "safe-artifact-id-062", "oracle": "preserved"},
+    {"key": "artifact_ref", "fixture": "safe-artifact-ref-snake-063", "oracle": "preserved"},
+    {"key": "artifact.refs", "fixture": "safe-artifact-refs-dotted-064", "oracle": "preserved"},
+    {"key": "artifact-id", "fixture": "safe-artifact-id-kebab-065", "oracle": "preserved"}
+  ],
+  "collision_controls": [
+    {"key": "nativeIdleTime", "fixture": "collision-native-idle-066", "oracle": "preserved", "reason": "nativeid plus unapproved remainder letime"},
+    {"key": "nativeIdeaCount", "fixture": "collision-native-idea-067", "oracle": "preserved", "reason": "nativeid plus unapproved remainder eacount"},
+    {"key": "apiKeyboardLayout", "fixture": "collision-api-keyboard-068", "oracle": "preserved", "reason": "apikey plus unapproved remainder boardlayout"},
+    {"key": "apiKeynoteTheme", "fixture": "collision-api-keynote-069", "oracle": "preserved", "reason": "apikey plus unapproved remainder notetheme"},
+    {"key": "clientSecretaryName", "fixture": "collision-client-secretary-070", "oracle": "preserved", "reason": "clientsecret plus unapproved remainder aryname"},
+    {"key": "clientSecretariatStatus", "fixture": "collision-client-secretariat-071", "oracle": "preserved", "reason": "clientsecret plus unapproved remainder ariatstatus"},
+    {"key": "authHeaderlessMode", "fixture": "collision-auth-headerless-072", "oracle": "preserved", "reason": "authheader plus unapproved remainder lessmode"},
+    {"key": "tokenizer", "fixture": "collision-tokenizer-073", "oracle": "preserved", "reason": "token plus unapproved remainder izer"},
+    {"key": "githubtokenizer", "fixture": "collision-githubtokenizer-074", "oracle": "preserved", "reason": "githubtoken plus unapproved remainder izer"},
+    {"key": "clientnativeidentity", "fixture": "collision-clientnativeidentity-075", "oracle": "preserved", "reason": "clientnativeid plus unapproved remainder entity"},
+    {"key": "openaiapikeynote", "fixture": "collision-openaiapikeynote-076", "oracle": "preserved", "reason": "openaiapikey plus unapproved remainder note"},
+    {"key": "dbpasswordhashing", "fixture": "collision-dbpasswordhashing-077", "oracle": "preserved", "reason": "dbpassword plus unapproved remainder hashing"},
+    {"key": "csrftokenvalueful", "fixture": "collision-csrftokenvalueful-078", "oracle": "preserved", "reason": "csrftoken plus unapproved remainder valueful"},
+    {"key": "bearertokenized", "fixture": "collision-bearertokenized-079", "oracle": "preserved", "reason": "bearertoken plus unapproved remainder ized"},
+    {"key": "proxyauthorizationheaderless", "fixture": "collision-proxyauthorizationheaderless-080", "oracle": "preserved", "reason": "proxyauthorization plus unapproved remainder headerless"},
+    {"key": "servercookievaluex", "fixture": "collision-servercookievaluex-081", "oracle": "preserved", "reason": "servercookie plus unapproved remainder valuex"}
+  ],
+  "non_json_values": [
+    {"id": "bytes_value", "location": "mixed[0]", "kind": "bytes", "fixture": "bytes-fixture-082", "oracle": "redacted"},
+    {"id": "bytearray_value", "location": "mixed[1]", "kind": "bytearray", "fixture": "bytearray-fixture-083", "oracle": "redacted"},
+    {"id": "memoryview_value", "location": "mixed[2]", "kind": "memoryview", "fixture": "memoryview-fixture-084", "oracle": "redacted"},
+    {"id": "unknown_object", "location": "mixed[3]", "kind": "unknown_object", "stringified_secret": "unknown-object-must-not-stringify-085", "oracle": "redacted"}
+  ],
+  "batching": {
+    "reason": "The production bounded representation keeps at most 32 mapping entries and 16 sequence entries. The corpus is larger than one event so no case may disappear through truncation.",
+    "nested_mapping_batch_size": 20,
+    "mixed_sequence_batch_size": 12,
+    "matrix_rule": "Run every deterministic batch through all eight matrix rows. Keep each batch in a fresh event and assert that every listed case was observed.",
+    "fixture_accounting": "A fixture is covered only when its key/value was placed in a batch and checked. Do not treat truncation as a pass."
+  },
+  "layout": {
+    "nested_mapping": "Put concepts whose placement is nested, held_out_prefix_cases, position_boundary_cases, safe_positives, and collision_controls under payload.nested.corpus_batch. Split the entries deterministically into batches of at most 20. Preserve original key strings.",
+    "mixed_sequence": "Put forms whose placement is mixed as one-key mappings in payload.mixed. Split mixed entries into batches of at most 12, and append the four non_json_values to one or more batches in their listed order. A nested mapping inside payload.mixed is required for at least one mixed entry.",
+    "unique_fixture_rule": "Every fixture string in this document is distinct. Assert absence or exact replacement by fixture identity, never by a shared generic secret."
+  },
+  "bounds": {
+    "long_string": {"key": "ordinaryLongValue", "fixture_prefix": "bounds-long-086", "length_bytes": 600, "oracle": "retain_first_512_utf8_bytes_then_ellipsis"},
+    "long_key": {"key": "ordinaryKeyWithMoreThanSixtyFourCharacters_abcdefghijklmnopqrstuvwxyz_0123456789", "fixture": "bounds-long-key-087", "oracle": "bounded_key_representation_at_most_64_characters"},
+    "long_mapping": {"key": "ordinaryMapping", "entries": 33, "oracle": "retain_first_32_in_insertion_order"},
+    "long_sequence": {"key": "ordinarySequence", "entries": 17, "oracle": "retain_first_16_in_order"},
+    "event_limit": {"oracle": "A serialized event over 65536 bytes disables only diagnostics. The command result, stdout, stderr, durable files, mutation count, and retry behavior remain unchanged."}
+  },
+  "nonfinite": {
+    "values": [
+      {"key": "notANumber", "value": "NaN", "oracle": "null"},
+      {"key": "positiveInfinity", "value": "+Infinity", "oracle": "null"},
+      {"key": "negativeInfinity", "value": "-Infinity", "oracle": "null"},
+      {"key": "finiteNumber", "value": 1.25, "oracle": 1.25}
+    ],
+    "strict_json": "Parse JSONL and the human attributes JSON with a parser that rejects NaN and Infinity constants."
+  },
+  "matrix": [
+    {"format": "human", "sink": "stderr", "sensitive": false},
+    {"format": "human", "sink": "stderr", "sensitive": true},
+    {"format": "human", "sink": "file", "sensitive": false},
+    {"format": "human", "sink": "file", "sensitive": true},
+    {"format": "jsonl", "sink": "stderr", "sensitive": false},
+    {"format": "jsonl", "sink": "stderr", "sensitive": true},
+    {"format": "jsonl", "sink": "file", "sensitive": false},
+    {"format": "jsonl", "sink": "file", "sensitive": true}
+  ],
+  "oracles": {
+    "credential": "The key remains in decoded attributes and its value is exactly [REDACTED]. Its unique fixture is absent from the complete serialized output.",
+    "native_id": "The key and unique fixture are absent from decoded attributes and the complete serialized output in both sensitive modes.",
+    "preserved": "The key remains and its exact fixture value is unchanged. This applies to safe positives, collision controls, and the out-of-bound position case.",
+    "all_sinks": "For each format and sensitive setting, stderr and file sinks decode to identical attributes. Human attributes JSON must equal JSONL attributes.",
+    "recursive": "The same rules apply below mappings and inside mixed sequences. Bytes, bytearray, memoryview, and unknown objects produce [REDACTED] without invoking object stringification.",
+    "no_leak": "Search the complete raw line only as a secondary guard. The primary assertions inspect parsed attributes and key presence, so the test does not depend on formatting text.",
+    "no_implementation_coupling": "The test reads this static corpus, never reads production source, never imports a production prefix table, and never computes expected keys from production constants. A new held-out prefix must fail the historical implementation even though it is absent from its table."
+  },
+  "historical_probe": {
+    "commit": "208b5ed62a1a19be14f6cd7881624d86bd25d643",
+    "method": "Read-only extraction to /tmp followed by direct DiagnosticLogger emission of workerGithubToken/workergithubtoken/WORKERGITHUBTOKEN and tenantClientNativeId/tenantclientnativeid/TENANTCLIENTNATIVEID.",
+    "observed": "Separated/camel values became [REDACTED], while held-out compact values remained verbatim; artifactRef remained unchanged.",
+    "full_suite_run": false
+  }
+}
