@@ -181,13 +181,17 @@ def _bounded(value: Any, *, _path_like: bool = False) -> Any:
 
 def _stable_error(exc: BaseException) -> str:
     name = type(exc).__name__
-    return {
+    mapped = {
         "ValidationError": "validation_error",
         "NotFoundError": "not_found",
         "ConflictError": "conflict",
         "UnsafeStateError": "unsafe_state",
-        "OSError": "os_error",
-    }.get(name, "command_error")
+    }.get(name)
+    if mapped is not None:
+        return mapped
+    if isinstance(exc, OSError):
+        return "os_error"
+    return "command_error"
 
 
 def _get_owner_binding(path: Path) -> bytes | None:
