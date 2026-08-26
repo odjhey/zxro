@@ -1122,6 +1122,53 @@ class StructuredLoggingCliTests(CliCase):
             values = [json.loads(line) for line in path.read_text().splitlines()]
             self.assertEqual(values, [{"timestamp": "2099-01-01T00:00:00.000Z", "fresh": True}])
 
+    def test_cached_retention_rechecks_age_after_eight_days_of_inactivity(self):
+        t0 = diagnostics._datetime.datetime(2030, 1, 1, tzinfo=diagnostics._datetime.timezone.utc)
+        later = t0 + diagnostics._datetime.timedelta(days=8)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            directory.chmod(0o700)
+            path = directory / "events.jsonl"
+            old_line = (json.dumps({"timestamp": diagnostics._timestamp(t0), "age": "old"}) + "\n").encode()
+            for index in range(5):
+                candidate = path if index == 0 else Path(f"{path}.{index}")
+                candidate.write_bytes(old_line)
+                candidate.chmod(0o600)
+            with mock.patch.object(diagnostics, "_utc_now", return_value=t0):
+                sink = diagnostics._FileSink(path, "jsonl")
+            with mock.patch.object(diagnostics, "_utc_now", return_value=later):
+                sink.append((json.dumps({"timestamp": diagnostics._timestamp(later), "age": "fresh"}) + "\n").encode())
+            self.assertEqual({candidate.name for candidate in directory.iterdir()}, {path.name})
+            self.assertEqual(json.loads(path.read_text())["age"], "fresh")
+
+    def test_retention_cache_detects_mtime_preserving_same_size_rewrites(self):
+        old = diagnostics._datetime.datetime(2030, 1, 1, tzinfo=diagnostics._datetime.timezone.utc)
+        current = old + diagnostics._datetime.timedelta(days=8)
+        recent_line = (json.dumps({"timestamp": diagnostics._timestamp(current), "age": "new"}, sort_keys=True) + "\n").encode()
+        old_line = (json.dumps({"timestamp": diagnostics._timestamp(old), "age": "old"}, sort_keys=True) + "\n").encode()
+        self.assertEqual(len(recent_line), len(old_line))
+        for index in range(5):
+            with self.subTest(index=index), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                directory.chmod(0o700)
+                path = directory / "events.jsonl"
+                candidate = path if index == 0 else Path(f"{path}.{index}")
+                candidate.write_bytes(recent_line)
+                candidate.chmod(0o600)
+                with mock.patch.object(diagnostics, "_utc_now", return_value=current):
+                    sink = diagnostics._FileSink(path, "jsonl")
+                before = candidate.stat()
+                candidate.write_bytes(old_line)
+                os.utime(candidate, ns=(before.st_atime_ns, before.st_mtime_ns))
+                self.assertEqual(candidate.stat().st_mtime_ns, before.st_mtime_ns)
+                with mock.patch.object(diagnostics, "_utc_now", return_value=current):
+                    sink.append((json.dumps({"timestamp": diagnostics._timestamp(current), "age": "activity"}) + "\n").encode())
+                if index:
+                    self.assertFalse(candidate.exists())
+                else:
+                    values = [json.loads(line) for line in path.read_text().splitlines()]
+                    self.assertEqual([value["age"] for value in values], ["activity"])
+
     def test_concurrent_file_appends_are_complete_and_parseable(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

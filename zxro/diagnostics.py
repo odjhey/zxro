@@ -309,7 +309,7 @@ class _FileSink:
         self.path = path
         self.format_name = format_name
         self.owner = owner
-        self._prune_fingerprints: dict[str, tuple[int, int, int, int]] = {}
+        self._prune_fingerprints: dict[str, tuple[tuple[int, int, int, int, int], _datetime.datetime | None]] = {}
         self._validate()
         if owner is not None:
             self._with_lock(self._prepare_owner)
@@ -345,27 +345,34 @@ class _FileSink:
             os.close(fd)
 
     @staticmethod
-    def _newest_event(path: Path) -> _datetime.datetime | None:
+    def _event_timestamp(raw: bytes) -> _datetime.datetime | None:
+        try:
+            line = raw.decode("utf-8", "replace")
+            if line.startswith("{"):
+                stamp = json.loads(line).get("timestamp")
+            else:
+                match = _TIMESTAMP_RE.search(line)
+                stamp = match.group(1) if match else None
+            return _datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")) if stamp else None
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return None
+
+    @classmethod
+    def _newest_event(cls, path: Path) -> _datetime.datetime | None:
         newest = None
         try:
             with path.open("rb") as stream:
                 for raw in stream:
-                    try:
-                        line = raw.decode("utf-8", "replace")
-                        if line.startswith("{"):
-                            value = json.loads(line)
-                            stamp = value.get("timestamp")
-                        else:
-                            match = _TIMESTAMP_RE.search(line)
-                            stamp = match.group(1) if match else None
-                        if stamp:
-                            parsed = _datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-                            newest = parsed if newest is None or parsed > newest else newest
-                    except (ValueError, TypeError, json.JSONDecodeError):
-                        continue
+                    parsed = cls._event_timestamp(raw)
+                    if parsed is not None:
+                        newest = parsed if newest is None or parsed > newest else newest
         except FileNotFoundError:
             return None
         return newest
+
+    @staticmethod
+    def _prune_fingerprint(info) -> tuple[int, int, int, int, int]:
+        return info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns, info.st_size
 
     def _prune(self) -> None:
         self._validate()
@@ -378,10 +385,9 @@ class _FileSink:
             except FileNotFoundError:
                 self._prune_fingerprints.pop(key, None)
                 continue
-            fingerprint = (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
-            if self._prune_fingerprints.get(key) == fingerprint:
-                continue
-            newest = self._newest_event(path)
+            fingerprint = self._prune_fingerprint(info)
+            cached = self._prune_fingerprints.get(key)
+            newest = cached[1] if cached is not None and cached[0] == fingerprint else self._newest_event(path)
             if newest is not None and newest < cutoff:
                 path.unlink()
                 self._prune_fingerprints.pop(key, None)
@@ -389,7 +395,7 @@ class _FileSink:
                 path.unlink()
                 self._prune_fingerprints.pop(key, None)
             else:
-                self._prune_fingerprints[key] = fingerprint
+                self._prune_fingerprints[key] = (fingerprint, newest)
 
     def _rotate(self) -> None:
         oldest = Path(f"{self.path}.{MAX_LOG_BACKUPS}")
@@ -401,6 +407,7 @@ class _FileSink:
                 os.replace(source, Path(f"{self.path}.{index + 1}"))
         if self.path.exists():
             os.replace(self.path, Path(f"{self.path}.1"))
+        self._prune_fingerprints.clear()
 
     def append(self, line: bytes) -> None:
         if len(line) > MAX_EVENT_BYTES:
@@ -415,6 +422,9 @@ class _FileSink:
                 if size + len(line) > MAX_LOG_FILE_BYTES:
                     self._rotate()
                 flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+                key = str(self.path)
+                cached = self._prune_fingerprints.get(key)
+                previous_newest = cached[1] if cached is not None else None
                 fd = os.open(self.path, flags, 0o600)
                 try:
                     info = os.fstat(fd)
@@ -429,9 +439,9 @@ class _FileSink:
                             raise OSError("diagnostic log write made no progress")
                         view = view[written:]
                     written_info = os.fstat(fd)
-                    self._prune_fingerprints[str(self.path)] = (
-                        written_info.st_dev, written_info.st_ino, written_info.st_mtime_ns, written_info.st_size,
-                    )
+                    appended = self._event_timestamp(line)
+                    newest = appended if previous_newest is None or appended is not None and appended > previous_newest else previous_newest
+                    self._prune_fingerprints[key] = (self._prune_fingerprint(written_info), newest)
                 finally:
                     os.close(fd)
             except FileNotFoundError as exc:

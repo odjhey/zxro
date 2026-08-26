@@ -23,7 +23,7 @@ sources:
   - ref: ../engineering/runtime-and-provisioning.md
     credibility: primary
 created_at: "2026-08-25T09:35:45+08:00"
-updated_at: "2026-08-26T18:31:15+08:00"
+updated_at: "2026-08-26T21:10:00+08:00"
 ---
 
 # CLI-first Web UI plan
@@ -89,7 +89,7 @@ The built-in provider is the only merged provider. The optional-provider evaluat
 
 ## Logging and observability audit
 
-The merged CLI has error reporting, not a logging system:
+The pre-G19 CLI baseline audited by this plan had error reporting, not a logging system:
 
 - `zxro.cli.main` prints one human-readable error line to stderr for `ZxroError` and `OSError` failures.
 - Stable exit classes 2 through 5 distinguish validation, missing, conflict, and unsafe state.
@@ -97,11 +97,11 @@ The merged CLI has error reporting, not a logging system:
 - Public show, list, unread, pending, and artifact commands provide local diagnostic evidence.
 - The runtime guide explicitly says v0.x has no metrics, traces, network health endpoint, or background health checks.
 
-No merged module defines structured diagnostic events, event names, a log schema, levels, correlation IDs, performance timings, retention, rotation, or redaction. The CLI does not record command starts, successful reads, lock wait, validation stages, malformed record identity, or subprocess details in a stable machine format. There is no Web UI yet, so there are no request, refresh, index, cache, or child-process logs.
+At that baseline, no module defined structured diagnostic events, event names, a log schema, levels, correlation IDs, performance timings, retention, rotation, or redaction. The baseline CLI did not record command starts, successful reads, lock wait, validation stages, malformed record identity, or subprocess details in a stable machine format. There is no Web UI yet, so there are no request, refresh, index, cache, or child-process logs.
 
 Immutable mailbox events and turn settlements are durable domain records. They are not logs. A future logging system must not replace, repair, infer, or mutate those records. Logs may explain what one process observed or failed to do. Durable state remains authoritative for what ZXRO committed.
 
-This is a ZXRO-wide core CLI gap, not a Web UI feature. Humans, hooks, CI, future runtime integrations, and the Web UI need the same opt-in logging contract. Implement the core CLI foundation first. The Web UI later reuses it and adds request/refresh events at its own boundary. Defaults for ordinary CLI users must remain compatible, including empty stderr on successful commands unless logging is explicitly enabled.
+The audit identified a ZXRO-wide core CLI gap, not a Web UI feature. Humans, hooks, CI, future runtime integrations, and the Web UI need the same opt-in logging contract. The delivery plan places the core CLI foundation first. The Web UI later reuses it and adds request/refresh events at its own boundary. Defaults for ordinary CLI users must remain compatible, including empty stderr on successful commands unless logging is explicitly enabled.
 
 ## Operator questions and honest answers
 
@@ -552,7 +552,7 @@ The proposed commands below do not exist on `master`.
 ### G19. ZXRO-wide structured core CLI diagnostics
 
 - Operator question: "What did this CLI invocation read or attempt, where did it fail, and how long did each stage take?"
-- Shipped contract: G19 has merged. [Structured CLI logging](../engineering/structured-cli-logging.md) is the single normative source for the flag set, environment equivalents, validation rules, required events, output/exit behavior, schema and versioning, and security/privacy redaction; do not duplicate that prose here.
+- Contract owner: [Structured CLI logging](../engineering/structured-cli-logging.md) is the single normative source for the flag set, environment equivalents, validation rules, required events, output/exit behavior, schema and versioning, and security/privacy redaction. This plan does not assert G19's delivery state and does not duplicate that contract.
 - Dependencies: only a core logging contract, a clock abstraction for tests, redaction helpers, and sink primitives including safe concurrent append/rotation. G19 does not depend on G6, a durable-schema change, a UI package, or a provider adapter.
 - Priority: P0 core CLI prerequisite and ZXRO-wide opportunity before Web UI implementation. It benefits shell operators, hooks, CI, M5/M6 producers, and later M7 work independently from the UI.
 - Acceptance: covered by `tests/test_cli_logging.py` and the guarantees documented in [Structured CLI logging](../engineering/structured-cli-logging.md) (schema-valid ordered events, threshold matrices, stdout/stderr compatibility, redaction, and file rotation/retention).
