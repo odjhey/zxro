@@ -1,3 +1,4 @@
+import contextvars
 import fcntl
 import json
 import os
@@ -12,19 +13,19 @@ from .home import MANAGED_DIRS, check_stat, prepare_home
 _DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 MAX_RECORD_BYTES = 16 * 1024 * 1024
-_LOCK_OBSERVER = None
-_LOCK_CLOCK = None
+_LOCK_OBSERVER = contextvars.ContextVar("zxro_lock_observer", default=None)
+_LOCK_CLOCK = contextvars.ContextVar("zxro_lock_clock", default=None)
 
 
 @contextmanager
 def observe_lock(observer, clock=None):
-    global _LOCK_OBSERVER, _LOCK_CLOCK
-    previous_observer, previous_clock = _LOCK_OBSERVER, _LOCK_CLOCK
-    _LOCK_OBSERVER, _LOCK_CLOCK = observer, clock
+    observer_token = _LOCK_OBSERVER.set(observer)
+    clock_token = _LOCK_CLOCK.set(clock)
     try:
         yield
     finally:
-        _LOCK_OBSERVER, _LOCK_CLOCK = previous_observer, previous_clock
+        _LOCK_OBSERVER.reset(observer_token)
+        _LOCK_CLOCK.reset(clock_token)
 
 
 def _same_inode(left, right):
@@ -139,12 +140,13 @@ def mutation(home: Path):
                 check_stat(lock_before, access.home / ".lock", directory=False)
                 if not _same_inode(lock_before, lock_stat):
                     raise UnsafeStateError("store lock changed while opening")
-            clock = _LOCK_CLOCK or time.monotonic
+            clock = _LOCK_CLOCK.get() or time.monotonic
             wait_started = clock()
             fcntl.flock(fd, fcntl.LOCK_EX)
-            if _LOCK_OBSERVER is not None:
+            observer = _LOCK_OBSERVER.get()
+            if observer is not None:
                 try:
-                    _LOCK_OBSERVER((clock() - wait_started) * 1000)
+                    observer((clock() - wait_started) * 1000)
                 except Exception:
                     pass
             _verify_lock(access, fd, lock_stat)
