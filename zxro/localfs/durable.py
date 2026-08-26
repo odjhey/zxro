@@ -1,11 +1,11 @@
 import hashlib
 import json
 import os
-import time
 import uuid
 from datetime import datetime
 
 from ..contract import Artifact, ArtifactMetadata, MailboxEvent, Settlement, Turn
+from ..diagnostics import observe_duration
 from ..errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from ..ids import safe_string, validate_event_id, validate_id, validate_turn_id
 from .home import check_stat
@@ -24,24 +24,11 @@ class LocalDurableLoop:
         self.diagnostic_observer = None
 
     def _stage(self, name, operation):
-        observer = self.diagnostic_observer
-        clock = getattr(observer, "_clock", time.monotonic)
-        started = clock()
-        try:
-            value = operation()
-        except BaseException as exc:
-            if observer is not None:
-                try:
-                    observer.settlement_stage(name, False, (clock() - started) * 1000, exc)
-                except Exception:
-                    pass
-            raise
-        if observer is not None:
-            try:
-                observer.settlement_stage(name, True, (clock() - started) * 1000)
-            except Exception:
-                pass
-        return value
+        return observe_duration(
+            self.diagnostic_observer,
+            operation,
+            lambda observer, success, duration_ms, exc: observer.settlement_stage(name, success, duration_ms, exc),
+        )
 
     @staticmethod
     def _mailbox(access, watchtower_id):
@@ -454,24 +441,11 @@ class LocalDurableLoop:
         return record
 
     def artifact_path(self, ref):
-        observer = self.diagnostic_observer
-        clock = getattr(observer, "_clock", time.monotonic)
-        started = clock()
-        try:
-            result = self._verified_artifact_path(ref)
-        except BaseException as exc:
-            if observer is not None:
-                try:
-                    observer.artifact_verification(False, (clock() - started) * 1000, exc)
-                except Exception:
-                    pass
-            raise
-        if observer is not None:
-            try:
-                observer.artifact_verification(True, (clock() - started) * 1000)
-            except Exception:
-                pass
-        return result
+        return observe_duration(
+            self.diagnostic_observer,
+            lambda: self._verified_artifact_path(ref),
+            lambda observer, success, duration_ms, exc: observer.artifact_verification(success, duration_ms, exc),
+        )
 
     def _verified_artifact_path(self, ref):
         artifact = Artifact.parse_ref(ref)

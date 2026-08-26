@@ -1,11 +1,11 @@
 import hashlib
 import json
 import os
-import time
 from dataclasses import replace
 from pathlib import Path
 
 from zxro.contract import Work, WorkBrief
+from zxro.diagnostics import observe_duration
 from zxro.errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from zxro.ids import validate_id
 from zxro.metadata import RESERVED_NAMESPACES, validate_metadata, validate_name, validate_namespace
@@ -164,24 +164,11 @@ class LocalWorkStore:
             return updated
 
     def brief_path(self, id):
-        observer = self.diagnostic_observer
-        clock = getattr(observer, "_clock", time.monotonic)
-        started = clock()
-        try:
-            result = self._verified_brief_path(id)
-        except BaseException as exc:
-            if observer is not None:
-                try:
-                    observer.artifact_verification(False, (clock() - started) * 1000, exc)
-                except Exception:
-                    pass
-            raise
-        if observer is not None:
-            try:
-                observer.artifact_verification(True, (clock() - started) * 1000)
-            except Exception:
-                pass
-        return result
+        return observe_duration(
+            self.diagnostic_observer,
+            lambda: self._verified_brief_path(id),
+            lambda observer, success, duration_ms, exc: observer.artifact_verification(success, duration_ms, exc),
+        )
 
     def _verified_brief_path(self, id):
         id = validate_id(id, "work id")

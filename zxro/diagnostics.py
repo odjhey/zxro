@@ -309,6 +309,7 @@ class _FileSink:
         self.path = path
         self.format_name = format_name
         self.owner = owner
+        self._prune_fingerprints: dict[str, tuple[int, int, int, int]] = {}
         self._validate()
         if owner is not None:
             self._with_lock(self._prepare_owner)
@@ -371,13 +372,24 @@ class _FileSink:
         cutoff = _utc_now() - _datetime.timedelta(days=RETENTION_DAYS)
         for index in range(0, MAX_LOG_BACKUPS + 1):
             path = self.path if index == 0 else Path(f"{self.path}.{index}")
-            if not path.exists():
+            key = str(path)
+            try:
+                info = path.stat()
+            except FileNotFoundError:
+                self._prune_fingerprints.pop(key, None)
+                continue
+            fingerprint = (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
+            if self._prune_fingerprints.get(key) == fingerprint:
                 continue
             newest = self._newest_event(path)
             if newest is not None and newest < cutoff:
                 path.unlink()
-            elif newest is None and path.stat().st_size == 0:
+                self._prune_fingerprints.pop(key, None)
+            elif newest is None and info.st_size == 0:
                 path.unlink()
+                self._prune_fingerprints.pop(key, None)
+            else:
+                self._prune_fingerprints[key] = fingerprint
 
     def _rotate(self) -> None:
         oldest = Path(f"{self.path}.{MAX_LOG_BACKUPS}")
@@ -416,6 +428,10 @@ class _FileSink:
                         if written <= 0:
                             raise OSError("diagnostic log write made no progress")
                         view = view[written:]
+                    written_info = os.fstat(fd)
+                    self._prune_fingerprints[str(self.path)] = (
+                        written_info.st_dev, written_info.st_ino, written_info.st_mtime_ns, written_info.st_size,
+                    )
                 finally:
                     os.close(fd)
             except FileNotFoundError as exc:
@@ -594,3 +610,24 @@ def error_code(exc: BaseException) -> str:
 
 def validate_correlation(value: str) -> bool:
     return bool(_CORRELATION_RE.fullmatch(value))
+
+
+def observe_duration(observer, operation, report):
+    """Time operation via observer's clock, call report(observer, success, duration_ms, exc)."""
+    clock = getattr(observer, "_clock", time.monotonic)
+    started = clock()
+    try:
+        result = operation()
+    except BaseException as exc:
+        if observer is not None:
+            try:
+                report(observer, False, (clock() - started) * 1000, exc)
+            except Exception:
+                pass
+        raise
+    if observer is not None:
+        try:
+            report(observer, True, (clock() - started) * 1000, None)
+        except Exception:
+            pass
+    return result
