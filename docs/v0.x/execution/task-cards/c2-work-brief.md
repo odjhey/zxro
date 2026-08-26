@@ -68,7 +68,7 @@ BRIEF=$(bin/zxro work brief path auth-fix) && cat "$BRIEF"
 ## Documentation impact
 
 - [x] Durable store contract and CLI spec updated in this PR.
-- [ ] ZR2 marked delivered in the delivery plan.
+- [x] ZR2 marked delivered in the delivery plan.
 
 ## Human gate
 
