@@ -669,6 +669,27 @@ class StructuredLoggingCliTests(CliCase):
         self.assertEqual(failed["attributes"]["error_code"], "os_error")
         self.assertEqual(events[-1]["attributes"]["process_exit_code"], 5)
 
+    def test_existing_settlement_event_mismatch_fails_inside_event_validation_stage(self):
+        self.cli("watchtower", "create", "main", "--cwd", "/watchtower")
+        self.cli("work", "create", "job", "--watchtower", "main")
+        turn = self.cli("turn", "create", "--work", "job", "--agent", "pi", "--session", "s", "--cwd", "/crew").stdout.strip()
+        settled = self.cli("turn", "settle", turn, "--source", "manual", "--status", "completed", "--message", "done")
+        self.assertEqual(settled.returncode, 0, settled.stderr)
+        event_path = self.home / "inbox-events" / "main--00000000000000000001.json"
+        event = json.loads(event_path.read_text())
+        event["summary"] = "parseable mismatch"
+        event_path.write_text(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+        result, events = self.events("turn", "settle", turn, "--source", "manual", "--status", "completed", "--message", "done")
+        self.assertEqual(result.returncode, 5)
+        failures = [event for event in events if event["event_name"] == "zxro.settlement.publication.stage_failed" and event["attributes"].get("stage") == "event_validation"]
+        completions = [event for event in events if event["event_name"] == "zxro.settlement.publication.stage_completed" and event["attributes"].get("stage") == "event_validation"]
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(completions, [])
+        self.assertEqual(failures[0]["attributes"]["error_code"], "unsafe_state")
+        self.assertGreaterEqual(failures[0]["duration_ms"], 0)
+        self.assertEqual(events[-1]["event_name"], "zxro.cli.invocation.completed")
+        self.assertEqual(events[-1]["attributes"]["process_exit_code"], 5)
+
     def test_artifact_verification_failure_is_observed_at_verification_boundary(self):
         self.cli("watchtower", "create", "main", "--cwd", "/watchtower")
         self.cli("work", "create", "job", "--watchtower", "main")
@@ -800,6 +821,47 @@ class StructuredLoggingCliTests(CliCase):
         self.assertFalse(environment_file.exists())
         disabled = self.cli("--log-level", "off", "watchtower", "list", env={"ZXRO_LOG_LEVEL": "bad"})
         self.assertEqual(disabled.returncode, 0, disabled.stderr)
+
+    def test_sensitive_resource_correlation_requires_validated_zxro_identity(self):
+        marker = "invalid-resource-secret-marker"
+        invalid = (
+            ("watchtower", "show", f"/private/{marker}"),
+            ("turn", "create", "--work", f"/private/{marker}", "--agent", "pi", "--session", "s", "--cwd", "/crew"),
+            ("artifact", "path", f"/private/{marker}"),
+            ("watchtower", "show", "x" * 4096 + marker),
+        )
+        for argv in invalid:
+            with self.subTest(argv=argv[:2]):
+                result = self.cli("--log-level", "debug", "--log-format", "jsonl", "--log-sensitive", *argv)
+                self.assertEqual(result.returncode, 2)
+                self.assertNotIn(marker, result.stderr)
+                self.assertNotIn("/private/", result.stderr)
+                events = [json.loads(line) for line in result.stderr.splitlines()]
+                self.assertTrue(events)
+                for event in events:
+                    resource = event["correlation"].get("resource")
+                    self.assertTrue(resource is None or (resource.startswith("fp_") and len(resource) == 23))
+        visible = self.cli("--log-level", "info", "--log-format", "jsonl", "--log-sensitive", "watchtower", "show", "safe-id")
+        self.assertEqual(visible.returncode, 3)
+        visible_resources = [json.loads(line)["correlation"].get("resource") for line in visible.stderr.splitlines()]
+        self.assertIn("safe-id", visible_resources)
+        self.assertTrue(all(resource in (None, "safe-id") for resource in visible_resources))
+
+    def test_hardlinked_log_family_is_rejected_without_mutating_external_inode(self):
+        for suffix in ("", ".1"):
+            with self.subTest(suffix=suffix):
+                directory = Path(self.temp.name) / ("hardlink-active" if not suffix else "hardlink-backup")
+                directory.mkdir(mode=0o700)
+                outside = Path(self.temp.name) / ("outside-active.log" if not suffix else "outside-backup.log")
+                outside.write_bytes(b"external-bytes")
+                outside.chmod(0o600)
+                log_path = directory / "events.log"
+                os.link(outside, Path(str(log_path) + suffix))
+                diagnostics._set_owner_binding(outside, diagnostics._home_fingerprint(self.home))
+                before = (outside.read_bytes(), outside.stat().st_ino, outside.stat().st_nlink)
+                result = self.cli("--log-level", "info", "--log-format", "jsonl", "--log-file", str(log_path), "watchtower", "list")
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual((outside.read_bytes(), outside.stat().st_ino, outside.stat().st_nlink), before)
 
     def test_redaction_omits_paths_and_raw_ids_by_default(self):
         secret = "Bearer synthetic-secret-value"

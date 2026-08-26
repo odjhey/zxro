@@ -337,10 +337,14 @@ class LocalDurableLoop:
                     if self._reconcile_next(access, box) is None:
                         raise UnsafeStateError("event index is above mailbox high-water without an immutable event")
                     box = self._mailbox(access, turn.watchtower_id)
+
+            def validate_published_event():
                 expected = MailboxEvent(turn.settlement.event_id, event.generation, "turn_settled", turn.watchtower_id, turn.work_id, turn.id, turn.agent, turn.outcome, turn.summary, turn.artifact_refs, turn.settlement.settled_at, turn.verdict, turn.needs)
                 if event != expected:
                     raise UnsafeStateError("settlement event does not match committed turn")
-            self._stage("event_validation", lambda: self._validate_event(access, event))
+                return self._validate_event(access, event)
+
+            self._stage("event_validation", validate_published_event)
             return turn, event
 
     def unread(self, watchtower_id):

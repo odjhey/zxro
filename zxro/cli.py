@@ -7,8 +7,10 @@ import sys
 import time
 import traceback
 
+from .contract import Artifact
 from .diagnostics import DiagnosticLogger, LogConfig, error_code, redact_parser_output
 from .errors import NotFoundError, UnsafeStateError, ValidationError, ZxroError
+from .ids import validate_event_id, validate_id, validate_turn_id
 from .localfs import m1_capabilities, providers, resolve_home
 from .localfs.ioutil import observe_lock
 from .metadata import validate_namespace
@@ -117,10 +119,22 @@ def _command_name(args) -> str:
 
 
 def _resource(args) -> str | None:
-    for name in ("id", "event_id", "ref", "work", "watchtower"):
-        value = getattr(args, name, None)
-        if value:
-            return value
+    try:
+        if args.command == "artifact" and args.action == "path":
+            Artifact.parse_ref(args.ref)
+            return args.ref
+        if args.command == "artifact" and args.action == "put":
+            return validate_turn_id(args.turn_id)
+        if args.command == "inbox" and args.action == "handle":
+            return validate_event_id(args.event_id)
+        if args.command == "turn" and args.action in {"show", "bind", "settle"}:
+            return validate_turn_id(args.id)
+        for name in ("id", "work", "watchtower"):
+            value = getattr(args, name, None)
+            if value:
+                return validate_id(value, name)
+    except ValidationError:
+        return None
     return None
 
 

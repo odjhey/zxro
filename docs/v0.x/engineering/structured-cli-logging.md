@@ -13,7 +13,7 @@ sources:
   - ref: ../../../zxro/diagnostics.py
     credibility: primary
 created_at: "2026-08-25T11:45:00+08:00"
-updated_at: "2026-08-26T16:00:00+08:00"
+updated_at: "2026-08-26T16:26:46+08:00"
 ---
 
 # Structured CLI logging
@@ -91,7 +91,7 @@ Thresholds are inclusive:
 
 ## Correlation and redaction
 
-Every invocation has a process-local invocation ID. A supplied correlation ID is validated and copied to each event. Home and resource values use keyed process-local fingerprints by default. The same value correlates within one process without becoming a durable identifier. A file sink keeps its owner binding as filesystem metadata on the log family, not as an event field or extra family file.
+Every invocation has a process-local invocation ID. A supplied correlation ID is validated and copied to each event. Home and resource values use keyed process-local fingerprints by default. The same value correlates within one process without becoming a durable identifier. Sensitive mode exposes a raw resource only after the command's ZXRO ID or artifact-reference validator accepts it. Diagnostics omit malformed, path-like, or oversized resource arguments, or replace them with a fixed-length keyed fingerprint, before writing to any sink. A file sink keeps its owner binding as filesystem metadata on the log family, not as an event field or extra family file.
 
 Default diagnostics omit:
 
@@ -101,13 +101,13 @@ Default diagnostics omit:
 
 Cookies, authorization data, credentials, and token material are not omitted; the key is kept and its value is replaced with `[REDACTED]` (see below).
 
-Every event attribute passes the same bounded redaction normalizer before either formatter writes it. This applies to nested mappings and sequences, arbitrary payload keys, absolute Unix/Windows paths (including UNC and delimiter-embedded Unix forms), and values under snake-case, camel-case, kebab-case, or dotted path-like keys; human and JSONL output therefore share the same sanitized attributes. Prompt, summary, stdin/stdout, environment, session/native-ID, payload, and artifact-content fields are omitted by normalized key family. Password, authorization, cookie, API-key, token, secret, credential, and nested header fields are replaced with `[REDACTED]`. Non-finite numbers are normalized before strict JSON serialization. Sensitive mode may reveal raw ZXRO resource IDs in owner-only local diagnostics. It never disables path, content, credential, or token exclusions, and it ends when the process exits. Pattern redaction is incomplete. Do not treat a log as a proof that sensitive content is absent.
+Every event attribute passes the same bounded redaction normalizer before either formatter writes it. This applies to nested mappings and sequences, arbitrary payload keys, absolute Unix/Windows paths (including UNC and delimiter-embedded Unix forms), and values under snake-case, camel-case, kebab-case, or dotted path-like keys; human and JSONL output therefore share the same sanitized attributes. Prompt, summary, stdin/stdout, environment, session/native-ID, payload, and artifact-content fields are omitted by normalized key family. Password, authorization, cookie, API-key, token, secret, credential, and nested header fields are replaced with `[REDACTED]`. Non-finite numbers are normalized before strict JSON serialization. Sensitive mode may reveal validated raw ZXRO resource IDs and references in owner-only local diagnostics. It never disables path, content, credential, or token exclusions, and it ends when the process exits. Pattern redaction is incomplete. Do not treat a log as a proof that sensitive content is absent.
 
 Logs are observations from one process. Durable records remain authoritative for settlement, publication, acknowledgement, handling, closure, and artifact evidence. Diagnostic evidence must not repair or replace those records.
 
 ## File retention
 
-An explicit log file must be outside the physical `$ZXRO_HOME`, including when either path uses a symlink alias. The selected parent directory must be owned by the current user with exact mode `0700`; existing active and backup files must be regular, owned by the current user, and exact mode `0600`. An insecure pre-existing parent such as `0755` or log file such as `0644` is rejected before append, rotation, or command state access. ZXRO never chmods user files; the rejection is fail-closed with no log write. Each log family binds to one stable home fingerprint, so another home cannot append, prune, or rotate it.
+An explicit log file must be outside the physical `$ZXRO_HOME`, including when either path uses a symlink alias. The selected parent directory must be owned by the current user with exact mode `0700`; existing active and backup files must be regular, owned by the current user, have exactly one hard link, and use exact mode `0600`. An insecure pre-existing parent such as `0755` or log file such as `0644` is rejected before append, rotation, or command state access. ZXRO never chmods user files; the rejection is fail-closed with no log write. Each log family binds to one stable home fingerprint, so another home cannot append, prune, or rotate it.
 
 The active file is `PATH`; backups are `PATH.1` through `PATH.4`. ZXRO never keeps a sixth family file. The sink stores its owner binding as filesystem metadata on the family files, not as an extra file or emitted event. Each log file is capped at 5 MiB. It rotates before an append would cross that limit, deletes `PATH.4`, and shifts the remaining files under sink concurrency control.
 
