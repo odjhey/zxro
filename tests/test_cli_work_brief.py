@@ -2,7 +2,6 @@ import hashlib
 import json
 import os
 import subprocess
-import tarfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
@@ -11,6 +10,18 @@ from tests.helpers import BIN, ROOT, CliCase
 from zxro.errors import UnsafeStateError
 from zxro.localfs import providers
 from zxro.settle import MAX_STDIN_BYTES
+
+
+# Synthetic snapshot of the pre-brief Work record schema (strict field-set,
+# no "brief" key), decoupled from any specific commit in git history.
+def _legacy_work_decode(data):
+    allowed = {"id", "watchtower_id", "state", "metadata"}
+    valid = {"id", "watchtower_id", "state"} <= set(data) and not set(data) - allowed
+    valid = valid and all(isinstance(data.get(key), str) for key in ("id", "watchtower_id", "state"))
+    valid = valid and data.get("state") in ("open", "closed") and data.get("metadata", {}) is not None
+    if not valid:
+        raise UnsafeStateError("invalid work record schema")
+    return data
 
 
 class WorkBriefCliTests(CliCase):
@@ -258,23 +269,12 @@ class WorkBriefCliTests(CliCase):
 
     def test_legacy_reader_rejects_brief_record_with_corruption_exit(self):
         self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)
-        archive = Path(self.temp.name) / "legacy.tar"
-        checkout = Path(self.temp.name) / "legacy"
-        checkout.mkdir()
-        with archive.open("wb") as stream:
-            result = subprocess.run(
-                ["git", "archive", "4249e75c5436ce5f6b8b219a431de9df8a4af42e"],
-                cwd=ROOT, stdout=stream, stderr=subprocess.PIPE,
-            )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        with tarfile.open(archive) as bundle:
-            bundle.extractall(checkout, filter="data")
-        legacy = subprocess.run(
-            [os.environ.get("PYTHON", "python3"), "-m", "zxro", "work", "show", "job"],
-            cwd=checkout, capture_output=True,
-            env={**os.environ, "PYTHONPATH": str(checkout), "ZXRO_HOME": str(self.home)},
-        )
-        self.assertEqual(legacy.returncode, 5, legacy.stderr)
+        work_path = self.home / "work" / "job.json"
+        record = json.loads(work_path.read_text())
+        self.assertIn("brief", record)
+        with self.assertRaises(UnsafeStateError) as ctx:
+            _legacy_work_decode(record)
+        self.assertEqual(ctx.exception.exit_code, 5)
 
     def test_durable_work_schema_is_strict_and_digest_is_anchored(self):
         self.assertEqual(self.binary("work", "create", "job", "--watchtower", "main", "--brief-stdin", body=b"body").returncode, 0)

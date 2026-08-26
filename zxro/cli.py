@@ -143,13 +143,6 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
     if hasattr(value, "to_dict"): records = value.to_dict()
     elif isinstance(value, list): records = [item.to_dict() if hasattr(item, "to_dict") else item for item in value]
     else: records = value
-    if args.command == "work":
-        def public_work(record):
-            if isinstance(record, dict) and "brief" in record:
-                record = dict(record)
-                record["brief"] = {key: record["brief"][key] for key in ("ref", "bytes")}
-            return record
-        records = [public_work(record) for record in records] if isinstance(records, list) else public_work(records)
     if args.command == "turn" and args.action == "list":
         records = [{key: item for key, item in record.items() if key != "artifacts"} for record in records]
     elif args.command == "turn" and args.action == "settle":

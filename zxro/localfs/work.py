@@ -123,7 +123,10 @@ class LocalWorkStore:
             with reading(self.home) as access:
                 records = [self._decode(item) for item in list_records(access, "work")]
                 for record in records:
-                    self.get_from(access, record.id)
+                    try:
+                        self.registry.get_from(access, record.watchtower_id)
+                    except Exception as exc:
+                        raise UnsafeStateError(f"invalid work ownership: {exc}") from exc
         except NotFoundError:
             return []
         return sorted((item for item in records if (watchtower_id is None or item.watchtower_id == watchtower_id) and (state is None or item.state == state)), key=lambda item: item.id)
