@@ -132,7 +132,7 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         records = [{key: item for key, item in record.items() if key != "artifacts"} for record in records]
     elif args.command == "turn" and args.action == "settle":
         records = {key: item for key, item in records.items() if key != "artifacts"}
-    elif args.command == "turn" and args.action == "show" and "artifacts" in records:
+    elif args.command == "turn" and args.action in {"show", "bind"} and "artifacts" in records:
         records["artifacts"] = [
             {key: item for key, item in artifact.items() if key in {"ref", "kind", "bytes"}}
             for artifact in records["artifacts"]

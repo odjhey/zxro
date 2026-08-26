@@ -1,5 +1,8 @@
+import json
+import os
+import subprocess
 import uuid
-from tests.helpers import CliCase
+from tests.helpers import BIN, ROOT, CliCase
 
 
 class TurnCliTests(CliCase):
@@ -49,6 +52,13 @@ class TurnCliTests(CliCase):
 
     def bind(self, turn_id, native="native-7", source="manual recovery"):
         return self.cli("turn", "bind", turn_id, "--native-session-id", native, "--source", source)
+
+    def artifact_put(self, turn_id, kind="review", body=b"evidence"):
+        environment = {**os.environ, "ZXRO_HOME": str(self.home)}
+        return subprocess.run(
+            [str(BIN), "artifact", "put", turn_id, "--kind", kind, "--stdin"],
+            cwd=ROOT, env=environment, input=body, capture_output=True,
+        )
 
     def test_bind_running_turn_round_trips_in_human_and_json_show(self):
         turn_id = self.create().stdout.strip()
@@ -102,6 +112,50 @@ class TurnCliTests(CliCase):
         self.assertEqual(turn_after["native_session_source"], "manual recovery")
         self.assertEqual(self.ok_json("work", "show", "job"), work_before)
         self.assertEqual(self.ok_json("inbox", "unread", "--watchtower", "main"), inbox_before)
+
+    def test_bind_preserves_legacy_settled_record_shape(self):
+        turn_id = self.create().stdout.strip()
+        settled = self.artifact_put(turn_id, kind="stdin", body=b"payload")
+        self.assertEqual(settled.returncode, 2)  # stdin is reserved for settlement
+        environment = {**os.environ, "ZXRO_HOME": str(self.home)}
+        settled = subprocess.run(
+            [str(BIN), "turn", "settle", turn_id, "--source", "test", "--status", "completed", "--message", "done", "--stdin"],
+            cwd=ROOT, env=environment, input=b"payload", capture_output=True,
+        )
+        self.assertEqual(settled.returncode, 0, settled.stderr)
+        path = self.home / "turns" / f"{turn_id}.json"
+        legacy = json.loads(path.read_text())
+        legacy.pop("artifacts")
+        path.write_text(json.dumps(legacy, sort_keys=True, separators=(",", ":")) + "\n")
+
+        result = self.bind(turn_id)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        bound = json.loads(path.read_text())
+        self.assertNotIn("artifacts", bound)
+        self.assertEqual(
+            {key: value for key, value in bound.items() if key not in {"native_session_id", "native_session_source"}},
+            legacy,
+        )
+
+    def test_bind_json_projects_artifacts_without_internal_digest(self):
+        turn_id = self.create().stdout.strip()
+        put = self.artifact_put(turn_id)
+        self.assertEqual(put.returncode, 0, put.stderr)
+        settled = self.cli(
+            "turn", "settle", turn_id, "--source", "test", "--status", "completed",
+            "--message", "blocked", "--verdict", "blocked", "--needs", "operator input",
+        )
+        self.assertEqual(settled.returncode, 0, settled.stderr)
+
+        record = self.ok_json(
+            "turn", "bind", turn_id, "--native-session-id", "native-7", "--source", "manual recovery",
+        )
+        self.assertEqual(record["verdict"], "blocked")
+        self.assertEqual(record["needs"], "operator input")
+        self.assertEqual(record["artifacts"], [{
+            "ref": f"artifact:{turn_id}:review", "kind": "review", "bytes": len(b"evidence"),
+        }])
+        self.assertNotIn("sha256", record["artifacts"][0])
 
     def test_bind_rejects_unknown_turn_and_malformed_values(self):
         unknown = str(uuid.uuid4())

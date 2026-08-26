@@ -76,7 +76,10 @@ class LocalTurnStore:
         native_session_id = _binding_string(native_session_id, "native session id")
         source = _binding_string(source, "native session source")
         with mutation(self.home) as access:
-            record = self.get_from(access, id)
+            # Validate the hydrated view, including legacy artifact integrity, but
+            # persist the original record shape so binding changes only its pair.
+            self.get_from(access, id)
+            record = self._decode(read_json(access, "turns", f"{id}.json"))
             if record.native_session_id is not None and record.native_session_id != native_session_id:
                 raise ConflictError(f"turn has a different native session id: {id}")
             if record.native_session_source is not None and record.native_session_source != source:
