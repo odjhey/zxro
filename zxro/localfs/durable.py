@@ -485,7 +485,7 @@ class LocalDurableLoop:
             path = self.home / "artifacts" / filename
             content = bytes.fromhex(record.content_hex)
             with access.directory("artifacts") as directory_fd:
-                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
                 fd = None
                 try:
                     try:
@@ -502,6 +502,8 @@ class LocalDurableLoop:
                             fd = os.open(filename, flags, dir_fd=directory_fd)
                     info = os.fstat(fd)
                     check_stat(info, path, directory=False)
+                    if info.st_nlink != 1:
+                        raise UnsafeStateError("artifact materialization has multiple links")
                     if info.st_mode & 0o222:
                         raise UnsafeStateError("artifact materialization is writable")
                     os.lseek(fd, 0, os.SEEK_SET)
@@ -514,6 +516,8 @@ class LocalDurableLoop:
                     actual = b"".join(chunks)
                     entry = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
                     check_stat(entry, path, directory=False)
+                    if entry.st_nlink != 1:
+                        raise UnsafeStateError("artifact materialization has multiple links")
                     if (entry.st_dev, entry.st_ino) != (info.st_dev, info.st_ino):
                         raise UnsafeStateError("artifact path changed during verification")
                 except OSError as exc:

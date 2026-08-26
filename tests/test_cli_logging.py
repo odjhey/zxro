@@ -458,6 +458,27 @@ class StructuredLoggingCliTests(CliCase):
                 else:
                     self.assertIn(expected_payload, str(caught.exception))
 
+    def test_logging_off_parser_bytes_match_exact_base_direct_and_subprocess(self):
+        cases = (
+            (["--help"], 0, "g19-base-help.stdout", "stdout"),
+            ([], 2, "g19-base-missing.stderr", "stderr"),
+            (["watchtower", "show"], 2, "g19-base-malformed.stderr", "stderr"),
+        )
+        for argv, code, fixture_name, destination in cases:
+            with self.subTest(argv=argv):
+                expected = (ROOT / "tests" / "fixtures" / fixture_name).read_bytes()
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    with self.assertRaises(SystemExit) as raised:
+                        cli.main(argv)
+                self.assertEqual(raised.exception.code, code)
+                direct = (stdout if destination == "stdout" else stderr).getvalue().encode()
+                self.assertEqual(direct, expected)
+                process = subprocess.run([str(BIN), *argv], cwd=ROOT, env={**os.environ, "ZXRO_HOME": str(self.home)}, capture_output=True)
+                self.assertEqual(process.returncode, code)
+                self.assertEqual(process.stdout if destination == "stdout" else process.stderr, expected)
+                self.assertEqual(process.stderr if destination == "stdout" else process.stdout, b"")
+
     def test_logging_off_preserves_argparse_system_exit_and_output(self):
         for argv, expected_code in ((["--help"], 0), ([], 2)):
             with self.subTest(argv=argv):
@@ -896,6 +917,58 @@ class StructuredLoggingCliTests(CliCase):
         visible_resources = [json.loads(line)["correlation"].get("resource") for line in visible.stderr.splitlines()]
         self.assertIn("safe-id", visible_resources)
         self.assertTrue(all(resource in (None, "safe-id") for resource in visible_resources))
+
+    def test_materialized_fifo_paths_fail_without_blocking(self):
+        self.cli("watchtower", "create", "main", "--cwd", "/watchtower")
+        self.cli("work", "create", "job", "--watchtower", "main")
+        turn = self.cli("turn", "create", "--work", "job", "--agent", "pi", "--session", "s", "--cwd", "/crew").stdout.strip()
+        put = subprocess.run([str(BIN), "artifact", "put", turn, "--kind", "report", "--stdin"], cwd=ROOT, env={**os.environ, "ZXRO_HOME": str(self.home)}, input=b"artifact", capture_output=True)
+        self.assertEqual(put.returncode, 0)
+        brief = subprocess.run([str(BIN), "work", "brief", "set", "job", "--stdin"], cwd=ROOT, env={**os.environ, "ZXRO_HOME": str(self.home)}, input=b"brief", capture_output=True)
+        self.assertEqual(brief.returncode, 0)
+        cases = (
+            (self.home / "artifacts" / f"{turn}--report.bin", ["artifact", "path", f"artifact:{turn}:report"]),
+            (self.home / "artifacts" / "work--job--brief.bin", ["work", "brief", "path", "job"]),
+        )
+        for path, argv in cases:
+            with self.subTest(command=argv[:2]):
+                os.mkfifo(path, 0o400)
+                result = subprocess.run([str(BIN), *argv], cwd=ROOT, env={**os.environ, "ZXRO_HOME": str(self.home)}, capture_output=True, timeout=3)
+                self.assertEqual(result.returncode, 5)
+
+    def test_artifact_materialization_rejects_hardlinks(self):
+        self.cli("watchtower", "create", "main", "--cwd", "/watchtower")
+        self.cli("work", "create", "job", "--watchtower", "main")
+        turn = self.cli("turn", "create", "--work", "job", "--agent", "pi", "--session", "s", "--cwd", "/crew").stdout.strip()
+        put = subprocess.run([str(BIN), "artifact", "put", turn, "--kind", "report", "--stdin"], cwd=ROOT, env={**os.environ, "ZXRO_HOME": str(self.home)}, input=b"artifact", capture_output=True)
+        self.assertEqual(put.returncode, 0)
+        ref = f"artifact:{turn}:report"
+        materialized = Path(self.cli("artifact", "path", ref).stdout.strip())
+        alias = Path(self.temp.name) / "artifact-external-alias"
+        os.link(materialized, alias)
+        before = alias.read_bytes()
+        result = self.cli("artifact", "path", ref)
+        self.assertEqual(result.returncode, 5)
+        self.assertEqual(alias.read_bytes(), before)
+        self.assertEqual(alias.stat().st_nlink, 2)
+
+    def test_oversized_log_family_members_are_rejected_before_sink_mutation(self):
+        for index in range(5):
+            with self.subTest(index=index):
+                directory = Path(self.temp.name) / f"oversized-family-{index}"
+                directory.mkdir(mode=0o700)
+                active = directory / "events.log"
+                oversized = active if index == 0 else Path(f"{active}.{index}")
+                with oversized.open("wb") as stream:
+                    stream.truncate(diagnostics.MAX_LOG_FILE_BYTES + 1)
+                oversized.chmod(0o600)
+                diagnostics._set_owner_binding(oversized, diagnostics._home_fingerprint(self.home))
+                before = (oversized.stat().st_size, oversized.stat().st_ino)
+                result = self.cli("--log-level", "info", "--log-format", "jsonl", "--log-file", str(active), "watchtower", "list")
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual((oversized.stat().st_size, oversized.stat().st_ino), before)
+                if index:
+                    self.assertFalse(active.exists())
 
     def test_hardlinked_log_family_is_rejected_without_mutating_external_inode(self):
         for suffix in ("", ".1"):

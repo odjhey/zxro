@@ -1,0 +1,10 @@
+usage: zxro [-h] [--home HOME] [--json]
+            {watchtower,work,turn,inbox,ack,artifact} ...
+
+positional arguments:
+  {watchtower,work,turn,inbox,ack,artifact}
+
+options:
+  -h, --help            show this help message and exit
+  --home HOME
+  --json

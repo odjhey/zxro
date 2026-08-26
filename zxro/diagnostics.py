@@ -236,6 +236,8 @@ def _check_owner_mode(path: Path, *, directory: bool) -> None:
         raise ValidationError("log path does not have owner-only permissions")
     if not directory and info.st_nlink != 1:
         raise ValidationError("log file must not have hard links")
+    if not directory and info.st_size > MAX_LOG_FILE_BYTES:
+        raise ValidationError("log file exceeds the size limit")
 
 
 def _validate_log_path(raw: str, home: Path) -> Path:
@@ -404,7 +406,7 @@ class _FileSink:
                 fd = os.open(self.path, flags, 0o600)
                 try:
                     info = os.fstat(fd)
-                    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
+                    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1 or info.st_size > MAX_LOG_FILE_BYTES:
                         raise OSError("unsafe active log file")
                     if self.owner is not None and _get_owner_binding(self.path) is None:
                         _set_owner_binding(self.path, self.owner)

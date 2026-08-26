@@ -1,0 +1,2 @@
+usage: zxro watchtower show [-h] id
+zxro watchtower show: error: the following arguments are required: id

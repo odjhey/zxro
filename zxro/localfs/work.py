@@ -201,7 +201,7 @@ class LocalWorkStore:
             path = self.home / "artifacts" / filename
             content = bytes.fromhex(record["content_hex"])
             with access.directory("artifacts") as directory_fd:
-                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
                 fd = None
                 try:
                     try:

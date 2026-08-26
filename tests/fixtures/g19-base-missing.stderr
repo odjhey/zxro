@@ -1,0 +1,3 @@
+usage: zxro [-h] [--home HOME] [--json]
+            {watchtower,work,turn,inbox,ack,artifact} ...
+zxro: error: the following arguments are required: command
