@@ -314,6 +314,10 @@ def main(argv=None):
             with parse_context:
                 args = parser().parse_args(raw_argv)
         except SystemExit as exc:
+            if logger is None or not logger.config.enabled:
+                if parser_output.getvalue():
+                    sys.stderr.write(parser_output.getvalue())
+                raise
             exit_code = _system_exit_code(exc.code)
             failure_code = None if exit_code == 0 else "argparse_error"
             if logger is not None:
@@ -355,17 +359,23 @@ def main(argv=None):
         if logger is None or not logger.config.enabled or logger.config.file is not None:
             print(f"zxro: unsafe durable state: {exc}", file=sys.stderr)
     except SystemExit as exc:
+        if logger is None or not logger.config.enabled:
+            raise
         exit_code = _system_exit_code(exc.code)
         failure_code = None if exit_code == 0 else "system_exit"
     except KeyboardInterrupt:
+        if logger is None or not logger.config.enabled:
+            raise
         exit_code = 130
         failure_code = "interrupted"
-        if logger is None or not logger.config.enabled or logger.config.file is not None:
+        if logger.config.file is not None:
             traceback.print_exc()
     except Exception:
+        if logger is None or not logger.config.enabled:
+            raise
         exit_code = 1
         failure_code = "internal_error"
-        if logger is None or not logger.config.enabled or logger.config.file is not None:
+        if logger.config.file is not None:
             traceback.print_exc()
     finally:
         if logger is not None:

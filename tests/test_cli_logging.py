@@ -435,6 +435,46 @@ class StructuredLoggingCliTests(CliCase):
         self.assertNotIn("/private/internal-path", stderr.getvalue())
         self.assertLessEqual(len(stderr.getvalue().splitlines()), 6)
 
+    def test_logging_off_propagates_unexpected_faults_and_system_exit_payloads(self):
+        cases = (
+            (RuntimeError("runtime-marker"), RuntimeError, "runtime-marker"),
+            (KeyboardInterrupt("interrupt-marker"), KeyboardInterrupt, "interrupt-marker"),
+            (SystemExit(None), SystemExit, None),
+            (SystemExit(0), SystemExit, 0),
+            (SystemExit(7), SystemExit, 7),
+            (SystemExit("system-exit-marker"), SystemExit, "system-exit-marker"),
+        )
+        for raised, expected_type, expected_payload in cases:
+            with self.subTest(raised=repr(raised)):
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with mock.patch.object(cli, "_run_command", side_effect=raised), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    with self.assertRaises(expected_type) as caught:
+                        cli.main(["--log-level", "off", "watchtower", "list"])
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertEqual(stderr.getvalue(), "")
+                self.assertNotIn("zxro.cli.", stderr.getvalue())
+                if expected_type is SystemExit:
+                    self.assertEqual(caught.exception.code, expected_payload)
+                else:
+                    self.assertIn(expected_payload, str(caught.exception))
+
+    def test_logging_off_preserves_argparse_system_exit_and_output(self):
+        for argv, expected_code in ((["--help"], 0), ([], 2)):
+            with self.subTest(argv=argv):
+                expected_stdout, expected_stderr = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(expected_stdout), contextlib.redirect_stderr(expected_stderr):
+                    with self.assertRaises(SystemExit) as expected:
+                        cli.parser().parse_args(argv)
+                actual_stdout, actual_stderr = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(actual_stdout), contextlib.redirect_stderr(actual_stderr):
+                    with self.assertRaises(SystemExit) as actual:
+                        cli.main(argv)
+                self.assertEqual(expected.exception.code, expected_code)
+                self.assertEqual(actual.exception.code, expected_code)
+                self.assertEqual(actual_stdout.getvalue(), expected_stdout.getvalue())
+                self.assertEqual(actual_stderr.getvalue(), expected_stderr.getvalue())
+                self.assertNotIn("zxro.cli.", actual_stderr.getvalue())
+
     def test_internal_failure_emits_one_terminal_event(self):
         stdout, stderr = io.StringIO(), io.StringIO()
         with mock.patch.object(cli, "_run_command", side_effect=RuntimeError("synthetic internal failure")), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
