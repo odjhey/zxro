@@ -299,7 +299,7 @@ Settlement rules:
 
 If the process dies after terminal turn commit but before event publication, retry must repair that gap idempotently. A published event may never reference a missing terminal turn result.
 
-Pi `agent_settled` and Claude `Stop`/failure integrations will call this command later. They do not get a separate persistence API.
+Pi `agent_settled` calls this command through the extension in [`integrations/pi`](../../../integrations/pi/README.md). Claude `Stop`/failure integration will call this command later. Neither gets a separate persistence API.
 
 ### `zxro turn env`
 
