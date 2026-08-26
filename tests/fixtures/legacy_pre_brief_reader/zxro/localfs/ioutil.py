@@ -208,18 +208,6 @@ def atomic_create(access: StoreAccess, directory: str, filename: str, value: dic
     atomic_replace(access, directory, filename, value)
 
 
-def exact_record_is_durable(access: StoreAccess, directory: str, filename: str, value: dict) -> bool:
-    """Confirm an uncertain atomic write by syncing and rereading its exact value."""
-    try:
-        if read_json(access, directory, filename) != value:
-            return False
-    except NotFoundError:
-        return False
-    with access.directory(directory) as directory_fd:
-        os.fsync(directory_fd)
-    return read_json(access, directory, filename) == value
-
-
 def atomic_replace(access: StoreAccess, directory: str, filename: str, value: dict) -> None:
     label = access.home / directory / filename
     with access.directory(directory) as directory_fd:

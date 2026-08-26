@@ -20,7 +20,7 @@ def parser():
     watchtower.add_parser("list")
 
     work = commands.add_parser("work").add_subparsers(dest="action", required=True)
-    create = work.add_parser("create"); create.add_argument("id"); create.add_argument("--watchtower", required=True); create.add_argument("--brief-stdin", action="store_true")
+    create = work.add_parser("create"); create.add_argument("id"); create.add_argument("--watchtower", required=True)
     show = work.add_parser("show"); show.add_argument("id")
     listing = work.add_parser("list"); listing.add_argument("--watchtower"); listing.add_argument("--state")
     close = work.add_parser("close"); close.add_argument("id")
@@ -28,9 +28,6 @@ def parser():
     meta_set = meta.add_parser("set"); meta_set.add_argument("id"); meta_set.add_argument("namespace"); meta_set.add_argument("--stdin", action="store_true", required=True)
     meta_show = meta.add_parser("show"); meta_show.add_argument("id"); meta_show.add_argument("namespace", nargs="?")
     meta_unset = meta.add_parser("unset"); meta_unset.add_argument("id"); meta_unset.add_argument("namespace")
-    brief = work.add_parser("brief").add_subparsers(dest="brief_action", required=True)
-    brief_set = brief.add_parser("set"); brief_set.add_argument("id"); brief_set.add_argument("--stdin", action="store_true", required=True)
-    brief_path = brief.add_parser("path"); brief_path.add_argument("id")
 
     turn = commands.add_parser("turn").add_subparsers(dest="action", required=True)
     create = turn.add_parser("create"); create.add_argument("--work", required=True); create.add_argument("--agent", required=True); create.add_argument("--session", required=True); create.add_argument("--cwd", required=True); create.add_argument("--native-session-id")
@@ -80,22 +77,10 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         elif args.action == "show": value = registry.get(args.id)
         else: value = registry.list()
     elif args.command == "work":
-        if args.action == "create":
-            payload = sys.stdin.buffer.read(MAX_STDIN_BYTES + 1) if args.brief_stdin else None
-            if payload is not None and len(payload) > MAX_STDIN_BYTES:
-                raise ValidationError(f"stdin payload too large: maximum is {MAX_STDIN_BYTES} bytes")
-            value = work.create(args.id, args.watchtower, payload)
+        if args.action == "create": value = work.create(args.id, args.watchtower)
         elif args.action == "show": value = work.get(args.id)
         elif args.action == "close": value = work.close(args.id)
         elif args.action == "list": value = work.list(args.watchtower, args.state)
-        elif args.action == "brief":
-            if args.brief_action == "set":
-                payload = sys.stdin.buffer.read(MAX_STDIN_BYTES + 1)
-                if len(payload) > MAX_STDIN_BYTES:
-                    raise ValidationError(f"stdin payload too large: maximum is {MAX_STDIN_BYTES} bytes")
-                value = work.set_brief(args.id, payload)
-            else:
-                value, path_only = work.brief_path(args.id), True
         elif args.meta_action == "set":
             raw = sys.stdin.buffer.read(MAX_STDIN_BYTES + 1)
             if len(raw) > MAX_STDIN_BYTES:

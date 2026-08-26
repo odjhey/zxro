@@ -6,7 +6,7 @@ tags: [v0.x, execution, task-cards, artifacts, work]
 status: draft
 generated: "Claude Fable 5 agent, 2026-08-25"
 created_at: "2026-08-25T14:25:09+08:00"
-updated_at: "2026-08-25T15:53:42+08:00"
+updated_at: "2026-08-26T06:30:00+08:00"
 ---
 
 # C2 — Durable work brief
@@ -53,9 +53,9 @@ The original request behind a work item survives session churn: a work item carr
 
 ## Acceptance criteria
 
-- [ ] A brief set at creation is retrievable byte-identically after settlement bursts, work close, and process restarts.
-- [ ] Set-once, open-only, and atomic-create rules fail at their documented exit classes.
-- [ ] No routine read inlines the brief body.
+- [x] A brief set at creation is retrievable byte-identically after settlement bursts, work close, and process restarts.
+- [x] Set-once, open-only, and atomic-create rules fail at their documented exit classes.
+- [x] No routine read inlines the brief body.
 
 ## Verification
 
@@ -67,8 +67,8 @@ BRIEF=$(bin/zxro work brief path auth-fix) && cat "$BRIEF"
 
 ## Documentation impact
 
-- [ ] Durable store contract and CLI spec updated in this PR.
-- [ ] ZR2 marked delivered in the delivery plan.
+- [x] Durable store contract and CLI spec updated in this PR.
+- [x] ZR2 marked delivered in the delivery plan.
 
 ## Human gate
 

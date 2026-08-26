@@ -16,31 +16,14 @@ class Watchtower:
 
 
 @dataclass(frozen=True)
-class WorkBrief:
-    ref: str
-    bytes: int
-    sha256: str
-
-    def to_dict(self):
-        return asdict(self)
-
-    def to_public_dict(self):
-        return {"ref": self.ref, "bytes": self.bytes}
-
-
-@dataclass(frozen=True)
 class Work:
     id: str
     watchtower_id: str
     state: str
     metadata: dict | None = None
-    brief: WorkBrief | None = None
 
     def to_dict(self):
-        value = asdict(self)
-        if self.brief is not None:
-            value["brief"] = self.brief.to_public_dict()
-        return {key: item for key, item in value.items() if item is not None}
+        return {key: value for key, value in asdict(self).items() if value is not None}
 
 
 @dataclass(frozen=True)
@@ -241,14 +224,12 @@ class Registry(Protocol):
 
 
 class WorkStore(Protocol):
-    def create(self, id: str, watchtower_id: str, brief: bytes | None = None) -> Work: ...
+    def create(self, id: str, watchtower_id: str) -> Work: ...
     def get(self, id: str) -> Work: ...
     def list(self, watchtower_id: str | None = None, state: str | None = None) -> list[Work]: ...
     def close(self, id: str) -> Work: ...
     def set_metadata(self, id: str, namespace: str, payload: dict) -> Work: ...
     def unset_metadata(self, id: str, namespace: str) -> Work: ...
-    def set_brief(self, id: str, payload: bytes) -> Work: ...
-    def brief_path(self, id: str) -> dict: ...
 
 
 class TurnStore(Protocol):

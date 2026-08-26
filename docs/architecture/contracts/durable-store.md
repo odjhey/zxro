@@ -6,7 +6,7 @@ tags: [architecture, contracts, durability, storage, mailbox]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T16:23:00+08:00
-updated_at: "2026-08-25T19:21:34+08:00"
+updated_at: "2026-08-26T06:30:00+08:00"
 ---
 
 # Durable store contract
@@ -100,6 +100,10 @@ Work is a durable logical job that survives several delegated turns.
   "state": "open",
   "metadata": {
     "github": {"issue": 29}
+  },
+  "brief": {
+    "ref": "artifact:work:auth-fix:brief",
+    "bytes": 18432
   }
 }
 ```
@@ -112,6 +116,8 @@ Required properties:
 - current-state reads do not require replaying all historical bodies.
 
 The optional `metadata` object maps lowercase namespaces to namespace-owned objects. Core does not interpret namespace content. Absent metadata is omitted, never `null`. A namespace payload root counts as depth 1. Payloads allow objects through depth 4, NFC-normalized strings through 2,048 characters, integers, booleans, and arrays containing only those scalar types. Namespace and object keys match `[a-z0-9][a-z0-9._-]{0,63}`; `.` and `..` are invalid. Floats and nulls are invalid. The `zxro` namespace is reserved. Canonical compact, key-sorted UTF-8 JSON for the whole metadata object must not exceed 16 KiB.
+
+The optional `brief` identifies one immutable work-scoped artifact. Public reads expose only `ref` and `bytes`; they omit the body and its durable integrity digest. Absent briefs are omitted, never `null`.
 
 Dependencies, labels, priorities, parent/child links, claims, and semantic search are optional provider capabilities.
 
@@ -231,7 +237,7 @@ A compatible work provider must support the semantic equivalent of these operati
 ### Create
 
 ```text
-work.create(id, watchtower_id, metadata?) -> work
+work.create(id, watchtower_id, metadata?, brief?) -> work
 ```
 
 Requirements:
@@ -239,7 +245,8 @@ Requirements:
 - create exactly one work identity;
 - reject a duplicate ID rather than silently overwrite it;
 - reject an unknown watchtower when registry validation belongs to the same provider boundary;
-- after success, the record survives caller exit.
+- after success, the record survives caller exit;
+- when a brief is supplied, attach its artifact and create the work as one command-level mutation. A rejected brief must leave no work record.
 
 ### Get
 
@@ -268,6 +275,8 @@ work.update(id, changes) -> work
 ```
 
 Conflicting or invalid updates must fail deterministically. The provider does not need generic JSON patch support.
+
+A work brief may be attached once while work is open. A second attachment or attachment after close conflicts with exit class 4 and does not mutate state. An unreferenced brief artifact left by a process crash is invisible, cannot resolve through `work brief path`, and does not consume the one-brief slot. Retrying with the same bytes attaches that record once. Retrying with different bytes conflicts without mutation.
 
 Metadata updates replace or remove one whole namespace while holding the home mutation lock. Replacement preserves every other namespace. Removal is idempotent. Both operations are allowed on open and closed work and do not change lifecycle state. Validation code must be reusable by other record types, although v0.x enables metadata only for work.
 
@@ -350,7 +359,7 @@ A crash may leave an artifact record before its owner metadata commit. Such a re
 
 `artifact.resolve` may return a local path, a provider handle, or another explicit retrieval target. It must never cause routine work, turn, inbox, or inspection reads to inline the artifact body.
 
-Turn references use `artifact:<turn-id>:<kind>`. Parsers and storage layouts must allow a future owner scope rather than treating turn ownership as the only possible grammar. Artifact references must not permit traversal outside the active provider namespace.
+Turn references use `artifact:<turn-id>:<kind>`. A work brief uses `artifact:work:<work-id>:brief`. `work brief path` resolves only the brief attached in work metadata and applies the same ownership, symlink, byte-count, and digest checks as turn artifact resolution. Artifact references must not permit traversal outside the active provider namespace.
 
 ## Mailbox-store operations
 
@@ -625,6 +634,7 @@ A provider or provider composition is zxro-compatible when the adapter can satis
 The conformance suite must cover at least:
 
 - duplicate work creation;
+- atomic create with brief, safe brief-orphan retry, set-once, and open-only attachment;
 - bounded current-state reads;
 - work filtering by watchtower and state;
 - turn creation and identity separation;
