@@ -6,7 +6,7 @@ tags: [v0.x, surfaces, cli]
 status: draft
 generated: "ChatGPT GPT-5.6 Sol, 2026-08-24"
 created_at: 2026-08-24T15:33:00+08:00
-updated_at: "2026-08-26T06:30:00+08:00"
+updated_at: "2026-08-26T18:31:15+08:00"
 ---
 
 # v0.x CLI
@@ -175,7 +175,7 @@ printf 'Fix refresh-token expiry.' | zxro work brief set auth-fix --stdin
 BRIEF="$(zxro work brief path auth-fix)"
 ```
 
-`set` rejects closed work and any work that already has a brief with exit class 4. The payload uses the same bound as turn artifacts. `work show` exposes `brief` as `{ref,bytes}` and never returns its body. An absent brief is omitted. `path` rejects absent or unattached orphan records with exit class 3. Before returning a path under `$ZXRO_HOME`, the built-in provider verifies ownership, file type, symlink safety, byte count, and SHA-256 digest.
+`set` rejects closed work and any work that already has a brief with exit class 4. The payload uses the same bound as turn artifacts. `work show` exposes `brief` as `{ref,bytes}` and never returns its body. An absent brief is omitted. `path` rejects absent or unattached orphan records with exit class 3. Before returning a path under `$ZXRO_HOME`, the built-in provider verifies ownership, file type, symlink safety, single hard link, byte count, and SHA-256 digest.
 
 ### `zxro work close`
 
@@ -450,7 +450,7 @@ Resolve one artifact reference to its local path when the active artifact provid
 zxro artifact path artifact:550e8400-e29b-41d4-a716-446655440000:review
 ```
 
-For the built-in provider, the returned path remains under the active `$ZXRO_HOME`. Before returning it, zxro rejects symlinks and unsafe ownership or file types, and verifies the materialized bytes against the durable artifact's byte count and SHA-256 digest.
+For the built-in provider, the returned path remains under the active `$ZXRO_HOME`. Before returning it, zxro rejects symlinks, hard-linked files, and unsafe ownership or file types, and verifies the materialized bytes against the durable artifact's byte count and SHA-256 digest.
 
 This is the explicit bridge to deeper inspection:
 

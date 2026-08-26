@@ -23,7 +23,7 @@ sources:
   - ref: ../engineering/runtime-and-provisioning.md
     credibility: primary
 created_at: "2026-08-25T09:35:45+08:00"
-updated_at: "2026-08-26T16:53:05+08:00"
+updated_at: "2026-08-26T18:31:15+08:00"
 ---
 
 # CLI-first Web UI plan
@@ -909,7 +909,7 @@ Default sinks:
 - Core CLI with structured logging enabled: JSONL or human logs on stderr unless `--log-file PATH` selects an explicit owner-only file.
 - Web UI: redacted warning/error stderr plus an in-memory ring capped at 1,000 events and 2 MiB of serialized event bytes. Before inserting an event, evict the oldest until both limits hold. Track and display the evicted count. The Web UI has no disk retention by default.
 
-For `--log-file PATH`, `PATH` is the active file and `PATH.1` through `PATH.4` are the only backups. The active file plus four backups is a hard maximum of five files. Each file is capped at 5 MiB; rotate before an append would cross the cap, delete `PATH.4`, and shift the other backups atomically under the logging sink's concurrency control. Retention is file-granular and activity-triggered. On every sink open and before every append, remove each whole file whose newest event is older than seven days. Individual events in a retained mixed-age file may be older than seven days. ZXRO has no daemon, so no file changes while the sink is inactive; stale files remain until the next sink open or append applies the rule. One event must fit the per-event bound and may never create a sixth file.
+For `--log-file PATH` rotation, retention, and pre-flight file checks (size, permissions, link count), see [File retention](../engineering/structured-cli-logging.md#file-retention) — the single normative source; do not duplicate that prose here.
 
 Opt-in file retention belongs outside `$ZXRO_HOME`, under an owner-specific state directory partitioned by non-reversible home fingerprint. Set parent directories to `0700`, files to `0600`, reject symlinks and group/world-writable paths, and never share a file between homes.
 

@@ -13,7 +13,7 @@ sources:
   - ref: ../../../zxro/diagnostics.py
     credibility: primary
 created_at: "2026-08-25T11:45:00+08:00"
-updated_at: "2026-08-26T16:26:46+08:00"
+updated_at: "2026-08-26T18:31:15+08:00"
 ---
 
 # Structured CLI logging
@@ -107,7 +107,7 @@ Logs are observations from one process. Durable records remain authoritative for
 
 ## File retention
 
-An explicit log file must be outside the physical `$ZXRO_HOME`, including when either path uses a symlink alias. The selected parent directory must be owned by the current user with exact mode `0700`; existing active and backup files must be regular, owned by the current user, have exactly one hard link, and use exact mode `0600`. An insecure pre-existing parent such as `0755` or log file such as `0644` is rejected before append, rotation, or command state access. ZXRO never chmods user files; the rejection is fail-closed with no log write. Each log family binds to one stable home fingerprint, so another home cannot append, prune, or rotate it.
+An explicit log file must be outside the physical `$ZXRO_HOME`, including when either path uses a symlink alias. The selected parent directory must be owned by the current user with exact mode `0700`; existing active and backup files must be regular, owned by the current user, have exactly one hard link, use exact mode `0600`, and not exceed the 5 MiB per-file cap. An insecure pre-existing parent such as `0755`, log file such as `0644`, or an oversized existing family file is rejected before append, rotation, or command state access. ZXRO never chmods user files; the rejection is fail-closed with no log write. Each log family binds to one stable home fingerprint, so another home cannot append, prune, or rotate it.
 
 The active file is `PATH`; backups are `PATH.1` through `PATH.4`. ZXRO never keeps a sixth family file. The sink stores its owner binding as filesystem metadata on the family files, not as an extra file or emitted event. Each log file is capped at 5 MiB. It rotates before an append would cross that limit, deletes `PATH.4`, and shifts the remaining files under sink concurrency control.
 
