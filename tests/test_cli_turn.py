@@ -1,5 +1,8 @@
+import json
+import os
+import subprocess
 import uuid
-from tests.helpers import CliCase
+from tests.helpers import BIN, ROOT, CliCase
 
 
 class TurnCliTests(CliCase):
@@ -46,3 +49,123 @@ class TurnCliTests(CliCase):
         for flag, value in (("--agent", "bad\nagent"), ("--session", "bad\tsession"), ("--native-session-id", "bad\x7f")):
             args = ["turn", "create", "--work", "job", "--agent", "ok", "--session", "ok", "--cwd", "/x", flag, value]
             self.assertEqual(self.cli(*args).returncode, 2)
+
+    def bind(self, turn_id, native="native-7", source="manual recovery"):
+        return self.cli("turn", "bind", turn_id, "--native-session-id", native, "--source", source)
+
+    def artifact_put(self, turn_id, kind="review", body=b"evidence"):
+        environment = {**os.environ, "ZXRO_HOME": str(self.home)}
+        return subprocess.run(
+            [str(BIN), "artifact", "put", turn_id, "--kind", kind, "--stdin"],
+            cwd=ROOT, env=environment, input=body, capture_output=True,
+        )
+
+    def test_bind_running_turn_round_trips_in_human_and_json_show(self):
+        turn_id = self.create().stdout.strip()
+        before = self.ok_json("turn", "show", turn_id)
+        result = self.bind(turn_id)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = self.ok_json("turn", "show", turn_id)
+        self.assertEqual(record["native_session_id"], "native-7")
+        self.assertEqual(record["native_session_source"], "manual recovery")
+        for key in ("id", "work_id", "watchtower_id", "runtime", "agent", "session", "cwd", "state"):
+            self.assertEqual(record[key], before[key])
+        human = self.cli("turn", "show", turn_id)
+        self.assertIn("native_session_id: native-7\n", human.stdout)
+        self.assertIn("native_session_source: manual recovery\n", human.stdout)
+
+    def test_identical_rebind_is_idempotent_and_conflicts_do_not_mutate(self):
+        turn_id = self.create().stdout.strip()
+        self.assertEqual(self.bind(turn_id).returncode, 0)
+        path = self.home / "turns" / f"{turn_id}.json"
+        bound_bytes = path.read_bytes()
+        self.assertEqual(self.bind(turn_id).returncode, 0)
+        self.assertEqual(path.read_bytes(), bound_bytes)
+        for native, source in (("other", "manual recovery"), ("native-7", "other source")):
+            result = self.bind(turn_id, native, source)
+            self.assertEqual(result.returncode, 4)
+            self.assertEqual(path.read_bytes(), bound_bytes)
+
+    def test_create_time_native_id_can_be_enriched_once_with_source(self):
+        turn_id = self.create(native="native-7").stdout.strip()
+        self.assertNotIn("native_session_source", self.ok_json("turn", "show", turn_id))
+        self.assertEqual(self.bind(turn_id).returncode, 0)
+        bound = self.ok_json("turn", "show", turn_id)
+        self.assertEqual(bound["native_session_source"], "manual recovery")
+        self.assertEqual(self.bind(turn_id, source="different").returncode, 4)
+        self.assertEqual(self.bind(turn_id, native="other").returncode, 4)
+        self.assertEqual(self.ok_json("turn", "show", turn_id), bound)
+
+    def test_bind_settled_turn_after_work_close_changes_only_binding(self):
+        turn_id = self.create().stdout.strip()
+        settled = self.cli("turn", "settle", turn_id, "--source", "test", "--status", "completed", "--message", "done")
+        self.assertEqual(settled.returncode, 0, settled.stderr)
+        self.assertEqual(self.cli("work", "close", "job").returncode, 0)
+        turn_before = self.ok_json("turn", "show", turn_id)
+        work_before = self.ok_json("work", "show", "job")
+        inbox_before = self.ok_json("inbox", "unread", "--watchtower", "main")
+        self.assertEqual(self.bind(turn_id).returncode, 0)
+        turn_after = self.ok_json("turn", "show", turn_id)
+        for key, value in turn_before.items():
+            self.assertEqual(turn_after[key], value)
+        self.assertEqual(turn_after["native_session_id"], "native-7")
+        self.assertEqual(turn_after["native_session_source"], "manual recovery")
+        self.assertEqual(self.ok_json("work", "show", "job"), work_before)
+        self.assertEqual(self.ok_json("inbox", "unread", "--watchtower", "main"), inbox_before)
+
+    def test_bind_preserves_legacy_settled_record_shape(self):
+        turn_id = self.create().stdout.strip()
+        settled = self.artifact_put(turn_id, kind="stdin", body=b"payload")
+        self.assertEqual(settled.returncode, 2)  # stdin is reserved for settlement
+        environment = {**os.environ, "ZXRO_HOME": str(self.home)}
+        settled = subprocess.run(
+            [str(BIN), "turn", "settle", turn_id, "--source", "test", "--status", "completed", "--message", "done", "--stdin"],
+            cwd=ROOT, env=environment, input=b"payload", capture_output=True,
+        )
+        self.assertEqual(settled.returncode, 0, settled.stderr)
+        path = self.home / "turns" / f"{turn_id}.json"
+        legacy = json.loads(path.read_text())
+        legacy.pop("artifacts")
+        path.write_text(json.dumps(legacy, sort_keys=True, separators=(",", ":")) + "\n")
+
+        result = self.bind(turn_id)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        bound = json.loads(path.read_text())
+        self.assertNotIn("artifacts", bound)
+        self.assertEqual(
+            {key: value for key, value in bound.items() if key not in {"native_session_id", "native_session_source"}},
+            legacy,
+        )
+
+    def test_bind_json_projects_artifacts_without_internal_digest(self):
+        turn_id = self.create().stdout.strip()
+        put = self.artifact_put(turn_id)
+        self.assertEqual(put.returncode, 0, put.stderr)
+        settled = self.cli(
+            "turn", "settle", turn_id, "--source", "test", "--status", "completed",
+            "--message", "blocked", "--verdict", "blocked", "--needs", "operator input",
+        )
+        self.assertEqual(settled.returncode, 0, settled.stderr)
+
+        record = self.ok_json(
+            "turn", "bind", turn_id, "--native-session-id", "native-7", "--source", "manual recovery",
+        )
+        self.assertEqual(record["verdict"], "blocked")
+        self.assertEqual(record["needs"], "operator input")
+        self.assertEqual(record["artifacts"], [{
+            "ref": f"artifact:{turn_id}:review", "kind": "review", "bytes": len(b"evidence"),
+        }])
+        self.assertNotIn("sha256", record["artifacts"][0])
+
+    def test_bind_rejects_unknown_turn_and_malformed_values(self):
+        unknown = str(uuid.uuid4())
+        self.assertEqual(self.bind(unknown).returncode, 3)
+        turn_id = self.create().stdout.strip()
+        path = self.home / "turns" / f"{turn_id}.json"
+        before = path.read_bytes()
+        for native, source in (("", "source"), ("native", ""), ("bad\nvalue", "source"), ("native", "bad\x7f"), ("x" * 257, "source"), ("native", "x" * 257)):
+            self.assertEqual(self.bind(turn_id, native, source).returncode, 2)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_create_rejects_overlong_native_session_id(self):
+        self.assertEqual(self.create(native="x" * 257).returncode, 2)

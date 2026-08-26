@@ -6,7 +6,7 @@ tags: [v0.x, execution, task-cards, sessions, recovery]
 status: draft
 generated: "Claude Fable 5 agent, 2026-08-25"
 created_at: "2026-08-25T14:25:09+08:00"
-updated_at: "2026-08-25T14:25:09+08:00"
+updated_at: "2026-08-25T18:36:18+08:00"
 ---
 
 # D1 — Late session binding
@@ -53,9 +53,9 @@ Implements ZR3 from the [ZR1-ZR4 delivery plan](../rozoro-requirements-plan.md).
 
 ## Acceptance criteria
 
-- [ ] Scenario D passes: identical rebind idempotent, conflict fails closed, identity unchanged, stored identity is data rather than resume syntax.
-- [ ] Binding a settled turn works and alters nothing besides the binding fields.
-- [ ] All failure modes hit their documented exit classes.
+- [x] Scenario D passes: identical rebind idempotent, conflict fails closed, identity unchanged, stored identity is data rather than resume syntax.
+- [x] Binding a settled turn works and alters nothing besides the binding fields.
+- [x] All failure modes hit their documented exit classes.
 
 ## Verification
 
@@ -68,8 +68,8 @@ bin/zxro turn bind <turn-id> --native-session-id other-id --source acpx.agentSes
 
 ## Documentation impact
 
-- [ ] Session binding contract status and CLI spec updated in this PR.
-- [ ] ZR3 marked delivered in the delivery plan.
+- [x] Session binding contract and CLI spec updated in this PR.
+- [x] ZR3 marked delivered in the delivery plan.
 
 ## Human gate
 

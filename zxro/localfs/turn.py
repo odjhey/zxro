@@ -1,4 +1,5 @@
 import uuid
+from dataclasses import replace
 from datetime import datetime
 import unicodedata
 from pathlib import Path
@@ -6,7 +7,14 @@ from pathlib import Path
 from zxro.contract import Artifact, ArtifactMetadata, Settlement, Turn
 from zxro.errors import ConflictError, NotFoundError, UnsafeStateError, ValidationError
 from zxro.ids import lexical_absolute, safe_string, validate_event_id, validate_id, validate_turn_id
-from .ioutil import atomic_create, list_records, mutation, read_json, reading
+from .ioutil import atomic_create, atomic_replace, list_records, mutation, read_json, reading
+
+
+def _binding_string(value, label):
+    value = safe_string(value, label)
+    if len(value) > 256:
+        raise ValidationError(f"invalid {label}: maximum length is 256 characters")
+    return value
 
 
 class LocalTurnStore:
@@ -16,7 +24,8 @@ class LocalTurnStore:
     def create(self, work_id, agent, session, cwd, native_session_id=None):
         work_id = validate_id(work_id, "work id")
         agent, session = safe_string(agent, "agent"), safe_string(session, "session")
-        native_session_id = safe_string(native_session_id, "native session id", required=False)
+        if native_session_id is not None:
+            native_session_id = _binding_string(native_session_id, "native session id")
         cwd = lexical_absolute(cwd)
         self.work.get(work_id)
         with mutation(self.home) as access:
@@ -62,6 +71,25 @@ class LocalTurnStore:
             record = Turn(**{**record.to_dict(), "artifact_refs": record.artifact_refs, "artifacts": tuple(metadata), "settlement": record.settlement})
         return record
 
+    def bind(self, id, native_session_id, source):
+        id = validate_turn_id(id)
+        native_session_id = _binding_string(native_session_id, "native session id")
+        source = _binding_string(source, "native session source")
+        with mutation(self.home) as access:
+            # Validate the hydrated view, including legacy artifact integrity, but
+            # persist the original record shape so binding changes only its pair.
+            self.get_from(access, id)
+            record = self._decode(read_json(access, "turns", f"{id}.json"))
+            if record.native_session_id is not None and record.native_session_id != native_session_id:
+                raise ConflictError(f"turn has a different native session id: {id}")
+            if record.native_session_source is not None and record.native_session_source != source:
+                raise ConflictError(f"turn has a different native session source: {id}")
+            if record.native_session_id == native_session_id and record.native_session_source == source:
+                return record
+            bound = replace(record, native_session_id=native_session_id, native_session_source=source)
+            atomic_replace(access, "turns", f"{id}.json", bound.to_dict())
+            return bound
+
     def list(self, work_id=None, state=None):
         if work_id is not None:
             validate_id(work_id, "work id")
@@ -84,8 +112,8 @@ class LocalTurnStore:
     @staticmethod
     def _decode(data):
         required = {"id", "work_id", "watchtower_id", "runtime", "agent", "session", "cwd", "state"}
-        optional = {"native_session_id", "outcome", "summary", "verdict", "needs", "artifact_refs", "artifacts", "settlement"}
-        string_fields = required | ({"native_session_id", "outcome", "summary", "verdict", "needs"} & set(data))
+        optional = {"native_session_id", "native_session_source", "outcome", "summary", "verdict", "needs", "artifact_refs", "artifacts", "settlement"}
+        string_fields = required | ({"native_session_id", "native_session_source", "outcome", "summary", "verdict", "needs"} & set(data))
         if set(data) - required - optional or not required <= set(data) or any(not isinstance(data.get(key), str) for key in string_fields):
             raise UnsafeStateError("invalid turn record schema")
         try:
@@ -95,7 +123,11 @@ class LocalTurnStore:
             for key in ("runtime", "agent", "session"):
                 safe_string(data[key], key)
             if "native_session_id" in data:
-                safe_string(data["native_session_id"], "native session id")
+                _binding_string(data["native_session_id"], "native session id")
+            if "native_session_source" in data:
+                _binding_string(data["native_session_source"], "native session source")
+                if "native_session_id" not in data:
+                    raise ValueError("native session source lacks native session id")
             normalized_cwd = lexical_absolute(data["cwd"])
         except Exception as exc:
             raise UnsafeStateError(f"invalid turn record: {exc}") from exc

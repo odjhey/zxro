@@ -33,6 +33,7 @@ def parser():
     create = turn.add_parser("create"); create.add_argument("--work", required=True); create.add_argument("--agent", required=True); create.add_argument("--session", required=True); create.add_argument("--cwd", required=True); create.add_argument("--native-session-id")
     show = turn.add_parser("show"); show.add_argument("id")
     listing = turn.add_parser("list"); listing.add_argument("--work"); listing.add_argument("--state")
+    bind = turn.add_parser("bind"); bind.add_argument("id"); bind.add_argument("--native-session-id", required=True); bind.add_argument("--source", required=True)
     settle = turn.add_parser("settle"); settle.add_argument("id"); settle.add_argument("--source", required=True); settle.add_argument("--status", required=True, choices=("completed", "failed", "cancelled")); settle.add_argument("--message", required=True); settle.add_argument("--verdict", choices=("done", "partial", "blocked")); settle.add_argument("--needs"); settle.add_argument("--stdin", action="store_true")
 
     inbox = commands.add_parser("inbox").add_subparsers(dest="action", required=True)
@@ -105,6 +106,7 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         if args.action == "create": value = turn.create(args.work, args.agent, args.session, args.cwd, args.native_session_id)
         elif args.action == "show": value = turn.get(args.id)
         elif args.action == "list": value = turn.list(args.work, args.state)
+        elif args.action == "bind": value = turn.bind(args.id, args.native_session_id, args.source)
         else:
             payload = sys.stdin.buffer.read(MAX_STDIN_BYTES + 1) if args.stdin else None
             if payload is not None and len(payload) > MAX_STDIN_BYTES:
@@ -130,7 +132,7 @@ def run(args, *, core_factory=providers, m1_factory=m1_capabilities):
         records = [{key: item for key, item in record.items() if key != "artifacts"} for record in records]
     elif args.command == "turn" and args.action == "settle":
         records = {key: item for key, item in records.items() if key != "artifacts"}
-    elif args.command == "turn" and args.action == "show" and "artifacts" in records:
+    elif args.command == "turn" and args.action in {"show", "bind"} and "artifacts" in records:
         records["artifacts"] = [
             {key: item for key, item in artifact.items() if key in {"ref", "kind", "bytes"}}
             for artifact in records["artifacts"]
